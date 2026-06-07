@@ -3,6 +3,7 @@ import { IS } from './lib/typography';
 import { DeskDoodlesHome } from './components/DeskDoodles/DeskDoodlesHome';
 import { DeskDoodlesCanvas } from './components/DeskDoodles/DeskDoodlesCanvas';
 import { DeskDoodlesPublicCanvas } from './components/DeskDoodles/DeskDoodlesPublicCanvas';
+import { DeskDoodlesPlayground } from './components/DeskDoodles/DeskDoodlesPlayground';
 
 function NotFound() {
   return (
@@ -33,5 +34,6 @@ export const router = createBrowserRouter([
   { path: '/', Component: DeskDoodlesHome },
   { path: '/canvas', Component: DeskDoodlesCanvas },
   { path: '/public', Component: DeskDoodlesPublicCanvas },
+  { path: '/playground', Component: DeskDoodlesPlayground },
   { path: '*', Component: NotFound },
 ]);
