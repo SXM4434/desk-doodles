@@ -1,29 +1,37 @@
-import { createBrowserRouter, NavLink, Navigate } from 'react-router';
-import { IS } from './components/cards/tokens';
-import { Hero8Shell } from './components/hero8/Hero8Shell';
-import { Hero8Index } from './components/hero8/Hero8Index';
-import { Hero8CandidatePage } from './components/hero8/Hero8CandidatePage';
+import { createBrowserRouter, NavLink } from 'react-router';
+import { IS } from './lib/typography';
+import { DeskDoodlesHome } from './components/DeskDoodles/DeskDoodlesHome';
+import { DeskDoodlesCanvas } from './components/DeskDoodles/DeskDoodlesCanvas';
+import { DeskDoodlesPublicCanvas } from './components/DeskDoodles/DeskDoodlesPublicCanvas';
 
 function NotFound() {
   return (
-    <div style={{ padding: 48, fontFamily: IS, fontSize: 13 }}>
-      <p>
-        Not found. <NavLink to="/hero-8">Hero #8 lab index</NavLink>.
-      </p>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--dir-bg)',
+        color: 'var(--dir-text-primary)',
+        fontFamily: IS,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: 16,
+        padding: 48,
+        textAlign: 'center',
+      }}
+    >
+      <div style={{ fontSize: 13 }}>Not found.</div>
+      <NavLink to="/" style={{ color: 'var(--dir-text-primary)', fontSize: 13 }}>
+        ← Back to Desk Doodles home
+      </NavLink>
     </div>
   );
 }
 
 export const router = createBrowserRouter([
-  {
-    path: '/',
-    Component: Hero8Shell,
-    children: [
-      { index: true, Component: () => <Navigate to="/hero-8" replace /> },
-      { path: 'hero-8', Component: Hero8Index },
-      { path: 'hero-8/:fFamilyId/:layoutFamilyId', Component: Hero8CandidatePage },
-      { path: 'hero-8/:fFamilyId/:layoutFamilyId/:versionId', Component: Hero8CandidatePage },
-      { path: '*', Component: NotFound },
-    ],
-  },
+  { path: '/', Component: DeskDoodlesHome },
+  { path: '/canvas', Component: DeskDoodlesCanvas },
+  { path: '/public', Component: DeskDoodlesPublicCanvas },
+  { path: '*', Component: NotFound },
 ]);

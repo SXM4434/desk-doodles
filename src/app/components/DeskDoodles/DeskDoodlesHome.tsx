@@ -1,0 +1,114 @@
+import { NavLink } from 'react-router';
+import { IS, ISe } from '../../lib/typography';
+
+export function DeskDoodlesHome() {
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'var(--dir-bg)',
+        color: 'var(--dir-text-primary)',
+        fontFamily: IS,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <header style={{ padding: '32px 48px', borderBottom: '1px solid var(--dir-border)' }}>
+        <div style={{ fontFamily: ISe, fontSize: 22, letterSpacing: '-0.01em' }}>Desk Doodles</div>
+      </header>
+
+      <main
+        style={{
+          flex: 1,
+          padding: '96px 48px',
+          maxWidth: 720,
+          marginInline: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 48,
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          <h1
+            style={{
+              fontFamily: ISe,
+              fontSize: 52,
+              lineHeight: 1.1,
+              letterSpacing: '-0.02em',
+              margin: 0,
+              color: 'var(--dir-text-primary)',
+            }}
+          >
+            Doodle what's on your desk.
+          </h1>
+          <p
+            style={{
+              fontFamily: IS,
+              fontSize: 15,
+              lineHeight: 1.55,
+              color: 'var(--dir-text-body)',
+              margin: 0,
+              maxWidth: 560,
+            }}
+          >
+            Designers sketch at their desks constantly — it's just a habit. Desk Doodles turns that
+            habit into a shared canvas. Doodle your mug, your headphones, the dumb little trinkets,
+            flip them between 2D and 3D, and drop them onto a wall of everyone else's desk.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12 }}>
+          <NavLink
+            to="/canvas"
+            style={{
+              fontFamily: IS,
+              fontSize: 13,
+              fontWeight: 600,
+              padding: '12px 20px',
+              background: 'var(--dir-cta-bg)',
+              color: 'var(--dir-cta-text)',
+              border: '1px solid var(--dir-cta-border)',
+              textDecoration: 'none',
+              borderRadius: 4,
+            }}
+          >
+            Start doodling →
+          </NavLink>
+          <NavLink
+            to="/public"
+            style={{
+              fontFamily: IS,
+              fontSize: 13,
+              fontWeight: 600,
+              padding: '12px 20px',
+              background: 'transparent',
+              color: 'var(--dir-text-primary)',
+              border: '1px solid var(--dir-border)',
+              textDecoration: 'none',
+              borderRadius: 4,
+            }}
+          >
+            Browse the wall
+          </NavLink>
+        </div>
+
+        <div
+          style={{
+            marginTop: 48,
+            padding: 24,
+            background: 'var(--dir-raised)',
+            border: '1px solid var(--dir-border)',
+            borderRadius: 4,
+            fontFamily: IS,
+            fontSize: 11,
+            color: 'var(--dir-text-secondary)',
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Day 6 placeholder · 2026-06-07 · building in public · github.com/SXM4434/desk-doodles
+        </div>
+      </main>
+    </div>
+  );
+}
