@@ -276,6 +276,15 @@ type ShapeContext = {
    *  cross-hatch / parallel-pass / pen-tip layers, falls back to buildPoints
    *  + pointsToPolylinePath since those need per-vertex transforms. */
   buildPath?: (seed: number, mods: ShapeModifiers) => string;
+  /** OPTIONAL pivot override for cross-hatch / parallel-pass layer transforms.
+   *  When this shape is rendered as one child of a group, the GROUP's bbox
+   *  center is passed here so all the group's children scale/rotate around a
+   *  shared pivot instead of each child rotating around its own centroid.
+   *  Added 2026-06-07 to fix the "multi-child SVGs look chaotic with
+   *  parallel-pass / cross-hatch" bug — without this, each <rect> + <line>
+   *  inside a <g> got its own pivot, producing 8 incoherent scaled outlines
+   *  on shapes like stackedSketchbooks. */
+  pivotOverride?: { cx: number; cy: number };
 };
 
 /** Compute protrude scale from a shape's smaller dimension. Playground baseline
@@ -404,9 +413,13 @@ function renderHandFeelShape(
   const penTipColor = strokeColor;
 
   // Build a base layer to determine the centroid (used as the cross-hatch /
-  // parallel-pass pivot).
+  // parallel-pass pivot). If a group-level pivot was passed in (ctx.pivotOverride),
+  // use that instead — keeps multi-child group shapes (stackedSketchbooks etc.)
+  // scaling/rotating around the GROUP's center, not each child's center.
   const layer0Points = buildPoints(seeds[0], { endpointBehavior, sketchingStyle, layerIndex: 0 });
-  const { cx: cxCentroid, cy: cyCentroid } = centroidOf(layer0Points);
+  const childCentroid = centroidOf(layer0Points);
+  const cxCentroid = ctx.pivotOverride?.cx ?? childCentroid.cx;
+  const cyCentroid = ctx.pivotOverride?.cy ?? childCentroid.cy;
 
   const out: SVGElement[] = [];
 
@@ -624,12 +637,116 @@ function buildRoughOptionsForPath(
 
 // ─── ELEMENT DISPATCH ──────────────────────────────────────────────────────
 
+/** Compute the bounding box of a <g> element by unioning its primitive
+ *  children's bboxes. Used to derive a group-shared pivot for cross-hatch /
+ *  parallel-pass layer transforms (so a group's children rotate/scale around
+ *  the group's center, not each child's own centroid).
+ *
+ *  Handles rect / circle / ellipse / line / polygon / polyline / nested <g>.
+ *  For <path> and unsupported elements, falls back to SVG getBBox() if
+ *  available (DOM-connected); otherwise skipped. Returns null if no
+ *  computable children. */
+function computeGroupBBox(
+  g: SVGElement,
+): { x: number; y: number; w: number; h: number } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const walk = (parent: SVGElement) => {
+    for (const child of Array.from(parent.children)) {
+      if (!(child instanceof SVGElement)) continue;
+      const tag = child.tagName.toLowerCase();
+      let bx = 0, by = 0, bw = 0, bh = 0, ok = false;
+      switch (tag) {
+        case 'rect': {
+          bx = parseFloat(child.getAttribute('x') ?? '0');
+          by = parseFloat(child.getAttribute('y') ?? '0');
+          bw = parseFloat(child.getAttribute('width') ?? '0');
+          bh = parseFloat(child.getAttribute('height') ?? '0');
+          ok = bw > 0 && bh > 0;
+          break;
+        }
+        case 'circle': {
+          const cx = parseFloat(child.getAttribute('cx') ?? '0');
+          const cy = parseFloat(child.getAttribute('cy') ?? '0');
+          const r = parseFloat(child.getAttribute('r') ?? '0');
+          bx = cx - r; by = cy - r; bw = 2 * r; bh = 2 * r;
+          ok = r > 0;
+          break;
+        }
+        case 'ellipse': {
+          const cx = parseFloat(child.getAttribute('cx') ?? '0');
+          const cy = parseFloat(child.getAttribute('cy') ?? '0');
+          const rx = parseFloat(child.getAttribute('rx') ?? '0');
+          const ry = parseFloat(child.getAttribute('ry') ?? '0');
+          bx = cx - rx; by = cy - ry; bw = 2 * rx; bh = 2 * ry;
+          ok = rx > 0 && ry > 0;
+          break;
+        }
+        case 'line': {
+          const x1 = parseFloat(child.getAttribute('x1') ?? '0');
+          const y1 = parseFloat(child.getAttribute('y1') ?? '0');
+          const x2 = parseFloat(child.getAttribute('x2') ?? '0');
+          const y2 = parseFloat(child.getAttribute('y2') ?? '0');
+          bx = Math.min(x1, x2); by = Math.min(y1, y2);
+          bw = Math.abs(x2 - x1); bh = Math.abs(y2 - y1);
+          ok = true;
+          break;
+        }
+        case 'polygon':
+        case 'polyline': {
+          const ptsAttr = child.getAttribute('points') ?? '';
+          const nums = ptsAttr.split(/[\s,]+/).map(parseFloat).filter((n) => !Number.isNaN(n));
+          if (nums.length >= 4) {
+            let px1 = Infinity, py1 = Infinity, px2 = -Infinity, py2 = -Infinity;
+            for (let i = 0; i + 1 < nums.length; i += 2) {
+              px1 = Math.min(px1, nums[i]); py1 = Math.min(py1, nums[i + 1]);
+              px2 = Math.max(px2, nums[i]); py2 = Math.max(py2, nums[i + 1]);
+            }
+            bx = px1; by = py1; bw = px2 - px1; bh = py2 - py1;
+            ok = true;
+          }
+          break;
+        }
+        case 'g':
+          walk(child);
+          continue;
+        default:
+          // path / text / etc — try DOM getBBox if connected, else skip
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const b = (child as any).getBBox?.();
+            if (b && b.width > 0 && b.height > 0) {
+              bx = b.x; by = b.y; bw = b.width; bh = b.height;
+              ok = true;
+            }
+          } catch { /* not connected to DOM yet — skip */ }
+          break;
+      }
+      if (ok) {
+        minX = Math.min(minX, bx);
+        minY = Math.min(minY, by);
+        maxX = Math.max(maxX, bx + bw);
+        maxY = Math.max(maxY, by + bh);
+      }
+    }
+  };
+  walk(g);
+  if (minX === Infinity) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 export function transformElement(
   el: SVGElement,
   rc: ReturnType<typeof rough.svg>,
   m: F3ModifiersState,
   seed: number,
   ownerDoc: Document,
+  /** Optional group-level pivot. When transformElement is called recursively
+   *  on a child of a <g>, the parent group's bbox center is passed here so all
+   *  the group's children share one pivot for cross-hatch / parallel-pass
+   *  layer transforms. Without this, each child computed its own centroid
+   *  independently → 8-children groups (stackedSketchbooks etc.) looked
+   *  chaotic with parallel-pass. Added 2026-06-07. */
+  groupPivot?: { cx: number; cy: number },
 ): SVGElement[] {
   const tag = el.tagName.toLowerCase();
   switch (tag) {
@@ -654,6 +771,7 @@ export function transformElement(
         // Playground-native cubic-Bezier path + bowing/curve extension so all
         // three axes (wobble, bowing, curveTightness) compose at render time.
         buildPath: (s, mods) => roughRectPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
+        pivotOverride: groupPivot,
       }, m, el, ownerDoc);
     }
     case 'circle': {
@@ -678,6 +796,7 @@ export function transformElement(
         buildPoints: (s, mods) => roughOvalPoints(x, y, w, h, ROUGH, s, mods, pScale),
         // Playground-native cubic-Bezier oval + bowing/curve extension
         buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
+        pivotOverride: groupPivot,
       }, m, el, ownerDoc);
     }
     case 'ellipse': {
@@ -703,6 +822,7 @@ export function transformElement(
         buildPoints: (s, mods) => roughOvalPoints(x, y, w, h, ROUGH, s, mods, pScale),
         // Playground-native cubic-Bezier oval + bowing/curve extension
         buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
+        pivotOverride: groupPivot,
       }, m, el, ownerDoc);
     }
     case 'line': {
@@ -724,6 +844,7 @@ export function transformElement(
         buildPoints: (s, mods) => roughLinePoints(x1, y1, x2, y2, ROUGH, s, mods, pScale),
         // Playground-native cubic-Bezier line + bowing/curve extension
         buildPath: (s, mods) => roughLinePathExtended(x1, y1, x2, y2, ROUGH, m.bowing, m.curveTightness, s, mods),
+        pivotOverride: groupPivot,
       }, m, el, ownerDoc);
     }
     case 'polygon':
@@ -769,6 +890,7 @@ export function transformElement(
           }
           return segPoints;
         },
+        pivotOverride: groupPivot,
       }, m, el, ownerDoc);
     }
     case 'path': {
@@ -922,15 +1044,32 @@ export function transformElement(
         // No playground-native path-builder for arbitrary paths — falls back to
         // pointsToPolylinePath (which now has wobble-driven control-point jitter
         // from earlier Day 1 edit). Bowing + curve apply via that fallback too.
+        pivotOverride: groupPivot,
       }, m, el, ownerDoc);
     }
     case 'text':
       return [el.cloneNode(true) as SVGElement];
     case 'g': {
+      // Compute the group's bbox center for use as a SHARED PIVOT across all
+      // children's cross-hatch / parallel-pass layer transforms. Without this,
+      // each child rotated/scaled around its own centroid → multi-child shapes
+      // (stackedSketchbooks = 4 books × 2 elements) produced 8 incoherent
+      // overlapping outlines. With shared pivot: all the group's children
+      // scale/rotate around the same point → coherent concentric ghost.
+      //
+      // If parent already passed a groupPivot (nested group), inherit it.
+      // Otherwise compute our own from this group's children's bbox.
+      let nextPivot = groupPivot;
+      if (!nextPivot) {
+        const bbox = computeGroupBBox(el);
+        if (bbox) {
+          nextPivot = { cx: bbox.x + bbox.w / 2, cy: bbox.y + bbox.h / 2 };
+        }
+      }
       const flat: SVGElement[] = [];
       Array.from(el.children).forEach((child, idx) => {
         if (child instanceof SVGElement) {
-          flat.push(...transformElement(child, rc, m, seed + idx * 17, ownerDoc));
+          flat.push(...transformElement(child, rc, m, seed + idx * 17, ownerDoc, nextPivot));
         }
       });
       return flat;
