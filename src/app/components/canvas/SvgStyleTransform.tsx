@@ -537,10 +537,16 @@ function renderHandFeelShape(
       // 4 long cubic-Bezier segments per rect (vs our 32 short Q-bezier
       // segments), control points jittered at j()*1.4 amplitude. Result: wobble
       // produces the same visual wandering as playground at matched values.
-      const canUseBuiltPath =
-        ctx.buildPath !== undefined &&
-        sketchingStyle !== 'cross-hatch' &&
-        sketchingStyle !== 'parallel-pass';
+      // BUG FIX 2026-06-07: was checking sketchingStyle globally; this swapped
+      // layer 0's render function (playground-native vs polyline fallback) just
+      // because the USER picked cross-hatch/parallel-pass for SECONDARY layers.
+      // Result: switching sketching style visibly changed the BASE outline's
+      // line treatment, which isn't what sketchingStyle is supposed to control.
+      // FIX: only layers > 0 with cross-hatch/parallel-pass actually need the
+      // per-vertex-transform fallback. Layer 0 always uses the built path.
+      const needsPerVertexTransform =
+        i > 0 && (sketchingStyle === 'cross-hatch' || sketchingStyle === 'parallel-pass');
+      const canUseBuiltPath = ctx.buildPath !== undefined && !needsPerVertexTransform;
       let d: string;
       if (canUseBuiltPath) {
         d = ctx.buildPath!(seed, mods);
