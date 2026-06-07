@@ -80,19 +80,21 @@ export function Dropdown({
       ref={rootRef}
       style={{
         position: 'relative',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
         fontFamily: IS,
         fontSize: 11,
+        width: width ?? '100%',
       }}
     >
       <span
         style={{
-          letterSpacing: '0.12em',
+          letterSpacing: '0.08em',
           textTransform: 'uppercase',
           color: 'var(--dir-text-secondary)',
-          fontWeight: 500,
+          fontWeight: 600,
+          fontSize: 10,
         }}
       >
         {label}
@@ -104,26 +106,29 @@ export function Dropdown({
         aria-expanded={open}
         style={{
           fontFamily: IS,
-          fontSize: 12,
+          fontSize: 13,
           fontWeight: 500,
           color: 'var(--dir-text-primary)',
           backgroundColor: 'var(--dir-bg)',
           backgroundImage: CHEVRON_SVG,
           backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'right 12px center',
+          backgroundPosition: 'right 14px center',
           border: '1px solid var(--dir-border)',
           borderRadius: 9999,
-          padding: '4px 32px 4px 12px',
+          padding: '10px 36px 10px 16px',
           cursor: 'pointer',
           appearance: 'none',
           outline: 'none',
           lineHeight: 1.4,
           textAlign: 'left',
-          width,
+          width: '100%',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
+          transition: 'border-color 0.15s, background 0.15s',
         }}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--dir-text-secondary)')}
+        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--dir-border)')}
       >
         {triggerText}
       </button>
