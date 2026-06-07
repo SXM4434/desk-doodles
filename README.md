@@ -15,7 +15,7 @@ Designers sketch at their desks constantly — there's no shared space to make t
 
 ## Built for
 
-**[ConFigMakeathon](https://contra.com/community/topic/configmakeathon/guidelines)** — $100k prize hackathon for things built in Figma Make. Submission deadline 2026-06-18.
+**[ConFigMakeathon](https://contra.com/community/topic/configmakeathon/guidelines)** —  hackathon for things built in Figma Make. Submission deadline 2026-06-18.
 
 Building in public throughout.
 
