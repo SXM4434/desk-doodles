@@ -13,7 +13,7 @@ import { classify, ruleEngineProvider } from './classifier';
 import { selectTreatment, type SmartHachureStyle } from './techniqueMap';
 import { renderRegion } from './renderRegion';
 import { createOverrideStore, hashSvg } from './overrideStore';
-import { transformElement } from '../../components/hero8/cells/SvgStyleTransform';
+import { transformElement } from '../../components/canvas/SvgStyleTransform';
 import type { F3ModifiersState } from '../../state/F3RoughModifiersContext';
 import type {
   Classification,
