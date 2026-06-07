@@ -101,10 +101,17 @@ export function scalePointsAround(
 }
 
 /** Parallel-pass scale factor for a given layer index (closed shapes).
- *  Layer 0 stays put; subsequent layers grow outward by 6% each — visibly
- *  larger so concentric ghost outlines actually read at the artifact scale. */
+ *  Layer 0 stays put; subsequent layers grow outward by 10% each.
+ *
+ *  CHANGED 2026-06-07: bumped from 0.06 → 0.10. Previous 6% step was
+ *  getting swamped by wobble amplitude (3-6px on typical 60-100px pin
+ *  shapes), making concentric ghost outlines read as jittery random
+ *  overlap instead of deliberate concentric pattern. 10% step puts the
+ *  scaling clearly above wobble amplitude so concentric reads cleanly.
+ *  If this overshoots for large shapes, consider per-bbox normalization
+ *  (e.g., scale step shrinks for shapes > 200px bbox). */
 export function parallelPassScaleFor(layerIndex: number): number {
-  return 1 + layerIndex * 0.06;
+  return 1 + layerIndex * 0.10;
 }
 
 /** Parallel-pass translate offset for a given layer index (used for plain mode
