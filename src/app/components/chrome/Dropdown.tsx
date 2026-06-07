@@ -137,53 +137,54 @@ export function Dropdown({
           role="listbox"
           style={{
             position: 'absolute',
-            top: 'calc(100% + 8px)',
+            top: 'calc(100% + 6px)',
             [popoverAlign]: 0,
             zIndex: 200,
             width: popoverWidth,
             maxHeight: '70vh',
             overflowY: 'auto',
-            backgroundColor: 'var(--dir-raised)',
+            backgroundColor: 'var(--dir-bg)',
             border: '1px solid var(--dir-border)',
-            borderRadius: 6,
-            boxShadow: '0 16px 48px rgba(18, 17, 16, 0.18)',
+            borderRadius: 16,
+            boxShadow: '0 12px 36px rgba(18, 17, 16, 0.10), 0 2px 8px rgba(18, 17, 16, 0.06)',
             fontFamily: IS,
+            padding: 6,
           }}
         >
           {sections.map((section, si) => (
-            <section key={section.heading + si}>
-              <div
-                style={{
-                  padding: '10px 16px 6px',
-                  fontFamily: IS,
-                  fontSize: 10,
-                  fontWeight: 500,
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                  color: 'var(--dir-text-secondary)',
-                  backgroundColor: 'var(--dir-recessed)',
-                  borderTop: si === 0 ? 'none' : '1px solid var(--dir-border)',
-                  borderBottom: '1px solid var(--dir-border)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'baseline',
-                  position: 'sticky',
-                  top: 0,
-                }}
-              >
-                <span>{section.heading}</span>
-                {section.subheading && (
-                  <span
-                    style={{
-                      fontWeight: 400,
-                      letterSpacing: '0.06em',
-                      color: 'var(--dir-detail)',
-                    }}
-                  >
-                    {section.subheading}
-                  </span>
-                )}
-              </div>
+            <section key={section.heading + si} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {(section.heading || section.subheading) && (
+                <div
+                  style={{
+                    padding: '10px 14px 6px',
+                    fontFamily: IS,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color: 'var(--dir-text-secondary)',
+                    marginTop: si === 0 ? 0 : 6,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    gap: 8,
+                  }}
+                >
+                  <span>{section.heading}</span>
+                  {section.subheading && (
+                    <span
+                      style={{
+                        fontWeight: 400,
+                        letterSpacing: '0.04em',
+                        color: 'var(--dir-text-body-soft)',
+                        textTransform: 'none',
+                      }}
+                    >
+                      {section.subheading}
+                    </span>
+                  )}
+                </div>
+              )}
               {section.options.map((opt) => {
                 const isActive = opt.value === value;
                 return (
@@ -197,8 +198,10 @@ export function Dropdown({
                       setOpen(false);
                     }}
                     onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.backgroundColor =
-                        'var(--dir-muted)';
+                      if (!isActive) {
+                        (e.currentTarget as HTMLButtonElement).style.backgroundColor =
+                          'var(--dir-raised)';
+                      }
                     }}
                     onMouseLeave={(e) => {
                       (e.currentTarget as HTMLButtonElement).style.backgroundColor =
@@ -207,17 +210,18 @@ export function Dropdown({
                     style={{
                       width: '100%',
                       display: 'grid',
-                      gridTemplateColumns: opt.meta ? '56px 1fr 12px' : '1fr 12px',
-                      alignItems: 'baseline',
+                      gridTemplateColumns: opt.meta ? '56px 1fr auto' : '1fr auto',
+                      alignItems: 'center',
                       gap: 12,
-                      padding: '10px 16px',
+                      padding: '10px 14px',
                       border: 'none',
-                      borderBottom: '1px solid var(--dir-border)',
                       background: isActive ? 'var(--dir-recessed)' : 'transparent',
                       cursor: 'pointer',
                       textAlign: 'left',
                       fontFamily: IS,
                       color: 'var(--dir-text-primary)',
+                      borderRadius: 10,
+                      transition: 'background 0.1s',
                     }}
                   >
                     {opt.meta && (
@@ -225,21 +229,23 @@ export function Dropdown({
                         style={{
                           fontSize: 10,
                           fontWeight: 500,
-                          letterSpacing: '0.1em',
+                          letterSpacing: '0.08em',
                           textTransform: 'uppercase',
                           color: 'var(--dir-text-secondary)',
+                          alignSelf: 'start',
+                          marginTop: 2,
                         }}
                       >
                         {opt.meta}
                       </span>
                     )}
-                    <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       <span
                         style={{
                           fontSize: 13,
-                          fontWeight: 500,
+                          fontWeight: isActive ? 600 : 500,
                           lineHeight: 1.3,
-                          letterSpacing: '-0.01em',
+                          letterSpacing: '-0.005em',
                           color: 'var(--dir-text-primary)',
                         }}
                       >
@@ -248,10 +254,10 @@ export function Dropdown({
                       {opt.detail && (
                         <span
                           style={{
-                            fontSize: 12,
-                            fontWeight: 300,
+                            fontSize: 11,
+                            fontWeight: 400,
                             lineHeight: 1.45,
-                            color: 'var(--dir-text-secondary)',
+                            color: 'var(--dir-text-body-soft)',
                           }}
                         >
                           {opt.detail}
@@ -260,13 +266,14 @@ export function Dropdown({
                     </span>
                     <span
                       style={{
-                        fontSize: 10,
-                        fontWeight: 500,
-                        color: isActive ? 'var(--dir-text-primary)' : 'transparent',
+                        width: 6,
+                        height: 6,
+                        borderRadius: 999,
+                        background: isActive ? 'var(--dir-accent)' : 'transparent',
+                        flexShrink: 0,
+                        alignSelf: 'center',
                       }}
-                    >
-                      ●
-                    </span>
+                    />
                   </button>
                 );
               })}
