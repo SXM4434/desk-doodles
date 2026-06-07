@@ -8,17 +8,7 @@ import {
 } from '../../lib/items/identitySet';
 import { PinShape } from '../../lib/items/PinShape';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
-import { F3_SVG_STYLES, useF3SvgStyle } from '../../state/F3SvgStyleContext';
-import {
-  useF3RoughModifiers,
-  MULTI_STROKE_STEPS,
-  FILL_STYLE_STEPS,
-  PALETTE_MODE_STEPS,
-  TEXTURE_STEPS,
-  ENDPOINT_BEHAVIOR_STEPS,
-  SKETCHING_STYLE_STEPS,
-  PEN_TIP_STEPS,
-} from '../../state/F3RoughModifiersContext';
+import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
 
 type CanvasMode = 'svg' | '3d';
 
@@ -42,13 +32,6 @@ const PILL: CSSProperties = {
   color: 'var(--dir-text-body)',
   padding: '6px 14px',
   transition: 'background 0.15s, color 0.15s, border-color 0.15s',
-};
-
-const PILL_ACTIVE: CSSProperties = {
-  ...PILL,
-  background: 'var(--dir-accent)',
-  color: 'var(--dir-bg)',
-  borderColor: 'var(--dir-accent)',
 };
 
 const CTA: CSSProperties = {
@@ -76,7 +59,6 @@ export function DeskDoodlesPlayground() {
     if (url.searchParams.get('smartHachure') !== '1') {
       url.searchParams.set('smartHachure', '1');
       window.history.replaceState({}, '', url.toString());
-      // Reload so SvgStyleTransform reads the param on mount.
       window.location.reload();
     }
   }, []);
@@ -89,9 +71,6 @@ export function DeskDoodlesPlayground() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const dragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
-
-  const { state: svgStyle, setState: setSvgStyle } = useF3SvgStyle();
-  const { state: mods, set: setMod, reset: resetMods } = useF3RoughModifiers();
 
   const activeSubjectDef = F3_TROPHY_WALL_SUBJECTS.find((s) => s.id === activeSubject);
 
@@ -115,19 +94,13 @@ export function DeskDoodlesPlayground() {
     setItems((prev) => prev.filter((i) => i.id !== id));
   }, []);
 
-  const handlePointerDown = useCallback(
-    (e: React.PointerEvent, item: PlacedItem) => {
-      e.stopPropagation();
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      dragOffsetRef.current = {
-        dx: e.clientX - rect.left,
-        dy: e.clientY - rect.top,
-      };
-      setDraggingId(item.id);
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    },
-    [],
-  );
+  const handlePointerDown = useCallback((e: React.PointerEvent, item: PlacedItem) => {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    dragOffsetRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    setDraggingId(item.id);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }, []);
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -229,7 +202,7 @@ export function DeskDoodlesPlayground() {
 
       {/* ─── Body: left panel + canvas + right panel ──────────────── */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        {/* LEFT PANEL — items picker (column-within-panel) */}
+        {/* LEFT PANEL — items picker */}
         {leftOpen && (
           <aside
             style={{
@@ -257,7 +230,6 @@ export function DeskDoodlesPlayground() {
             </div>
 
             <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '110px 1fr', minHeight: 0 }}>
-              {/* Vertical category column (NN/G pattern: text labels, all visible) */}
               <nav
                 style={{
                   borderRight: '1px solid var(--dir-border)',
@@ -292,7 +264,6 @@ export function DeskDoodlesPlayground() {
                 })}
               </nav>
 
-              {/* Items grid (visually dominant) */}
               <div
                 style={{
                   overflowY: 'auto',
@@ -309,7 +280,6 @@ export function DeskDoodlesPlayground() {
                     onClick={() => addItem(form.shape)}
                     title={form.label}
                     style={{
-                      // No card chrome — just the SVG. Per Sebs's "no cards, just items in a grid".
                       background: 'transparent',
                       border: 'none',
                       padding: 8,
@@ -335,17 +305,7 @@ export function DeskDoodlesPlayground() {
                         overflow: 'hidden',
                       }}
                     >
-                      <div
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <PinShape shape={form.shape} />
-                      </div>
+                      <PinShape shape={form.shape} />
                     </div>
                     <div
                       style={{
@@ -455,236 +415,23 @@ export function DeskDoodlesPlayground() {
           ))}
         </main>
 
-        {/* RIGHT PANEL — Smart Hachure controls */}
+        {/* RIGHT PANEL — verbatim Hero8Shell modifier chrome */}
         {rightOpen && (
           <aside
             style={{
-              width: 280,
+              width: 480,
               borderLeft: '1px solid var(--dir-border)',
               background: 'var(--dir-raised)',
               display: 'flex',
               flexDirection: 'column',
               flexShrink: 0,
+              overflowY: 'auto',
             }}
           >
-            <div
-              style={{
-                padding: '14px 16px',
-                borderBottom: '1px solid var(--dir-border)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <span style={SECTION_LABEL}>Smart Hachure</span>
-              <button
-                onClick={resetMods}
-                style={{ ...PILL, padding: '4px 10px', fontSize: 9 }}
-              >
-                Reset
-              </button>
-            </div>
-
-            <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <Field label="Style">
-                <Select
-                  value={svgStyle}
-                  options={F3_SVG_STYLES.map((s) => ({ value: s.id, label: s.label }))}
-                  onChange={(v) => setSvgStyle(v as typeof svgStyle)}
-                />
-              </Field>
-
-              <Field label="Multi-stroke">
-                <Select
-                  value={mods.multiStroke}
-                  options={MULTI_STROKE_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('multiStroke', v as typeof mods.multiStroke)}
-                />
-              </Field>
-
-              <Field label="Fill style">
-                <Select
-                  value={mods.fillStyle}
-                  options={FILL_STYLE_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('fillStyle', v as typeof mods.fillStyle)}
-                />
-              </Field>
-
-              <Field label="Endpoint">
-                <Select
-                  value={mods.endpointBehavior}
-                  options={ENDPOINT_BEHAVIOR_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('endpointBehavior', v as typeof mods.endpointBehavior)}
-                />
-              </Field>
-
-              <Field label="Sketching style">
-                <Select
-                  value={mods.sketchingStyle}
-                  options={SKETCHING_STYLE_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('sketchingStyle', v as typeof mods.sketchingStyle)}
-                />
-              </Field>
-
-              <Field label="Pen tip">
-                <Select
-                  value={mods.penTip}
-                  options={PEN_TIP_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('penTip', v as typeof mods.penTip)}
-                />
-              </Field>
-
-              <Field label="Texture">
-                <Select
-                  value={mods.texture}
-                  options={TEXTURE_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('texture', v as typeof mods.texture)}
-                />
-              </Field>
-
-              <Field label="Stroke palette">
-                <Select
-                  value={mods.strokePalette}
-                  options={PALETTE_MODE_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('strokePalette', v as typeof mods.strokePalette)}
-                />
-              </Field>
-
-              <Field label="Fill palette">
-                <Select
-                  value={mods.fillPalette}
-                  options={PALETTE_MODE_STEPS.map((v) => ({ value: v, label: v }))}
-                  onChange={(v) => setMod('fillPalette', v as typeof mods.fillPalette)}
-                />
-              </Field>
-
-              <Slider
-                label="Wobble"
-                value={mods.wobble}
-                min={0} max={2} step={0.05}
-                onChange={(v) => setMod('wobble', v)}
-              />
-
-              <Slider
-                label="Roughness"
-                value={mods.roughness}
-                min={0} max={12} step={0.1}
-                onChange={(v) => setMod('roughness', v)}
-              />
-
-              <Slider
-                label="Stroke width"
-                value={mods.strokeWidth}
-                min={0.1} max={10} step={0.1}
-                onChange={(v) => setMod('strokeWidth', v)}
-              />
-
-              <Slider
-                label="Ink intensity"
-                value={mods.inkIntensity}
-                min={0} max={1} step={0.02}
-                onChange={(v) => setMod('inkIntensity', v)}
-              />
-
-              <Slider
-                label="Fill opacity"
-                value={mods.fillOpacity}
-                min={0} max={1} step={0.02}
-                onChange={(v) => setMod('fillOpacity', v)}
-              />
-            </div>
+            <SmartHachureChrome />
           </aside>
         )}
       </div>
-    </div>
-  );
-}
-
-/* ─── Field shells ────────────────────────────────────────────────── */
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <span style={SECTION_LABEL}>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function Select({
-  value, options, onChange,
-}: {
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (v: string) => void;
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      style={{
-        fontFamily: IS,
-        fontSize: 12,
-        padding: '8px 12px',
-        borderRadius: 999,
-        border: '1px solid var(--dir-border)',
-        background: 'var(--dir-bg)',
-        color: 'var(--dir-text-primary)',
-        cursor: 'pointer',
-        appearance: 'none',
-        backgroundImage:
-          "url(\"data:image/svg+xml;charset=US-ASCII,%3Csvg width='10' height='6' viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23383632' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E\")",
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'right 14px center',
-        paddingRight: 32,
-      }}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function Slider({
-  label, value, min, max, step, onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <span style={SECTION_LABEL}>{label}</span>
-        <span
-          style={{
-            fontFamily: IS,
-            fontSize: 11,
-            fontVariantNumeric: 'tabular-nums',
-            color: 'var(--dir-text-body)',
-          }}
-        >
-          {value.toFixed(2)}
-        </span>
-      </div>
-      <input
-        type="range"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        style={{
-          width: '100%',
-          accentColor: 'var(--dir-accent)',
-        }}
-      />
     </div>
   );
 }
