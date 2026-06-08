@@ -276,15 +276,17 @@ type ShapeContext = {
    *  cross-hatch / parallel-pass / pen-tip layers, falls back to buildPoints
    *  + pointsToPolylinePath since those need per-vertex transforms. */
   buildPath?: (seed: number, mods: ShapeModifiers) => string;
-  /** OPTIONAL pivot override for cross-hatch / parallel-pass layer transforms.
-   *  When this shape is rendered as one child of a group, the GROUP's bbox
-   *  center is passed here so all the group's children scale/rotate around a
-   *  shared pivot instead of each child rotating around its own centroid.
-   *  Added 2026-06-07 to fix the "multi-child SVGs look chaotic with
-   *  parallel-pass / cross-hatch" bug — without this, each <rect> + <line>
-   *  inside a <g> got its own pivot, producing 8 incoherent scaled outlines
-   *  on shapes like stackedSketchbooks. */
+  /** OPTIONAL pivot override (see groupPivot in transformElement). */
   pivotOverride?: { cx: number; cy: number };
+  /** OPTIONAL size override for the effectiveLayerCount / effectiveWobble
+   *  / effectiveRoughness clamps. When a child is part of a group, the GROUP's
+   *  bbox-min is passed here so multi-stroke (etc.) gets the layer count the
+   *  user actually picked even though the individual child is tiny.
+   *  Added 2026-06-07 — diagnostic confirmed multi-stroke was silently
+   *  downgrading to 1 layer on stackedSketchbooks because each book's bbox
+   *  was 14-18px and the clamp rule is "30px per layer." With this override,
+   *  the whole 84×70 group's bboxMin=70 lets multi-stroke fire as intended. */
+  bboxMinOverride?: number;
 };
 
 /** Compute protrude scale from a shape's smaller dimension. Playground baseline
@@ -391,7 +393,27 @@ function renderHandFeelShape(
   const ms = multiStrokeMeta(m.multiStroke);
   // SMART layer count clamp: small shapes can't fit many distinct layers
   // before they overlap into a solid blob. ~30px per supported layer.
-  const layerCount = effectiveLayerCount(ms.layerCount, ctx.bboxMin);
+  // Use GROUP bbox-min when provided — a child of a coherent group should
+  // get the layer count the user picked even if the child itself is tiny
+  // (the user reads the layers at GROUP scale, not child scale).
+  const effectiveBboxMin = Math.max(ctx.bboxMin, ctx.bboxMinOverride ?? 0);
+  const layerCount = effectiveLayerCount(ms.layerCount, effectiveBboxMin);
+
+  // DIAG 2026-06-07 — show why multi-stroke + sketching style aren't visibly
+  // working on multi-child shapes. Remove once shading calibration ships.
+  if ((window as { __dd_diag?: boolean }).__dd_diag) {
+    // eslint-disable-next-line no-console
+    console.log('[dd-diag] renderHandFeelShape', {
+      tag: sourceEl.tagName.toLowerCase(),
+      bboxMin: ctx.bboxMin.toFixed(1),
+      multiStrokeUserPicked: m.multiStroke,
+      multiStrokeMetaLayers: ms.layerCount,
+      effectiveLayerCount: layerCount,
+      sketchingStyle: m.sketchingStyle,
+      hasPivotOverride: !!ctx.pivotOverride,
+      pivotOverride: ctx.pivotOverride,
+    });
+  }
   const seeds = seedOffsets(baseSeed, layerCount);
   const usePenTip = m.penTip !== 'plain';
   const endpointBehavior = m.endpointBehavior;
@@ -740,13 +762,12 @@ export function transformElement(
   m: F3ModifiersState,
   seed: number,
   ownerDoc: Document,
-  /** Optional group-level pivot. When transformElement is called recursively
-   *  on a child of a <g>, the parent group's bbox center is passed here so all
-   *  the group's children share one pivot for cross-hatch / parallel-pass
-   *  layer transforms. Without this, each child computed its own centroid
-   *  independently → 8-children groups (stackedSketchbooks etc.) looked
-   *  chaotic with parallel-pass. Added 2026-06-07. */
+  /** Optional group-level pivot for cross-hatch / parallel-pass. */
   groupPivot?: { cx: number; cy: number },
+  /** Optional group-level bbox-min for the size-aware clamps
+   *  (effectiveLayerCount etc.) so children of a coherent group don't get
+   *  multi-stroke silently downgraded just because the individual child is tiny. */
+  groupBBoxMin?: number,
 ): SVGElement[] {
   const tag = el.tagName.toLowerCase();
   switch (tag) {
@@ -772,6 +793,7 @@ export function transformElement(
         // three axes (wobble, bowing, curveTightness) compose at render time.
         buildPath: (s, mods) => roughRectPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
         pivotOverride: groupPivot,
+        bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
     }
     case 'circle': {
@@ -797,6 +819,7 @@ export function transformElement(
         // Playground-native cubic-Bezier oval + bowing/curve extension
         buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
         pivotOverride: groupPivot,
+        bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
     }
     case 'ellipse': {
@@ -823,6 +846,7 @@ export function transformElement(
         // Playground-native cubic-Bezier oval + bowing/curve extension
         buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
         pivotOverride: groupPivot,
+        bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
     }
     case 'line': {
@@ -845,6 +869,7 @@ export function transformElement(
         // Playground-native cubic-Bezier line + bowing/curve extension
         buildPath: (s, mods) => roughLinePathExtended(x1, y1, x2, y2, ROUGH, m.bowing, m.curveTightness, s, mods),
         pivotOverride: groupPivot,
+        bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
     }
     case 'polygon':
@@ -891,6 +916,7 @@ export function transformElement(
           return segPoints;
         },
         pivotOverride: groupPivot,
+        bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
     }
     case 'path': {
@@ -1045,31 +1071,47 @@ export function transformElement(
         // pointsToPolylinePath (which now has wobble-driven control-point jitter
         // from earlier Day 1 edit). Bowing + curve apply via that fallback too.
         pivotOverride: groupPivot,
+        bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
     }
     case 'text':
       return [el.cloneNode(true) as SVGElement];
     case 'g': {
-      // Compute the group's bbox center for use as a SHARED PIVOT across all
-      // children's cross-hatch / parallel-pass layer transforms. Without this,
-      // each child rotated/scaled around its own centroid → multi-child shapes
-      // (stackedSketchbooks = 4 books × 2 elements) produced 8 incoherent
-      // overlapping outlines. With shared pivot: all the group's children
-      // scale/rotate around the same point → coherent concentric ghost.
+      // CRITICAL: always compute THIS group's own pivot from its own bbox.
+      // Do NOT inherit from a parent's pivot. Why: if 4 book-groups all
+      // inherit the SVG's center as pivot, then cross-hatch (rotation)
+      // makes the top book swing left while the bottom book swings right
+      // (both around the same far-away pivot) → chaos. Each book group
+      // should rotate around ITS OWN center for a clean crisscross.
       //
-      // If parent already passed a groupPivot (nested group), inherit it.
-      // Otherwise compute our own from this group's children's bbox.
-      let nextPivot = groupPivot;
-      if (!nextPivot) {
-        const bbox = computeGroupBBox(el);
-        if (bbox) {
-          nextPivot = { cx: bbox.x + bbox.w / 2, cy: bbox.y + bbox.h / 2 };
-        }
+      // BBox-min, on the other hand, IS inherited — multi-stroke layer
+      // count caps benefit from the WIDER container's size (the user reads
+      // strokes at group scale, not tiny-child scale).
+      const groupBBox = computeGroupBBox(el);
+      let nextPivot = groupBBox
+        ? { cx: groupBBox.x + groupBBox.w / 2, cy: groupBBox.y + groupBBox.h / 2 }
+        : groupPivot;  // fall back to inherited only if we can't compute our own
+      const nextBBoxMin =
+        groupBBoxMin !== undefined
+          ? groupBBoxMin
+          : groupBBox
+            ? Math.min(groupBBox.w, groupBBox.h)
+            : undefined;
+      // DIAG 2026-06-07
+      if ((window as { __dd_diag?: boolean }).__dd_diag) {
+        // eslint-disable-next-line no-console
+        console.log('[dd-diag] case g', {
+          childCount: el.children.length,
+          inheritedPivot: !!groupPivot,
+          computedBBox: groupBBox,
+          pivot: nextPivot,
+          groupBBoxMin: nextBBoxMin,
+        });
       }
       const flat: SVGElement[] = [];
       Array.from(el.children).forEach((child, idx) => {
         if (child instanceof SVGElement) {
-          flat.push(...transformElement(child, rc, m, seed + idx * 17, ownerDoc, nextPivot));
+          flat.push(...transformElement(child, rc, m, seed + idx * 17, ownerDoc, nextPivot, nextBBoxMin));
         }
       });
       return flat;

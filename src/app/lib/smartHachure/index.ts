@@ -116,6 +116,20 @@ export function renderSmartHachure(
     fillStyle: 'none',
   };
 
+  // SVG-level bbox-min: feed the WHOLE SVG's smaller dim down so multi-stroke
+  // layer count doesn't get silently clamped per-tiny-child (each book's
+  // bbox is 14-18px — too small per the 30px-per-layer rule). With the whole
+  // SVG's bbox-min the user-picked layer count fires.
+  //
+  // We do NOT pass an SVG-level pivot — each group inside the SVG should
+  // rotate/scale around its OWN center. SVG-wide pivot caused cross-hatch
+  // chaos (top book rotating opposite of bottom book around a shared far
+  // pivot). Each group's case 'g' handler computes its own pivot.
+  // Added 2026-06-07.
+  const svgBBoxMin = rootParentBBox
+    ? Math.min(rootParentBBox.w, rootParentBBox.h)
+    : undefined;
+
   let zIdx = 0;
   for (const child of originalChildren) {
     const regionPath = `${child.tagName.toLowerCase()}[${zIdx}]`;
@@ -145,7 +159,7 @@ export function renderSmartHachure(
     //    Filter the outline output to strip ANY element with a real fill;
     //    keep only stroke paths (fill=none/null/transparent).
     const seed = hashStringToSeed(regionPath);
-    const rawOutlineElements = transformElement(child, rc, outlineModifiers, seed, ownerDoc);
+    const rawOutlineElements = transformElement(child, rc, outlineModifiers, seed, ownerDoc, undefined, svgBBoxMin);
     const outlineElements = rawOutlineElements.filter((el) => {
       const f = el.getAttribute('fill');
       // Keep stroke-only elements (no fill, fill=none, fill=transparent).
