@@ -535,16 +535,48 @@ function renderHandFeelShape(
   for (let i = 0; i < layerCount; i++) {
     const seed = seeds[i];
     const mods: ShapeModifiers = { endpointBehavior, sketchingStyle, layerIndex: i };
-    let pts = buildPoints(seed, mods);
-    pts = applyLayerTransform(pts, sketchingStyle, i, cxCentroid, cyCentroid, isClosed);
 
-    // Compute per-layer transform. Single-pass + layer≥1 gets the stable
-    // micro-nudge (visible multi-stroke at any roughness). loose-overlap
-    // keeps its existing larger translate. parallel-pass + cross-hatch are
-    // already applied to points via applyLayerTransform.
+    // CHANGED 2026-06-08: for cross-hatch + parallel-pass on closed shapes,
+    // apply the rotation/scale as an SVG transform attribute on the rendered
+    // path (NOT by mutating points before pointsToPolylinePath). Why: mutating
+    // points then re-wrapping in pointsToPolylinePath added wobble ON TOP of
+    // already-jittered points → secondary layers looked visibly noisier than
+    // the base layer. With SVG transforms, all layers use the SAME clean
+    // built path (just rotated/scaled at the SVG level) → uniform line
+    // character across all layers, only the position differs.
+    const useSvgTransformForLayer =
+      i > 0 &&
+      (sketchingStyle === 'cross-hatch' ||
+        (sketchingStyle === 'parallel-pass' && isClosed));
+
+    let pts = buildPoints(seed, mods);
+    if (!useSvgTransformForLayer) {
+      // Only mutate points for non-SVG-transform paths (loose-overlap,
+      // single-pass, open-path parallel-pass via offsetLinePerpendicular).
+      pts = applyLayerTransform(pts, sketchingStyle, i, cxCentroid, cyCentroid, isClosed);
+    }
+
+    // Compute per-layer transform. Includes:
+    //   - cross-hatch: rotate around centroid (was point-mutation)
+    //   - parallel-pass closed: scale around centroid (was point-mutation)
+    //   - loose-overlap: visible drift translate
+    //   - single-pass: stable micro-nudge
     let layerTransform = '';
     if (i > 0) {
-      if (sketchingStyle === 'loose-overlap') {
+      if (sketchingStyle === 'cross-hatch') {
+        const angle = crossHatchRotationFor(i);
+        if (angle !== 0) {
+          layerTransform = `rotate(${angle} ${cxCentroid.toFixed(2)} ${cyCentroid.toFixed(2)})`;
+        }
+      } else if (sketchingStyle === 'parallel-pass' && isClosed) {
+        const s = parallelPassScaleFor(i);
+        if (s !== 1) {
+          // SVG scale(s) around (cx, cy): translate(cx, cy) scale(s) translate(-cx, -cy)
+          const tx = (cxCentroid * (1 - s)).toFixed(2);
+          const ty = (cyCentroid * (1 - s)).toFixed(2);
+          layerTransform = `translate(${tx} ${ty}) scale(${s.toFixed(3)})`;
+        }
+      } else if (sketchingStyle === 'loose-overlap') {
         const t = looseOverlapTranslate(i);
         if (t.dx || t.dy) layerTransform = `translate(${t.dx} ${t.dy})`;
       } else if (sketchingStyle === 'single-pass') {
@@ -572,15 +604,13 @@ function renderHandFeelShape(
       // 4 long cubic-Bezier segments per rect (vs our 32 short Q-bezier
       // segments), control points jittered at j()*1.4 amplitude. Result: wobble
       // produces the same visual wandering as playground at matched values.
-      // BUG FIX 2026-06-07: was checking sketchingStyle globally; this swapped
-      // layer 0's render function (playground-native vs polyline fallback) just
-      // because the USER picked cross-hatch/parallel-pass for SECONDARY layers.
-      // Result: switching sketching style visibly changed the BASE outline's
-      // line treatment, which isn't what sketchingStyle is supposed to control.
-      // FIX: only layers > 0 with cross-hatch/parallel-pass actually need the
-      // per-vertex-transform fallback. Layer 0 always uses the built path.
+      // BUG FIX 2026-06-08 (refinement): now that cross-hatch / parallel-pass
+      // (closed) apply via SVG transform attribute instead of per-vertex
+      // mutation, ALL layers can use the playground-native built path.
+      // Only open-path parallel-pass (offsetLinePerpendicular) still needs
+      // the per-vertex transform fallback for now.
       const needsPerVertexTransform =
-        i > 0 && (sketchingStyle === 'cross-hatch' || sketchingStyle === 'parallel-pass');
+        i > 0 && sketchingStyle === 'parallel-pass' && !isClosed;
       const canUseBuiltPath = ctx.buildPath !== undefined && !needsPerVertexTransform;
       let d: string;
       if (canUseBuiltPath) {
