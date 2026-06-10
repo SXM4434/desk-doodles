@@ -6,7 +6,52 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 ---
 
-## Current state · 2026-06-09 evening (Day 9 — Day 7 Make checkpoint OVERDUE, drawn-canvas modifier overhaul + 681-pattern sweep harness landed)
+## Current state · 2026-06-10 (Day 9 of 14 CLOSED — Make checkpoint + doc mirror + research spree + 21-synthesis v1.2 finalized)
+
+### Day 9 (06-10) — Make + docs + research
+
+**Make checkpoint #1 LANDED** (2 days late from Day 7 plan). 34 files uploaded to Figma Make via drag-drop + AI-routing prompt. App routes / · /audit · /canvas · /playground · /public expected to render. Smoke verification pending in Make preview.
+
+**Full doc mirror to `docs/`:** 51 markdown files (1.1MB) mirrored from portfolio + memory into a self-contained `docs/locked-refs/` + `docs/memory/` + `docs/research/` tree. `docs/README.md` is the index. CLAUDE.md updated to point at local mirror. Source-of-truth still in portfolio repo (post-makeathon port-back).
+
+**7-agent research spree COMPLETE (6 parallel + 1 gap-fill).** Coverage: (1) NPR shading on 3D surfaces, (2) image-to-3D API landscape 2026, (3) Three.js 2D-to-3D primitives + Free Stroke source breakdown, (4) source-darkness → hatch density math (TAM/Murray-Davies/Yule-Nielsen/JND), (5) pipeline orchestration patterns, (6) frontier 2D-to-3D + NPR product survey 2026, (7) gap-fill pass. All returned with real verifiable citations.
+
+**Synthesis doc FINALIZED v1.2** at `docs/research/21-research-3d-pipeline-and-style-translation.md` (+ mirror at portfolio). 822 lines · 13 sections + §0 ask-coverage + §5b Free Stroke detail + §5c-equivalent gap-fill content · 55 citations · covers all 17 of Sebs's asks.
+
+**Key research-derived decisions (LOCKED in synthesis doc v1.2):**
+
+- **The wedge:** "user's hand survives the round-trip" — drawn marks generate 3D form AND 3D form re-renders in marks of the same family. No shipping competitor does this end-to-end (Tripo / Meshy / Krea / Womp all strip the artist's signature).
+- **3D NPR rendering:** screen-space hatching post-process via `@react-three/postprocessing` for makeathon scope. Praun TAM math maps to fragment shader uniforms. Object-space TAM 3D-texture path is the post-makeathon migration target.
+- **3D geometry (easy):** ship Rod (TubeGeometry) + Extrude (ExtrudeGeometry) on Day 11. Solid (raster→marching-squares) + Inflate-Lite (swept capsule) on Day 12-13 if time. True Teddy chordal-axis = 1-2 weeks, out of scope.
+- **3D geometry (hard):** Tripo + TRELLIS via fal.ai as the dual-API integration. Tripo $50 free dev credits; TRELLIS $20 free + ~$0.10/gen + 68% benchmark wins. Stable Fast 3D (0.5s) as wow-factor optional.
+- **Vision LLM router:** Claude/GPT-4o/Gemini analyze → route to right 3D-generator API. Novel territory (no production case studies) → distinctive wedge.
+- **Pipeline orchestration:** typed async function chain + Cockatiel circuit breaker + OPFS for GLB / IndexedDB for metadata / SubtleCrypto content-hash. Skip XState/LangGraph/Mastra (overkill for 5 stages).
+- **Smart Hachure math:** single `coverageToParams(a, fillStyle) → (gap, weight, layers)` function. 8-band L* quantization (Praun + Mahy JND validates). Per-fillStyle inverse equations: Murray-Davies for hachure, Beer-Lambert √2 for cross-hatch, weighted Voronoi/Secord for dots, path-length-per-area for zigzag.
+- **Auto-resize on input:** confirmed (any uploaded SVG/image normalized to canonical size). Reshape controls = post-MVP polish.
+
+### Make upload checkpoint summary
+
+Commit `e6c7889` pushed to `SXM4434/desk-doodles main` 2026-06-10. 34 files (7 REPLACE + 27 ADD) drag-dropped to Figma Make with the AI-routing prompt. The desk-doodles Make project now has package.json with NO Rapier, App.tsx routing through React Router, full Smart Hachure engine + audit + canvas + playground + chrome controls.
+
+### Day 9 ledger (shipped 06-10)
+
+- Drawn-canvas full overhaul committed + pushed (`e6c7889` on SXM4434/desk-doodles main)
+- Make checkpoint #1 landed (34 files dropped + AI-routed in Make)
+- 681-pattern sweep × 4 phases × 6 parallel workers — clean mosaic
+- 51-file doc mirror from portfolio → `docs/`, committed
+- 7-agent research spree (6 parallel + 1 gap-fill) on 3D + style architecture
+- 822-line 21-research synthesis doc v1.2 covering all 17 asks, committed
+- CLAUDE.md + SESSION-HANDOFF.md updated + committed
+
+### NEXT MOVE (Day 10 = 06-11)
+
+1. Task #22: Make smoke test — verify all 5 routes render in Make preview
+2. Submit Contra social URL to complete entry
+3. Day 10 MVP work: public canvas + Supabase wiring (1 table: `id · session_id · svg_blob_url · created_at`)
+
+---
+
+## Previously current state · 2026-06-09 evening (Day 9 — Day 7 Make checkpoint OVERDUE, drawn-canvas modifier overhaul + 681-pattern sweep harness landed)
 
 ### Day 9 session — drawn-canvas full overhaul + canvas sweep infra
 

@@ -114,14 +114,28 @@ Other dev servers may be running:
 
 # Pull Manually When Needed
 
-Source-of-truth docs that drive Desk Doodles still live in the portfolio repo:
+All load-bearing docs are now **mirrored locally** at `docs/` for self-contained makeathon work. Source-of-truth still lives in the portfolio repo; this folder is a 2026-06-10 snapshot.
 
-- `~/Desktop/Projects/portfolio/portfolio-system-lab/docs/labs/hero/cells/F3-smart-hachure-system/makeathon-plan.md` — 14-day plan + Smart Rendering System phases
-- `…/F3-smart-hachure-system/09-LOCKED-MODEL.md` — Smart Hachure contract (I-1..I-14)
-- `…/F3-smart-hachure-system/19-research-cross-axis-interconnection.md` — cross-axis interconnection matrix
-- `…/F3-smart-hachure-system/20-research-figma-make-capabilities.md` — Make constraints, AI credit budget, deps
-- `…/F3-smart-hachure-system/18-scope-audit.md` — 9 D-decisions locked
-- `…/F3-smart-hachure-system/07-architecture-ml-pipeline.md` — recognition system + audit-catalog framing
-- `…/cells/F3-shading-calibration-spec.md` — full hachure/cross-hatch/dots calibration spec
+**Local mirror (read FIRST for any non-trivial work):**
 
-Reference, don't duplicate. Port-back of any doc happens post-makeathon.
+- `docs/README.md` — index + read-order guide
+- `docs/locked-refs/F3-smart-hachure-system/09-LOCKED-MODEL.md` — Smart Hachure contract (I-1..I-13). THE CONTRACT.
+- `docs/locked-refs/F3-smart-hachure-system/makeathon-plan.md` — 14-day plan + §8.6 Smart Rendering System
+- `docs/locked-refs/F3-siblings/F3-shading-calibration-spec.md` — per-modifier math + ranges + bugs
+- `docs/locked-refs/F3-siblings/F3-toggle-architecture.md` — 7-axis taxonomy + 3D Path 1 styles + rotation-stability research
+- `docs/locked-refs/F3-smart-hachure-system/19-research-cross-axis-interconnection.md` — 5-cluster matrix
+- `docs/locked-refs/F3-smart-hachure-system/20-research-figma-make-capabilities.md` — Make constraints (anchors NO Rapier)
+- `docs/locked-refs/F3-smart-hachure-system/18-scope-audit.md` — 9 D-decisions locked
+- `docs/locked-refs/F3-smart-hachure-system/07-architecture-ml-pipeline.md` — `signals → classify → treatment` pipeline + audit-as-foundation
+- `docs/locked-refs/system/` — locked color (W1), typography, spacing, cross-system-rules, north-star-filter
+- `docs/memory/project_desk_doodles_makeathon.md` — THE project memory (scope, deadline, app architecture)
+- `docs/memory/project_f3_shading_port_to_3d.md` — SVG and 3D have SEPARATE Style dropdowns; SVG-port bridges via EdgesGeometry
+- `docs/memory/project_generalizable_rendering_decision_pattern.md` — pipeline pattern is GENERAL; don't pre-build meta-engine
+- `docs/research/` — original-here research synthesized during Desk Doodles work
+
+**Source-of-truth (don't edit the local mirror — edit there, then re-mirror):**
+
+- Portfolio repo: `~/Desktop/Projects/portfolio/portfolio-system-lab/docs/`
+- Memory: `~/.claude/projects/-Users-sebs/memory/`
+
+Port-back of any work TO portfolio happens post-makeathon (after 2026-06-18).
