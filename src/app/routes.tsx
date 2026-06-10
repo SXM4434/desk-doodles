@@ -4,6 +4,7 @@ import { DeskDoodlesHome } from './components/DeskDoodles/DeskDoodlesHome';
 import { DeskDoodlesCanvas } from './components/DeskDoodles/DeskDoodlesCanvas';
 import { DeskDoodlesPublicCanvas } from './components/DeskDoodles/DeskDoodlesPublicCanvas';
 import { DeskDoodlesPlayground } from './components/DeskDoodles/DeskDoodlesPlayground';
+import { DeskDoodlesAudit } from './components/DeskDoodles/DeskDoodlesAudit';
 
 function NotFound() {
   return (
@@ -35,5 +36,6 @@ export const router = createBrowserRouter([
   { path: '/canvas', Component: DeskDoodlesCanvas },
   { path: '/public', Component: DeskDoodlesPublicCanvas },
   { path: '/playground', Component: DeskDoodlesPlayground },
+  { path: '/audit', Component: DeskDoodlesAudit },
   { path: '*', Component: NotFound },
 ]);

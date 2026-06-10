@@ -128,7 +128,20 @@ export function SmartHachureChrome() {
             heading: 'SVG render style',
             options: F3_SVG_STYLES.map((s) => ({ value: s.id, label: s.label, detail: s.detail })),
           }]}
-          onChange={(v) => setSvgStyle(v as typeof svgStyle)}
+          onChange={(v) => {
+            const nextStyle = v as typeof svgStyle;
+            setSvgStyle(nextStyle);
+            // Auto-snap modifiers to the new style's preset (locked decision
+            // 2026-06-02, never landed). Without this, picking newsprint /
+            // wet-ink / etc. shows the GLOBAL defaults instead of the style's
+            // own calibration, so styles look near-clean until user clicks
+            // Reset. Captured by /audit visual scan 2026-06-08.
+            const next = applyStylePreset(mods, nextStyle);
+            (Object.keys(next) as (keyof typeof next)[]).forEach((k) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              setMod(k, (next as any)[k]);
+            });
+          }}
           width={undefined}
           popoverWidth={360}
         />
@@ -198,17 +211,22 @@ export function SmartHachureChrome() {
                 value={mods.penTip}
                 sections={[{
                   heading: 'Pen-tip preset (perfect-freehand)',
+                  // 7 of 8 options below currently stub to perfect-freehand
+                  // default. Tagged "(WIP)" 2026-06-08 so the slider doesn't
+                  // lie to the user. Implementation tracked in tasks for
+                  // post-Smart-Hachure pickup.
                   options: PEN_TIP_STEPS.map((s) => ({
-                    value: s, label: s,
+                    value: s,
+                    label: s === 'plain' ? s : `${s} (WIP)`,
                     detail:
                       s === 'plain' ? 'Plain stroke — uniform width, no taper'
-                      : s === 'ballpoint' ? 'Clean uniform, slight endpoint thinning'
-                      : s === 'fineliner' ? 'Thin uniform, hard caps'
-                      : s === 'pencil-hb' ? 'Mild width variation, light grain'
-                      : s === 'pencil-2b' ? 'Stronger variation, heavier grain'
-                      : s === 'felt-tip' ? 'Thicker uniform, soft caps'
-                      : s === 'chisel' ? 'Strong width variation (calligraphic)'
-                      : 'Heavy variable width, edge-jittered grain',
+                      : s === 'ballpoint' ? 'Planned: clean uniform, slight endpoint thinning (currently stubbed to plain)'
+                      : s === 'fineliner' ? 'Planned: thin uniform, hard caps (currently stubbed)'
+                      : s === 'pencil-hb' ? 'Planned: mild width variation, light grain (currently stubbed)'
+                      : s === 'pencil-2b' ? 'Planned: stronger variation, heavier grain (currently stubbed)'
+                      : s === 'felt-tip' ? 'Planned: thicker uniform, soft caps (currently stubbed)'
+                      : s === 'chisel' ? 'Planned: strong width variation, calligraphic (currently stubbed)'
+                      : 'Planned: heavy variable width, edge-jittered grain (currently stubbed)',
                   })),
                 }]}
                 onChange={(v) => setMod('penTip', v as PenTipStep)}
@@ -224,6 +242,16 @@ export function SmartHachureChrome() {
               max={SLIDER_SPECS.wobble.max}
               step={SLIDER_SPECS.wobble.step}
               onChange={(v) => setMod('wobble', v)}
+            />
+          )}
+          {has('jaggedness') && (
+            <Slider
+              label="Jaggedness"
+              value={mods.jaggedness}
+              min={SLIDER_SPECS.jaggedness.min}
+              max={SLIDER_SPECS.jaggedness.max}
+              step={SLIDER_SPECS.jaggedness.step}
+              onChange={(v) => setMod('jaggedness', v)}
             />
           )}
           {has('roughness') && (

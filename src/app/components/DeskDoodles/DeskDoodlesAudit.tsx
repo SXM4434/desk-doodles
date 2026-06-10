@@ -1,0 +1,253 @@
+// DeskDoodlesAudit — full-inventory verification matrix.
+//
+// Renders ALL 93 PinShape cases as a single grid wrapped in SvgStyleTransform,
+// alongside the same SmartHachureChrome the playground uses. Twisting any
+// modifier updates all 93 simultaneously — visual scan of the grid IS the
+// audit pass. Per-cell label includes subject + shape id so failures are
+// pinpointable in the dd-diag console output.
+//
+// Companion of DeskDoodlesPlayground; kept separate so the playground stays
+// single-item focused.
+import { useEffect, useMemo, type CSSProperties } from 'react';
+import { NavLink } from 'react-router';
+import { IS, ISe } from '../../lib/typography';
+import {
+  F3_TROPHY_WALL_SUBJECTS,
+  F3_PEGBOARD_SUBJECTS,
+  type F3TrophyWallShapeId,
+  type F3PegboardShapeId,
+} from '../../lib/items/identitySet';
+import { PinShape } from '../../lib/items/PinShape';
+import { PegToolShape } from '../../lib/items/PegToolShape';
+import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
+import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
+
+type AuditCell = {
+  kind: 'trophy';
+  shape: F3TrophyWallShapeId;
+  label: string;
+  subjectId: string;
+  subjectName: string;
+} | {
+  kind: 'pegboard';
+  shape: F3PegboardShapeId;
+  label: string;
+  subjectId: string;
+  subjectName: string;
+};
+
+/** Flatten all subject forms → one cell per UNIQUE shape id.
+ *  Trophy Wall (93) + Pegboard (104) both ported per fork-everything rule.
+ *  Some shape ids appear under multiple subjects in the trophy set
+ *  (e.g. `polaroid` under GF + fidget + seltzer); dedupe by shape id,
+ *  keep first subject seen. Pegboard + Trophy share no shape names so
+ *  no cross-kind dedupe needed. */
+function flattenInventory(): AuditCell[] {
+  const seenTrophy = new Set<F3TrophyWallShapeId>();
+  const seenPeg = new Set<F3PegboardShapeId>();
+  const out: AuditCell[] = [];
+  for (const subj of F3_TROPHY_WALL_SUBJECTS) {
+    for (const form of subj.forms) {
+      if (seenTrophy.has(form.shape)) continue;
+      seenTrophy.add(form.shape);
+      out.push({
+        kind: 'trophy',
+        shape: form.shape,
+        label: form.label,
+        subjectId: subj.id,
+        subjectName: subj.displayName,
+      });
+    }
+  }
+  for (const subj of F3_PEGBOARD_SUBJECTS) {
+    for (const form of subj.forms) {
+      if (seenPeg.has(form.shape)) continue;
+      seenPeg.add(form.shape);
+      out.push({
+        kind: 'pegboard',
+        shape: form.shape,
+        label: form.label,
+        subjectId: subj.id,
+        subjectName: subj.displayName,
+      });
+    }
+  }
+  return out;
+}
+
+export function DeskDoodlesAudit() {
+  const inventory = useMemo(flattenInventory, []);
+
+  // Auto-enable Smart Hachure v2 + dd-diag console logging — playground does
+  // the same dance for smartHachure; we also flip __dd_diag so silent clamps
+  // log automatically.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    let needReload = false;
+    if (url.searchParams.get('smartHachure') !== '1') {
+      url.searchParams.set('smartHachure', '1');
+      needReload = true;
+    }
+    if (needReload) {
+      window.history.replaceState({}, '', url.toString());
+      window.location.reload();
+      return;
+    }
+    (window as { __dd_diag?: boolean }).__dd_diag = true;
+    return () => {
+      (window as { __dd_diag?: boolean }).__dd_diag = false;
+    };
+  }, []);
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'grid',
+        gridTemplateColumns: '1fr 480px',
+        background: 'var(--dir-bg)',
+        color: 'var(--dir-text-primary)',
+        fontFamily: IS,
+      }}
+    >
+      {/* ─── LEFT — audit grid ─────────────────────────────────────── */}
+      <main style={{ padding: '20px 28px', overflowY: 'auto' }}>
+        <header
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: 16,
+            marginBottom: 18,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
+            <NavLink
+              to="/"
+              style={{
+                fontFamily: ISe,
+                fontSize: 17,
+                letterSpacing: '-0.01em',
+                color: 'var(--dir-text-primary)',
+                textDecoration: 'none',
+              }}
+            >
+              Desk Doodles
+            </NavLink>
+            <span style={LABEL}>Audit · {inventory.length} shapes</span>
+          </div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
+            <NavLink to="/playground" style={LINK}>← Playground</NavLink>
+            <span style={{ ...LABEL, color: 'var(--dir-text-body-soft)' }}>
+              dd-diag on (check console)
+            </span>
+          </div>
+        </header>
+
+        <p style={{ ...LABEL, color: 'var(--dir-text-body-soft)', marginBottom: 14 }}>
+          Every shape rendered through current Style + Modifier state. Twist controls →
+          all cells update. Failures (silent clamp, broken render, no-op past threshold)
+          are visible by visual scan + dd-diag console output.
+        </p>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+            gap: 18,
+          }}
+        >
+          {inventory.map((cell) => (
+            <article
+              key={cell.shape}
+              data-shape-id={cell.shape}
+              data-subject-id={cell.subjectId}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                padding: 10,
+                border: '1px solid var(--dir-border)',
+                borderRadius: 6,
+                background: 'var(--dir-raised)',
+              }}
+            >
+              <div
+                style={{
+                  aspectRatio: '1 / 1',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  background: 'var(--dir-bg)',
+                  borderRadius: 4,
+                }}
+              >
+                <SvgStyleTransform>
+                  {cell.kind === 'trophy'
+                    ? <PinShape shape={cell.shape} />
+                    : <PegToolShape shape={cell.shape} />}
+                </SvgStyleTransform>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 28 }}>
+                <span
+                  style={{
+                    fontFamily: IS,
+                    fontSize: 10,
+                    fontWeight: 500,
+                    color: 'var(--dir-text-primary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={cell.label}
+                >
+                  {cell.label}
+                </span>
+                <span
+                  style={{
+                    fontFamily: IS,
+                    fontSize: 9,
+                    color: 'var(--dir-text-body-soft)',
+                    letterSpacing: '0.04em',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  {cell.subjectName} · {cell.shape}
+                </span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </main>
+
+      {/* ─── RIGHT — same chrome as playground ─────────────────────── */}
+      <aside
+        style={{
+          borderLeft: '1px solid var(--dir-border)',
+          background: 'var(--dir-raised)',
+          overflowY: 'auto',
+          maxHeight: '100vh',
+        }}
+      >
+        <SmartHachureChrome />
+      </aside>
+    </div>
+  );
+}
+
+const LABEL: CSSProperties = {
+  fontFamily: IS,
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: 'var(--dir-text-secondary)',
+};
+
+const LINK: CSSProperties = {
+  fontFamily: IS,
+  fontSize: 11,
+  color: 'var(--dir-text-body)',
+  textDecoration: 'none',
+};

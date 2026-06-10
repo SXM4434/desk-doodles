@@ -66,6 +66,13 @@ export type F3ModifiersState = {
    *  > 1.4 enters Excalidraw signature zone (chrome warn). Added 2026-06-04 per
    *  09-LOCKED-MODEL.md I-11 to restore playground's master dial. */
   wobble: number;           // 0 - 2
+  /** Jaggedness — added 2026-06-08 per Sebs. Decoupled from wobble's amplitude:
+   *  jaggedness controls how JAGGED vs SMOOTH the rendered path looks (sharp
+   *  angle changes vs flowing curves). Same conceptual role as the original
+   *  playground "rough.js roughness" knob — wobble = how far the line wanders,
+   *  jaggedness = how jagged the wandering reads. Threaded into rough.js's
+   *  `roughness` parameter (was driven by wobble). */
+  jaggedness: number;       // 0 - 2
   roughness: number;        // 0 - 12
   bowing: number;           // 0 - 5
   strokeWidth: number;      // 0.1 - 10
@@ -119,6 +126,7 @@ export type F3ModifiersState = {
 // when active — but state persists across style switches).
 const DEFAULT: F3ModifiersState = {
   wobble: 1.0,              // Playground calibration baseline (I-11)
+  jaggedness: 0,            // Splinter is opt-in via slider, NOT default (2026-06-09 per Sebs)
   roughness: 1.6,
   bowing: 1.0,
   strokeWidth: 1.2,

@@ -51,14 +51,26 @@ export const STYLE_PRESETS: Record<F3SvgStyle, Partial<F3ModifiersState>> = {
   'clean':           { wobble: 0, roughness: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'none', fillStyle: 'hachure' },
   'outline-only':    { wobble: 0, roughness: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0,   texture: 'none' },
   'wireframe':       { wobble: 0, roughness: 0, bowing: 0, strokeWidth: 0.8, inkIntensity: 1.0, fillOpacity: 0, texture: 'none' },
-  'wet-ink':         { wobble: 0.6, strokeWidth: 1.2, inkIntensity: 1.0, fillOpacity: 0.9, texture: 'wet-ink',  blurAmount: 0.4, bleed: 0.15 },
-  'charcoal':        { wobble: 1.0, strokeWidth: 1.4, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'chalky',   grainIntensity: 2.5, smudgeAmount: 0, pressureVariance: 0.3 },
-  'newsprint':       { wobble: 0, strokeWidth: 0.9, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'stipple', dotSize: 1.2, dotSpacing: 4, dotPattern: 'staggered' },
-  'risograph':       { wobble: 0.4, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0.7, texture: 'none',     offsetDistance: 2, offsetAngle: 45, colorShift: 0.7, risoSecondaryColor: 'accent', registrationError: 0 },
-  'rough-handdrawn': { wobble: 1.0, roughness: 1.6, bowing: 1.0, strokeWidth: 1.2, curveTightness: 0, multiStroke: 'double', fillStyle: 'hachure', hachureGap: 4, hachureAngle: -41, fillDensity: 0.7, texture: 'paper-tooth' },
-  'sketchy':         { wobble: 0.6, roughness: 0.8, bowing: 0.4, strokeWidth: 0.9, curveTightness: 0, multiStroke: 'single', fillStyle: 'none', hachureGap: 4, hachureAngle: -41, fillDensity: 0.5, texture: 'light', inkIntensity: 0.85 },
-  'bold-ink':        { wobble: 0.4, roughness: 0.6, bowing: 0.2, strokeWidth: 2.8, curveTightness: 0, multiStroke: 'off', fillStyle: 'solid', fillDensity: 1.0, texture: 'none' },
-  'stipple':         { wobble: 0.8, roughness: 1.2, bowing: 0.7, strokeWidth: 0.7, curveTightness: 0, multiStroke: 'single', fillStyle: 'dots', hachureGap: 2.5, hachureAngle: 0, fillDensity: 1.0, texture: 'stipple', dotSize: 1.0, dotSpacing: 3, dotScatter: 0.3 },
+  // 2026-06-08 default calibration bump per Sebs: each style should READ as
+  // itself at the default thumbnail scale (~140px), not as near-clean. Prior
+  // values made wet-ink / charcoal / newsprint / risograph almost
+  // indistinguishable from clean in the /audit grid.
+  'wet-ink':         { wobble: 0.6, strokeWidth: 1.2, inkIntensity: 1.0, fillOpacity: 0.9, texture: 'wet-ink',  blurAmount: 1.5, bleed: 0.3 },
+  'charcoal':        { wobble: 1.0, strokeWidth: 1.4, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'chalky',   grainIntensity: 3.0, smudgeAmount: 0, pressureVariance: 0.3 },
+  'newsprint':       { wobble: 0, strokeWidth: 0.9, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'stipple', textureIntensity: 2.0, dotSize: 1.2, dotSpacing: 4, dotPattern: 'staggered' },
+  'risograph':       { wobble: 0.4, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0.7, texture: 'none',     offsetDistance: 4, offsetAngle: 45, colorShift: 0.7, risoSecondaryColor: 'accent', registrationError: 0 },
+  // curveTightness 0 → 0.4 (2026-06-08): per §I-13 pair-wise interactions,
+  // curveTightness dampens wobble jitter scale + bowing offset. At default 0
+  // the rough.js double-stroke + wobble jitter produced visibly splintered
+  // edges on small rects (band patch, gig ticket). 0.4 smooths the rough
+  // character without flattening the hand-drawn feel.
+  // Jaggedness defaults set to 0 (2026-06-09 per Sebs): splinter is opt-in
+  // via slider, NOT default. Prior 0.6/0.4/0.5/0.3 stamped perpendicular
+  // zigzag intermediates on every shape at default state.
+  'rough-handdrawn': { wobble: 1.0, jaggedness: 0, roughness: 1.6, bowing: 1.0, strokeWidth: 1.2, curveTightness: 0.4, multiStroke: 'double', fillStyle: 'hachure', hachureGap: 4, hachureAngle: -41, fillDensity: 0.7, texture: 'paper-tooth' },
+  'sketchy':         { wobble: 0.6, jaggedness: 0, roughness: 0.8, bowing: 0.4, strokeWidth: 0.9, curveTightness: 0, multiStroke: 'single', fillStyle: 'none', hachureGap: 4, hachureAngle: -41, fillDensity: 0.5, texture: 'light', inkIntensity: 0.85 },
+  'bold-ink':        { wobble: 0.4, jaggedness: 0, roughness: 0.6, bowing: 0.2, strokeWidth: 2.8, curveTightness: 0, multiStroke: 'off', fillStyle: 'solid', fillDensity: 1.0, texture: 'none' },
+  'stipple':         { wobble: 0.8, jaggedness: 0, roughness: 1.2, bowing: 0.7, strokeWidth: 0.7, curveTightness: 0, multiStroke: 'single', fillStyle: 'dots', hachureGap: 2.5, hachureAngle: 0, fillDensity: 1.0, texture: 'stipple', dotSize: 1.0, dotSpacing: 3, dotScatter: 0.3 },
 };
 
 // Helper: apply preset to current state (used by chrome's "Reset to preset" button)
@@ -235,9 +247,12 @@ function looseOverlapTranslate(layerIndex: number): { dx: number; dy: number } {
 function stableLayerNudge(layerIndex: number, strokeWidth: number): { dx: number; dy: number } {
   if (layerIndex === 0) return { dx: 0, dy: 0 };
   const angle = layerIndex * 0.7;
-  const base = Math.max(0.6, strokeWidth * 1.0);
-  const step = Math.max(0.15, strokeWidth * 0.2);
-  const magnitude = Math.min(4, base + (layerIndex - 1) * step);
+  // Increased again (2026-06-09 take 2): at heart-scale drawings (300+px) the
+  // earlier 2-4px offsets were still barely distinguishable. Bumping to
+  // 3-9px so triple multi-stroke reads as three distinct outlines at zoom.
+  const base = Math.max(3.5, strokeWidth * 2.5);
+  const step = Math.max(2.0, strokeWidth * 1.0);
+  const magnitude = Math.min(14, base + (layerIndex - 1) * step);
   return {
     dx: magnitude * Math.cos(angle),
     dy: magnitude * Math.sin(angle),
@@ -278,6 +293,12 @@ type ShapeContext = {
   buildPath?: (seed: number, mods: ShapeModifiers) => string;
   /** OPTIONAL pivot override (see groupPivot in transformElement). */
   pivotOverride?: { cx: number; cy: number };
+  /** OPTIONAL: when true, ctx.buildPath handles per-layer transforms internally
+   *  (cross-hatch / parallel-pass) so the normal needsPerVertexTransform fallback
+   *  is bypassed. Used by case 'path' Catmull-Rom buildPath which can apply
+   *  perpendicular offset to anchors before smoothing → clean parallel curves
+   *  on dense drawn input instead of the chaos-fallback. */
+  handlesPerVertexLayer?: boolean;
   /** OPTIONAL size override for the effectiveLayerCount / effectiveWobble
    *  / effectiveRoughness clamps. When a child is part of a group, the GROUP's
    *  bbox-min is passed here so multi-stroke (etc.) gets the layer count the
@@ -293,6 +314,51 @@ type ShapeContext = {
  *  is ~140px; below that we scale down so endpoints don't blow out. */
 function protrudeScaleForBbox(bboxMin: number): number {
   return Math.max(0.25, Math.min(1.0, bboxMin / 140));
+}
+
+/** Inject jaggedness — adds perpendicular zig-zag intermediates between each
+ *  pair of consecutive sampled points. Does NOT change wobble amplitude (the
+ *  outer points stay where they were); just adds sharp angle character ALONG
+ *  each segment so the line reads as splintered / zigzag at high jaggedness,
+ *  smooth at low. Added 2026-06-08 per Sebs's "splinter toggle" intent. */
+function injectJaggedness(
+  points: Array<[number, number]>,
+  jaggedness: number,
+  seed: number,
+): Array<[number, number]> {
+  if (points.length < 2 || jaggedness <= 0.05) return points;
+  // jagged 0.5 → 1 zig per segment; jagged 1 → 2 zigs; jagged 2 → 4 zigs
+  const zigsPerSeg = Math.min(4, Math.max(1, Math.round(jaggedness * 2)));
+  // Perpendicular displacement scales with jaggedness so high jaggedness = wider zig
+  const ampScale = jaggedness * 0.9;
+  const r = seededRandom(seed + 9973);
+  const out: Array<[number, number]> = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const [ax, ay] = points[i - 1];
+    const [bx, by] = points[i];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.5) { out.push([bx, by]); continue; }
+    // unit perpendicular
+    const px = -dy / len;
+    const py = dx / len;
+    // segment-length-relative zig amplitude — keeps small segments from
+    // disappearing into noise, but lets long segments get visible zig
+    const ampPx = Math.min(len * 0.18, 1.2 + ampScale * 2.0);
+    for (let z = 1; z <= zigsPerSeg; z++) {
+      const t = z / (zigsPerSeg + 1);
+      const mx = ax + dx * t;
+      const my = ay + dy * t;
+      // alternate sign + small random jitter so zigs aren't perfectly regular
+      const sign = z % 2 === 0 ? -1 : 1;
+      const noise = (r() - 0.5) * 0.5;
+      const amp = ampPx * (sign + noise);
+      out.push([mx + px * amp, my + py * amp]);
+    }
+    out.push([bx, by]);
+  }
+  return out;
 }
 
 /**
@@ -348,9 +414,15 @@ function effectiveHachureGap(userGap: number, bboxMin: number): number {
 }
 
 /** Multi-stroke layer count caps based on shape size so layered strokes
- *  don't fully overlap on tiny items. ~30px per supported layer. */
+ *  don't fully overlap on tiny items.
+ *
+ *  RAISED 2026-06-08: ~30px per layer ceilinged at 3 layers for typical
+ *  60-100px shapes — user couldn't reach quad/quint/six/heavy regardless of
+ *  slider. Loosened to ~12px per layer (80px shape → 7 layers reachable,
+ *  100px → 8). Aligns with `feedback_more_toggle_options_better`: the user
+ *  picks the visual budget; the clamp is only a tiny-shape sanity bound. */
 function effectiveLayerCount(userLayers: number, bboxMin: number): number {
-  const sizeCappedLayers = Math.max(1, Math.ceil(bboxMin / 30));
+  const sizeCappedLayers = Math.max(1, Math.ceil(bboxMin / 12));
   return Math.min(Math.max(1, userLayers), sizeCappedLayers);
 }
 
@@ -367,7 +439,13 @@ function effectiveRoughness(userRoughness: number, bboxMin: number): number {
  *  60-80px so the same amplitude reads as shredded. Clamp so wobble's effect
  *  scales with shape size — small pins get muted wobble, big content gets full. */
 function effectiveWobble(userWobble: number, bboxMin: number): number {
-  const maxUseful = Math.max(0.3, bboxMin / 60);
+  // Floor 0.3 → 0.5 (2026-06-08 quick fix per Sebs): simple shapes (stick
+  // figure, simple pen) were getting too clamped at default rough-handdrawn
+  // (geomean of tiny bbox ⇒ wobble ≤ 0.3). 0.5 floor lifts the baseline so
+  // every shape reads as visibly hand-drawn at default without re-shredding
+  // small geometry (the geomean clamp + min-with-userWobble still bound it).
+  // Real fix = smart-layer per-element role classifier; this is the interim.
+  const maxUseful = Math.max(0.5, bboxMin / 60);
   return Math.min(userWobble, maxUseful);
 }
 
@@ -378,6 +456,336 @@ function effectiveFillWeight(userDensity: number, bboxMin: number): number {
   // For small shapes, halve the effective density to keep hachure airy.
   const sizeDamp = Math.max(0.5, Math.min(1.0, bboxMin / 100));
   return userDensity * 2 * sizeDamp;
+}
+
+/** Ramer-Douglas-Peucker polyline simplification.
+ *  Reduces dense input (drawn freehand / auto-traced) to audit-compatible
+ *  vertex density without losing curve shape. A point is dropped if its
+ *  perpendicular distance from the chord through its neighbors is < epsilon.
+ *  Audit shapes already sit at sparse density — RDP is a no-op for them. */
+function rdp(points: Array<[number, number]>, epsilon: number): Array<[number, number]> {
+  if (points.length < 3) return points;
+  const [x1, y1] = points[0];
+  const [x2, y2] = points[points.length - 1];
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lineLen = Math.hypot(dx, dy);
+  let maxDist = 0;
+  let maxIdx = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [px, py] = points[i];
+    const dist = lineLen === 0
+      ? Math.hypot(px - x1, py - y1)
+      : Math.abs(dy * px - dx * py + x2 * y1 - y2 * x1) / lineLen;
+    if (dist > maxDist) { maxDist = dist; maxIdx = i; }
+  }
+  if (maxDist > epsilon) {
+    const left = rdp(points.slice(0, maxIdx + 1), epsilon);
+    const right = rdp(points.slice(maxIdx), epsilon);
+    return [...left.slice(0, -1), ...right];
+  }
+  return [points[0], points[points.length - 1]];
+}
+
+/** Catmull-Rom smooth-curve path generator.
+ *  Converts a polyline (list of anchors) into a cubic-Bezier `d` string that
+ *  passes smoothly THROUGH every anchor — control points derived from the
+ *  tangent at each anchor (neighbor-difference). Hand-feel jitter is added to
+ *  the control points so the curve still reads as drawn-by-hand.
+ *
+ *  Why: after RDP simplifies a dense drawn input (heart → ~15-20 anchors),
+ *  pointsToPolylinePath produces straight-ish bezier segments between adjacent
+ *  anchors — visible polygon corners. Catmull-Rom produces a curve that
+ *  follows the polyline shape with no corner artifacts. Audit shapes (no RDP)
+ *  never use this; they keep their polygon-between-corners character which is
+ *  correct for rect/trapezoid sides. */
+/** Corner-preserving smoothing. Applies 3-point moving average ONLY at points
+ *  where the local angle change is small (smooth curve). Skips smoothing at
+ *  sharp corners (>30° turn) so rectangles stay rectangles, hearts keep their
+ *  V-bottom sharp, etc. Endpoints always preserved exactly.
+ *  intensity (0-1) blends original ↔ smoothed at smooth interior points. */
+function smoothPolyline(
+  points: Array<[number, number]>,
+  intensity = 0.5,
+  cornerThresholdRad = Math.PI / 6, // 30 degrees
+): Array<[number, number]> {
+  if (points.length < 3 || intensity <= 0) return points;
+  const out: Array<[number, number]> = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const [ax, ay] = points[i - 1];
+    const [bx, by] = points[i];
+    const [cx, cy] = points[i + 1];
+    // Angle change at point i (signed turn from incoming → outgoing segment)
+    const v1x = bx - ax, v1y = by - ay;
+    const v2x = cx - bx, v2y = cy - by;
+    const len1 = Math.hypot(v1x, v1y);
+    const len2 = Math.hypot(v2x, v2y);
+    if (len1 < 0.01 || len2 < 0.01) { out.push([bx, by]); continue; }
+    const dot = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    const cosClamped = Math.max(-1, Math.min(1, dot));
+    const angle = Math.acos(cosClamped);
+    if (angle > cornerThresholdRad) {
+      // Corner — preserve as-is.
+      out.push([bx, by]);
+    } else {
+      // Smooth segment — blend toward 3-point average.
+      const sx = (ax + bx + cx) / 3;
+      const sy = (ay + by + cy) / 3;
+      out.push([bx * (1 - intensity) + sx * intensity, by * (1 - intensity) + sy * intensity]);
+    }
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}
+
+/** Generate a smooth low-frequency 1D wobble field along arc length.
+ *  Returns a function (t: 0..1) → [dx, dy] that produces ~1 oscillation per
+ *  `wavelengthPx` of path length. Used to add flowing wobble to a Catmull-Rom
+ *  curve without per-anchor micro-jitter. */
+function arcLengthWobbleField(
+  totalArcLen: number,
+  amplitude: number,
+  wavelengthPx: number,
+  seed: number,
+): (t: number) => [number, number] {
+  if (amplitude <= 0.001 || totalArcLen <= 1) return () => [0, 0];
+  const r = seededRandom(seed);
+  // Anchor count = arc length / wavelength, minimum 3 so we get a curve.
+  const numAnchors = Math.max(3, Math.ceil(totalArcLen / wavelengthPx));
+  // Random anchor displacements
+  const dxs: number[] = [];
+  const dys: number[] = [];
+  for (let k = 0; k <= numAnchors; k++) {
+    dxs.push((r() - 0.5) * 2 * amplitude);
+    dys.push((r() - 0.5) * 2 * amplitude);
+  }
+  return (t: number): [number, number] => {
+    const clampedT = Math.max(0, Math.min(1, t));
+    const u = clampedT * numAnchors;
+    const i = Math.floor(u);
+    const f = u - i;
+    // Cosine interpolation for smooth transitions
+    const fs = (1 - Math.cos(f * Math.PI)) / 2;
+    const dx = dxs[i] * (1 - fs) + dxs[Math.min(i + 1, numAnchors)] * fs;
+    const dy = dys[i] * (1 - fs) + dys[Math.min(i + 1, numAnchors)] * fs;
+    return [dx, dy];
+  };
+}
+
+/** Apply endpointBehavior to a polyline: extend / push points based on the
+ *  user-selected endpoint mode. */
+function applyEndpointBehavior(
+  points: Array<[number, number]>,
+  mode: ShapeModifiers['endpointBehavior'],
+  isClosed: boolean,
+  seed: number,
+): Array<[number, number]> {
+  if (mode === 'clean' || points.length < 2) return points;
+  const amount = mode === 'protrude' ? 4 : mode === 'long-overshoot' ? 9 : 2.5;
+  const r = seededRandom(seed + 5555);
+  if (mode === 'kink') {
+    // Random-angle push at every anchor — produces the twitchy/spasm kink
+    return points.map(([x, y]) => {
+      const a = r() * Math.PI * 2;
+      return [x + Math.cos(a) * amount, y + Math.sin(a) * amount] as [number, number];
+    });
+  }
+  if (isClosed) {
+    // Radial outward from centroid for all anchors (matches old case 'path')
+    let cx = 0, cy = 0;
+    for (const p of points) { cx += p[0]; cy += p[1]; }
+    cx /= points.length; cy /= points.length;
+    return points.map(([x, y]) => {
+      const dx = x - cx, dy = y - cy;
+      const len = Math.max(0.01, Math.hypot(dx, dy));
+      return [x + (dx / len) * amount, y + (dy / len) * amount] as [number, number];
+    });
+  }
+  // Open path: extend first point backward along outgoing segment, last point
+  // forward along incoming segment.
+  const out = points.slice();
+  const [p0, p1n] = [points[0], points[1]];
+  const d1x = p1n[0] - p0[0], d1y = p1n[1] - p0[1];
+  const l1 = Math.max(0.01, Math.hypot(d1x, d1y));
+  out[0] = [p0[0] - (d1x / l1) * amount, p0[1] - (d1y / l1) * amount];
+  const [pn1, pn] = [points[points.length - 2], points[points.length - 1]];
+  const d2x = pn[0] - pn1[0], d2y = pn[1] - pn1[1];
+  const l2 = Math.max(0.01, Math.hypot(d2x, d2y));
+  out[points.length - 1] = [pn[0] + (d2x / l2) * amount, pn[1] + (d2y / l2) * amount];
+  return out;
+}
+
+/** Straight-bezier-per-side path — control points sit ON each side's chord
+ *  with perpendicular jitter for hand-feel wobble. Corners stay sharp because
+ *  consecutive bezier segments END/START at the same vertex with control
+ *  points along the segments' own chord directions, not curved through.
+ *  Used for polygonal inputs (rectangles, triangles, diamonds) where the
+ *  intended shape has clear corners.
+ *  Honors bowing (perpendicular bow per segment), curveTightness (damps bow),
+ *  endpointBehavior (applied before path generation). */
+function straightBezierPath(
+  points: Array<[number, number]>,
+  isClosed: boolean,
+  wobbleAmplitude: number,
+  bowing: number,
+  curveTightness: number,
+  endpointBehavior: ShapeModifiers['endpointBehavior'],
+  seed: number,
+): string {
+  const working = applyEndpointBehavior(points, endpointBehavior, isClosed, seed);
+  if (working.length < 2) return '';
+  const r = seededRandom(seed);
+  const j = () => (r() - 0.5) * 2 * wobbleAmplitude;
+  const tightnessDamp = Math.max(0.1, 1 - curveTightness * 0.45);
+  const effectiveBow = bowing * tightnessDamp;
+  let d = `M ${working[0][0].toFixed(2)} ${working[0][1].toFixed(2)}`;
+  const N = working.length;
+  const segEnd = isClosed ? N : N - 1;
+  for (let i = 0; i < segEnd; i++) {
+    const p1 = working[i];
+    const p2 = working[(i + 1) % N];
+    const dx = p2[0] - p1[0];
+    const dy = p2[1] - p1[1];
+    const len = Math.hypot(dx, dy);
+    const perpX = len > 0.01 ? -dy / len : 0;
+    const perpY = len > 0.01 ? dx / len : 0;
+    const sign = r() > 0.5 ? 1 : -1;
+    // Bowing perpendicular offset on control points (matches pointsToPolylinePath formula)
+    const bow = effectiveBow * len * 0.06 * sign;
+    const c1x = p1[0] + dx / 3 + perpX * bow + j();
+    const c1y = p1[1] + dy / 3 + perpY * bow + j();
+    const c2x = p1[0] + (2 * dx) / 3 + perpX * bow + j();
+    const c2y = p1[1] + (2 * dy) / 3 + perpY * bow + j();
+    d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2[0].toFixed(2)} ${p2[1].toFixed(2)}`;
+  }
+  if (isClosed) d += ' Z';
+  return d;
+}
+
+function catmullRomPath(
+  points: Array<[number, number]>,
+  isClosed: boolean,
+  wobbleAmplitude: number,
+  bowing: number,
+  curveTightness: number,
+  endpointBehavior: ShapeModifiers['endpointBehavior'],
+  seed: number,
+): string {
+  const n0 = points.length;
+  if (n0 < 2) return '';
+
+  // 0) Apply endpoint behavior BEFORE smoothing so the extended/kinked points
+  //    feed into the curve.
+  const adjusted = applyEndpointBehavior(points, endpointBehavior, isClosed, seed);
+
+  // 1) Corner-preserving smoothing: remove input micro-jitter at gentle-curve
+  //    segments so wobble=0 reads clean. Sharp corners (rectangles, V-bottoms)
+  //    bypass smoothing entirely so they stay sharp.
+  const smoothed = smoothPolyline(adjusted, 0.5);
+  const N = smoothed.length;
+
+  // 2) Build arc-length-parameterized wobble field. Wavelength scales with
+  //    overall path length so short paths get full character but long paths
+  //    don't read as braid (one cycle per ~60px).
+  let arcLen = 0;
+  const cum: number[] = [0];
+  for (let i = 1; i < N; i++) {
+    arcLen += Math.hypot(smoothed[i][0] - smoothed[i - 1][0], smoothed[i][1] - smoothed[i - 1][1]);
+    cum.push(arcLen);
+  }
+  // Wavelength scales with path length so short paths still get a few cycles
+  // and long paths don't read as braid. 1 cycle per ~12% of total length
+  // floored at 35px and capped at 90px.
+  const wavelength = Math.max(35, Math.min(90, arcLen * 0.12));
+  const wobbleAt = arcLengthWobbleField(arcLen, wobbleAmplitude, wavelength, seed);
+
+  // Apply wobble field to each anchor before generating Catmull-Rom curve.
+  // (Displacing the anchors themselves produces a curve that wobbles WITH the
+  // path direction. Jittering only control points doesn't move the curve.)
+  const displaced: Array<[number, number]> = [];
+  for (let i = 0; i < N; i++) {
+    const t = N > 1 ? cum[i] / arcLen : 0;
+    const [wdx, wdy] = wobbleAt(t);
+    displaced.push([smoothed[i][0] + wdx, smoothed[i][1] + wdy]);
+  }
+
+  // CORNER PRESERVATION: at sharp corners (angle change > 45°), use the
+  // OUTGOING/INCOMING segment direction as the tangent at that vertex rather
+  // than the average of neighbors. Catmull-Rom's neighbor-averaged tangent
+  // produces rounded corners (since it pulls control points sideways into
+  // the curve). Tangent-along-segment keeps corners sharp.
+  const CORNER_THRESHOLD = Math.PI / 4; // 45°
+  const isSharpCornerAt = (p0: [number, number], p1: [number, number], p2: [number, number]): boolean => {
+    const v1x = p1[0] - p0[0], v1y = p1[1] - p0[1];
+    const v2x = p2[0] - p1[0], v2y = p2[1] - p1[1];
+    const len1 = Math.hypot(v1x, v1y);
+    const len2 = Math.hypot(v2x, v2y);
+    if (len1 < 0.01 || len2 < 0.01) return false;
+    const cosAng = (v1x * v2x + v1y * v2y) / (len1 * len2);
+    return cosAng < Math.cos(CORNER_THRESHOLD);
+  };
+
+  // curveTightness damps the tangent strength (higher → tighter / straighter
+  // curves). bowing adds perpendicular displacement to control points.
+  const tightnessDamp = Math.max(0.1, 1 - curveTightness * 0.45);
+  const tangentScale = tightnessDamp;
+  const effectiveBow = bowing * tightnessDamp;
+  const rBow = seededRandom(seed + 4242);
+
+  let d = `M ${displaced[0][0].toFixed(2)} ${displaced[0][1].toFixed(2)}`;
+  const segEnd = isClosed ? N : N - 1;
+  for (let i = 0; i < segEnd; i++) {
+    const p0 = isClosed
+      ? displaced[((i - 1 + N) % N)]
+      : (i - 1 < 0 ? [2 * displaced[0][0] - displaced[1][0], 2 * displaced[0][1] - displaced[1][1]] as [number, number] : displaced[i - 1]);
+    const p1 = displaced[i];
+    const p2 = isClosed ? displaced[(i + 1) % N] : displaced[Math.min(i + 1, N - 1)];
+    const p3 = isClosed
+      ? displaced[(i + 2) % N]
+      : (i + 2 >= N ? [2 * displaced[N - 1][0] - displaced[N - 2][0], 2 * displaced[N - 1][1] - displaced[N - 2][1]] as [number, number] : displaced[i + 2]);
+
+    const p1IsCorner = isSharpCornerAt(p0, p1, p2);
+    const p2IsCorner = isSharpCornerAt(p1, p2, p3);
+
+    // Per-segment chord and perpendicular for bowing
+    const segDx = p2[0] - p1[0];
+    const segDy = p2[1] - p1[1];
+    const segLen = Math.hypot(segDx, segDy);
+    const perpX = segLen > 0.01 ? -segDy / segLen : 0;
+    const perpY = segLen > 0.01 ? segDx / segLen : 0;
+    const bowSign = rBow() > 0.5 ? 1 : -1;
+    const bowOffset = effectiveBow * segLen * 0.06 * bowSign;
+
+    // Control point 1: tangent at p1. If p1 is a sharp corner, use direction
+    // toward p2 (straight outward); else neighbor-averaged Catmull-Rom.
+    let c1x: number, c1y: number;
+    if (p1IsCorner) {
+      c1x = p1[0] + ((p2[0] - p1[0]) / 3) * tangentScale;
+      c1y = p1[1] + ((p2[1] - p1[1]) / 3) * tangentScale;
+    } else {
+      c1x = p1[0] + ((p2[0] - p0[0]) / 6) * tangentScale;
+      c1y = p1[1] + ((p2[1] - p0[1]) / 6) * tangentScale;
+    }
+    // Control point 2: tangent at p2.
+    let c2x: number, c2y: number;
+    if (p2IsCorner) {
+      c2x = p2[0] - ((p2[0] - p1[0]) / 3) * tangentScale;
+      c2y = p2[1] - ((p2[1] - p1[1]) / 3) * tangentScale;
+    } else {
+      c2x = p2[0] - ((p3[0] - p1[0]) / 6) * tangentScale;
+      c2y = p2[1] - ((p3[1] - p1[1]) / 6) * tangentScale;
+    }
+    // Bowing adds perpendicular displacement to both control points (segment
+    // bends symmetrically toward the perp side).
+    c1x += perpX * bowOffset;
+    c1y += perpY * bowOffset;
+    c2x += perpX * bowOffset;
+    c2y += perpY * bowOffset;
+
+    d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2[0].toFixed(2)} ${p2[1].toFixed(2)}`;
+  }
+  if (isClosed) d += ' Z';
+  return d;
 }
 
 function renderHandFeelShape(
@@ -396,22 +804,49 @@ function renderHandFeelShape(
   // Use GROUP bbox-min when provided — a child of a coherent group should
   // get the layer count the user picked even if the child itself is tiny
   // (the user reads the layers at GROUP scale, not child scale).
-  const effectiveBboxMin = Math.max(ctx.bboxMin, ctx.bboxMinOverride ?? 0);
+  // SOFT per-detail scaling: geomean of per-child and group-level bboxMin.
+  // Matches the per-shape-case sizeClampBbox formula so wobble/multi-stroke
+  // both honor the same "small parts of big SVG get partial scaling" rule.
+  const effectiveBboxMin = ctx.bboxMinOverride && ctx.bboxMinOverride > ctx.bboxMin
+    ? Math.sqrt(ctx.bboxMin * ctx.bboxMinOverride)
+    : ctx.bboxMin;
   const layerCount = effectiveLayerCount(ms.layerCount, effectiveBboxMin);
 
   // DIAG 2026-06-07 — show why multi-stroke + sketching style aren't visibly
   // working on multi-child shapes. Remove once shading calibration ships.
+  // EXTENDED 2026-06-09 — wobble character investigation. Capture per-element
+  // route signals so we can compare curated audit shapes (rect/circle/line →
+  // built-path route) vs uploaded rose SVG (<path> → fallback route) vs drawn
+  // heart polyline (<polyline> → fallback route). Hypothesis: route divergence
+  // explains wobble character difference, not wobble magnitude.
   if ((window as { __dd_diag?: boolean }).__dd_diag) {
+    const diagEffW = effectiveWobble(m.wobble, effectiveBboxMin);
+    const diagHasBuildPath = !!ctx.buildPath;
+    const diagCanUseBuiltPath = diagHasBuildPath && m.jaggedness <= 0.05;
+    const diagIsHachureFamily =
+      m.fillStyle === 'hachure' || m.fillStyle === 'cross-hatch' ||
+      m.fillStyle === 'zigzag' || m.fillStyle === 'dashed' ||
+      m.fillStyle === 'dots' || m.fillStyle === 'zigzag-line';
     // eslint-disable-next-line no-console
     console.log('[dd-diag] renderHandFeelShape', {
       tag: sourceEl.tagName.toLowerCase(),
-      bboxMin: ctx.bboxMin.toFixed(1),
+      isClosed: ctx.isClosed,
+      bboxMin: Number(ctx.bboxMin.toFixed(1)),
+      effectiveBboxMin: Number(effectiveBboxMin.toFixed(1)),
+      userWobble: m.wobble,
+      effW: Number(diagEffW.toFixed(3)),
+      ROUGH: Number(ctx.ROUGH.toFixed(3)),
+      jaggedness: m.jaggedness,
+      hasBuildPath: diagHasBuildPath,
+      canUseBuiltPath: diagCanUseBuiltPath,
+      route: diagCanUseBuiltPath ? 'built-path' : 'points-fallback',
+      sketchingStyle: m.sketchingStyle,
+      fillStyle: m.fillStyle,
+      isHachureFamily: diagIsHachureFamily,
       multiStrokeUserPicked: m.multiStroke,
       multiStrokeMetaLayers: ms.layerCount,
       effectiveLayerCount: layerCount,
-      sketchingStyle: m.sketchingStyle,
       hasPivotOverride: !!ctx.pivotOverride,
-      pivotOverride: ctx.pivotOverride,
     });
   }
   const seeds = seedOffsets(baseSeed, layerCount);
@@ -456,7 +891,14 @@ function renderHandFeelShape(
   // not a solid wash UNDER the pattern. The hachure layer renders alone.
   if (isClosed && fillColor && !isHachureFamily) {
     const basePath = ownerDoc.createElementNS('http://www.w3.org/2000/svg', 'path');
-    basePath.setAttribute('d', pointsToPolylinePath(layer0Points, true));
+    // Jaggedness applies to the fill boundary too — solid-filled shapes
+    // (lacroixRack, decorative pegboard items rendered with fill={STROKE})
+    // otherwise stay perfectly smooth at any jaggedness value. Use layer 0's
+    // seed so the fill boundary matches the outline character.
+    const basePts = m.jaggedness > 0.05
+      ? injectJaggedness(layer0Points, m.jaggedness, baseSeed)
+      : layer0Points;
+    basePath.setAttribute('d', pointsToPolylinePath(basePts, true));
     basePath.setAttribute('fill', fillColor);
     basePath.setAttribute('stroke', 'none');
     basePath.setAttribute('fill-opacity', String(m.fillOpacity));
@@ -610,16 +1052,37 @@ function renderHandFeelShape(
       // Only open-path parallel-pass (offsetLinePerpendicular) still needs
       // the per-vertex transform fallback for now.
       const needsPerVertexTransform =
-        i > 0 && sketchingStyle === 'parallel-pass' && !isClosed;
-      const canUseBuiltPath = ctx.buildPath !== undefined && !needsPerVertexTransform;
+        i > 0 && sketchingStyle === 'parallel-pass' && !isClosed
+        && !ctx.handlesPerVertexLayer;
+      // When jaggedness > 0, force the points-pipeline route so rect/circle/
+      // ellipse/line shapes get zig-zag injection too (the buildPath fast-path
+      // bypasses injectJaggedness). Trade: gives up the playground-matched
+      // cubic-bezier accuracy on those shape types, but only when user has
+      // explicitly dialed jaggedness above default.
+      const canUseBuiltPath =
+        ctx.buildPath !== undefined
+        && !needsPerVertexTransform
+        && m.jaggedness <= 0.05;
       let d: string;
       if (canUseBuiltPath) {
         d = ctx.buildPath!(seed, mods);
       } else {
         // Fallback for cross-hatch / parallel-pass (need per-vertex transforms)
         // or shapes without a playground-native builder (polygon/polyline).
-        const wobbleForCurves = effectiveWobble(m.wobble, ctx.bboxMin);
-        d = pointsToPolylinePath(pts, isClosed, m.bowing, m.curveTightness, seed, wobbleForCurves);
+        // Use the GROUP-scaled bbox (see effectiveBboxMin block above) so
+        // multi-child SVGs don't silently floor wobble per tiny child.
+        // WOBBLE: how far points wander. Untouched by jaggedness (Sebs:
+        // "jaggedness shouldn't reduce wobble amplitude").
+        const wobbleForCurves = effectiveWobble(m.wobble, effectiveBboxMin);
+        // JAGGEDNESS: sharpness of connections between wandering points.
+        //   - jagged 0 → smooth flowing bezier curves between points
+        //   - jagged 2 → sharp zig-zag character (extra alternating-perp
+        //     intermediate points injected between consecutive samples)
+        // Independent of wobble; same point-cloud, different connection style.
+        const jaggedPts = m.jaggedness > 0.05
+          ? injectJaggedness(pts, m.jaggedness, seed)
+          : pts;
+        d = pointsToPolylinePath(jaggedPts, isClosed, m.bowing, m.curveTightness, seed, wobbleForCurves);
       }
       const path = ownerDoc.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
@@ -633,6 +1096,15 @@ function renderHandFeelShape(
       path.setAttribute('stroke-width', String(m.strokeWidth * widthMul));
       path.setAttribute('stroke-linecap', 'round');
       path.setAttribute('stroke-linejoin', 'round');
+      // Preserve stroke-dasharray from source element (2026-06-09): dashed
+      // <line>/<path>/<polyline> sources (ticket dividers, lanyard dashes,
+      // flyer rules) need their dash pattern carried through the jitter
+      // pipeline. The underlying path stays continuous; SVG's native
+      // stroke-dasharray renders the dashes on the jittered stroke.
+      const sourceDash = sourceEl.getAttribute('stroke-dasharray');
+      if (sourceDash && sourceDash !== 'none') {
+        path.setAttribute('stroke-dasharray', sourceDash);
+      }
       if (layerTransform) path.setAttribute('transform', layerTransform);
       out.push(path);
     }
@@ -660,12 +1132,14 @@ function buildRoughOptionsForPath(
   }
   const opts: RoughOptions = {
     seed,
-    // I-11: wobble is THE master path-jitter axis. rough.js's `roughness` param
-    // controls path waviness — exactly what wobble represents conceptually
-    // (path/motion trajectory). Use wobble here so `<path>` content jitters
-    // uniformly with shape primitives. m.roughness is reserved for the future
-    // Surface Texture cluster repurpose (3D PBR-style stroke-surface quality).
-    roughness: m.wobble,
+    // Jaggedness = how jagged-vs-smooth the rendered path reads (sharp angle
+    // changes vs flowing curves). Decoupled from wobble's amplitude
+    // 2026-06-08 per Sebs: previously rough.js's `roughness` was driven by
+    // wobble, which conflated "how far the line wanders" with "how jagged the
+    // wandering reads." Now wobble drives amplitude (HAND_FEEL_BASE *
+    // wobble) and jaggedness drives rough.js's roughness param. m.roughness
+    // still reserved for Cluster 4 Surface Texture per §I-11.
+    roughness: m.jaggedness,
     bowing: m.bowing + endpointBowingNudge,
     strokeWidth: m.strokeWidth,
     curveTightness: m.curveTightness,
@@ -809,9 +1283,24 @@ export function transformElement(
       const bboxMin = Math.min(w, h);
       const pScale = protrudeScaleForBbox(bboxMin);
       const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
+      // GROUP-AWARE bbox-min for size clamps — same fix pattern as
+      // effectiveLayerCount (commit 5b54e61) but never applied to wobble.
+      // Without this, multi-child SVGs (stackedSketchbooks etc.) silently
+      // ceiling user wobble at ~0.3 because per-book bbox is 14-18px while
+      // the user picks against the whole 80px SVG.
+      // SOFT per-detail scaling (placeholder for the smart-layer build) —
+      // geometric mean of per-child bbox and group bbox so decorative tiny
+      // children (pencil-tip polygons, sombrero band ellipses) don't get
+      // FULL group-scale wobble and shred, but multi-child coherent groups
+      // (stackedSketchbooks, jar walls) still lift past per-child clamp.
+      // Real fix = smart-layer classifier per element role; this is the
+      // intermediate compromise that handles 95% without per-role labels.
+      const sizeClampBbox = groupBBoxMin && groupBBoxMin > bboxMin
+        ? Math.sqrt(bboxMin * groupBBoxMin)
+        : bboxMin;
       // I-11: wobble is THE master jitter multiplier on HAND_FEEL_BASE (mirrors
-      // playground). Size-aware clamp via effectiveWobble.
-      const ROUGH = HAND_FEEL_BASE.rect * effectiveWobble(m.wobble, bboxMin);
+      // playground). Size-aware clamp via effectiveWobble at GROUP scale.
+      const ROUGH = HAND_FEEL_BASE.rect * effectiveWobble(m.wobble, sizeClampBbox);
       return renderHandFeelShape({
         ROUGH,
         baseSeed: seed,
@@ -837,8 +1326,18 @@ export function transformElement(
       const bboxMin = Math.min(w, h);
       const pScale = protrudeScaleForBbox(bboxMin);
       const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
-      // I-11: wobble master, size-clamped (see rect case)
-      const ROUGH = HAND_FEEL_BASE.oval * effectiveWobble(m.wobble, bboxMin);
+      // SOFT per-detail scaling (placeholder for the smart-layer build) —
+      // geometric mean of per-child bbox and group bbox so decorative tiny
+      // children (pencil-tip polygons, sombrero band ellipses) don't get
+      // FULL group-scale wobble and shred, but multi-child coherent groups
+      // (stackedSketchbooks, jar walls) still lift past per-child clamp.
+      // Real fix = smart-layer classifier per element role; this is the
+      // intermediate compromise that handles 95% without per-role labels.
+      const sizeClampBbox = groupBBoxMin && groupBBoxMin > bboxMin
+        ? Math.sqrt(bboxMin * groupBBoxMin)
+        : bboxMin;
+      // I-11: wobble master, size-clamped at GROUP scale (see rect case)
+      const ROUGH = HAND_FEEL_BASE.oval * effectiveWobble(m.wobble, sizeClampBbox);
       return renderHandFeelShape({
         ROUGH,
         baseSeed: seed,
@@ -864,8 +1363,18 @@ export function transformElement(
       const bboxMin = Math.min(w, h);
       const pScale = protrudeScaleForBbox(bboxMin);
       const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
-      // I-11: wobble master, size-clamped (see rect case)
-      const ROUGH = HAND_FEEL_BASE.oval * effectiveWobble(m.wobble, bboxMin);
+      // SOFT per-detail scaling (placeholder for the smart-layer build) —
+      // geometric mean of per-child bbox and group bbox so decorative tiny
+      // children (pencil-tip polygons, sombrero band ellipses) don't get
+      // FULL group-scale wobble and shred, but multi-child coherent groups
+      // (stackedSketchbooks, jar walls) still lift past per-child clamp.
+      // Real fix = smart-layer classifier per element role; this is the
+      // intermediate compromise that handles 95% without per-role labels.
+      const sizeClampBbox = groupBBoxMin && groupBBoxMin > bboxMin
+        ? Math.sqrt(bboxMin * groupBBoxMin)
+        : bboxMin;
+      // I-11: wobble master, size-clamped at GROUP scale (see rect case)
+      const ROUGH = HAND_FEEL_BASE.oval * effectiveWobble(m.wobble, sizeClampBbox);
       return renderHandFeelShape({
         ROUGH,
         baseSeed: seed,
@@ -887,8 +1396,12 @@ export function transformElement(
       const lineLen = Math.hypot(x2 - x1, y2 - y1);
       const pScale = protrudeScaleForBbox(lineLen);
       const adaptedRoughness = effectiveRoughness(m.roughness, lineLen);
-      // I-11: wobble master, size-clamped (uses lineLen as the size proxy)
-      const ROUGH = HAND_FEEL_BASE.line * effectiveWobble(m.wobble, lineLen);
+      // SOFT per-detail scaling (see rect case for rationale).
+      const sizeClampBbox = groupBBoxMin && groupBBoxMin > lineLen
+        ? Math.sqrt(lineLen * groupBBoxMin)
+        : lineLen;
+      // I-11: wobble master, size-clamped at GROUP scale (see rect case)
+      const ROUGH = HAND_FEEL_BASE.line * effectiveWobble(m.wobble, sizeClampBbox);
       return renderHandFeelShape({
         ROUGH,
         baseSeed: seed,
@@ -922,10 +1435,32 @@ export function transformElement(
       const bboxMin = Math.min(maxX - minX, maxY - minY) || 80;
       const pScale = protrudeScaleForBbox(bboxMin);
       const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
-      // I-11: wobble master, size-clamped
-      const effW = effectiveWobble(m.wobble, bboxMin);
+      // SOFT per-detail scaling (placeholder for the smart-layer build) —
+      // geometric mean of per-child bbox and group bbox so decorative tiny
+      // children (pencil-tip polygons, sombrero band ellipses) don't get
+      // FULL group-scale wobble and shred, but multi-child coherent groups
+      // (stackedSketchbooks, jar walls) still lift past per-child clamp.
+      // Real fix = smart-layer classifier per element role; this is the
+      // intermediate compromise that handles 95% without per-role labels.
+      const sizeClampBbox = groupBBoxMin && groupBBoxMin > bboxMin
+        ? Math.sqrt(bboxMin * groupBBoxMin)
+        : bboxMin;
+      // I-11: wobble master, size-clamped at GROUP scale (see rect case)
+      const effW = effectiveWobble(m.wobble, sizeClampBbox);
       const ROUGH = HAND_FEEL_BASE.rect * effW;
       const ROUGH_LINE = HAND_FEEL_BASE.line * effW;
+      if ((window as { __dd_diag?: boolean }).__dd_diag) {
+        // eslint-disable-next-line no-console
+        console.log('[dd-diag] case polyline', {
+          tag,
+          vertexCount: pairs.length,
+          isClosed: closed,
+          bboxMin: Number(bboxMin.toFixed(1)),
+          sizeClampBbox: Number(sizeClampBbox.toFixed(1)),
+          effW: Number(effW.toFixed(3)),
+          ROUGH: Number(ROUGH.toFixed(3)),
+        });
+      }
       return renderHandFeelShape({
         ROUGH,
         baseSeed: seed,
@@ -983,126 +1518,269 @@ export function transformElement(
         return [el.cloneNode(true) as SVGElement];
       }
 
-      // Detect closed path (ends with Z or z, possibly with whitespace)
-      const isClosed = /[zZ]\s*$/.test(d.trim());
+      // Detect closed path (whole-string ends with Z/z)
+      const pathEndsWithZ = /[zZ]\s*$/.test(d.trim());
 
-      // Sample at ~12px intervals — enough resolution to follow curves while
-      // keeping segment count moderate (long enough for cubic-bezier wobble to
-      // bend visibly per the playground pattern).
-      const sampleSpacing = 12;
-      const numSamples = Math.max(4, Math.ceil(totalLen / sampleSpacing));
-      const cleanPoints: Array<[number, number]> = [];
-      for (let i = 0; i <= numSamples; i++) {
-        const t = (i / numSamples) * totalLen;
-        const p = tmpPath.getPointAtLength(t);
-        cleanPoints.push([p.x, p.y]);
+      // STRAIGHT-LINE FAST PATH: pure-line paths (M/L/H/V/Z only) walk the
+      // d-string and extract corners exactly. Curve paths use length-based
+      // sampler.
+      //
+      // SUB-PATH SPLIT (2026-06-09): the corner walker previously concatenated
+      // every M-sub-path into ONE cleanPoints array. For auto-traced rose
+      // (112 sub-paths via 112 M commands), bezier-smoothing then drew long
+      // curves from end-of-sub-path-N to start-of-sub-path-N+1 — the visible
+      // diagonal lines crossing the rose. Audit shapes never trigger this
+      // (≤1 sub-path each). Fix: break on every M, render each sub-path as
+      // its own renderHandFeelShape call.
+      //
+      // RDP INPUT NORMALIZATION (2026-06-09): drawn freehand and uploaded
+      // auto-traced SVGs come in DENSE (heart ≈80 verts / 502px, rose sub-path
+      // ≈25 verts / 200px). The wobble pipeline was calibrated against audit
+      // shapes which are SPARSE (2-6 verts per path). Dense input through the
+      // same wobble produces braid character (wavelength ≈ vertex spacing).
+      // RDP at ε=1.5px drops dense input to audit-compatible density WITHOUT
+      // losing curve shape, then the same wobble produces the same flowing
+      // character. Sparse input (audit) is a no-op for RDP — every vertex
+      // exceeds the threshold by default, gated by RDP_VERTEX_THRESHOLD below.
+      //
+      // EPSILON 1.5 → 3.0 (2026-06-09 follow-up): heart curves at ε=1.5 still
+      // produced ~30-40 anchors → braid. Bumped to 3.0 → ~15-20 anchors →
+      // flowing. Audit untouched (gated by vertex-count threshold, not ε).
+      const RDP_EPSILON = 3.0;
+      type SubPath = { points: Array<[number, number]>; isClosed: boolean };
+      const hasCurves = /[CcQqSsTtAa]/.test(d);
+      const subPaths: SubPath[] = [];
+
+      if (!hasCurves) {
+        const tokens = d.match(/[MLHVZmlhvz]|-?\d*\.?\d+(?:[eE][-+]?\d+)?/g) ?? [];
+        let cx = 0, cy = 0, cmd = '';
+        let current: Array<[number, number]> = [];
+        let currentClosed = false;
+        const flush = () => {
+          if (current.length >= 2) subPaths.push({ points: current, isClosed: currentClosed });
+          current = [];
+          currentClosed = false;
+        };
+        for (let i = 0; i < tokens.length; i++) {
+          const tok = tokens[i];
+          if (/[A-Za-z]/.test(tok)) {
+            if (tok === 'Z' || tok === 'z') {
+              currentClosed = true;
+              flush();
+              cmd = '';
+            } else {
+              cmd = tok;
+            }
+            continue;
+          }
+          const num = parseFloat(tok);
+          switch (cmd) {
+            case 'M': flush(); cx = num; cy = parseFloat(tokens[++i]); current.push([cx, cy]); cmd = 'L'; break;
+            case 'm': flush(); cx += num; cy += parseFloat(tokens[++i]); current.push([cx, cy]); cmd = 'l'; break;
+            case 'L': cx = num; cy = parseFloat(tokens[++i]); current.push([cx, cy]); break;
+            case 'l': cx += num; cy += parseFloat(tokens[++i]); current.push([cx, cy]); break;
+            case 'H': cx = num; current.push([cx, cy]); break;
+            case 'h': cx += num; current.push([cx, cy]); break;
+            case 'V': cy = num; current.push([cx, cy]); break;
+            case 'v': cy += num; current.push([cx, cy]); break;
+            default: break;
+          }
+        }
+        // Final flush — open sub-path with no trailing Z
+        if (current.length >= 2) subPaths.push({ points: current, isClosed: false });
       }
+
+      if (subPaths.length === 0) {
+        // Curve path OR parse failed — use length sampler producing a single
+        // sub-path. sampleSpacing /6 keeps long curved paths at audit-style
+        // sparse density (sombrero brim arc, rose petal Q-bezier, etc).
+        const sampleSpacing = Math.max(12, totalLen / 6);
+        const numSamples = Math.max(4, Math.ceil(totalLen / sampleSpacing));
+        const pts: Array<[number, number]> = [];
+        for (let i = 0; i <= numSamples; i++) {
+          const t = (i / numSamples) * totalLen;
+          const p = tmpPath.getPointAtLength(t);
+          pts.push([p.x, p.y]);
+        }
+        subPaths.push({ points: pts, isClosed: pathEndsWithZ });
+      }
+
       parentSvg.removeChild(tmpPath);
 
-      // Closed paths: collapse last point to first for clean loop
-      if (isClosed && cleanPoints.length > 1) {
-        cleanPoints[cleanPoints.length - 1] = [...cleanPoints[0]] as [number, number];
-      }
+      // Render each sub-path independently — bezier-smoothing in
+      // renderHandFeelShape can't reach across sub-path boundaries this way.
+      const outElements: SVGElement[] = [];
+      let subIdx = 0;
+      for (const sub of subPaths) {
+        // RDP normalize ONLY when input vertex count is well above the audit
+        // sparse range. Audit case-path shapes top out at ~6 verts per
+        // sub-path (verified via /audit sweep 2026-06-09). Threshold = 15
+        // means audit shapes ALWAYS fall through with raw vertices (no RDP)
+        // and only dense drawn/uploaded input gets simplified. Earlier ε=1.5
+        // applied unconditionally was dropping middle points off audit's
+        // 5-6-point Q-bezier samples → broke audit ticket/statue/etc.
+        const RDP_VERTEX_THRESHOLD = 15;
+        const rdpTriggered = sub.points.length > RDP_VERTEX_THRESHOLD;
+        const simplifiedPts = rdpTriggered
+          ? rdp(sub.points, RDP_EPSILON)
+          : sub.points;
+        const cleanPoints = simplifiedPts.slice();
+        const subClosed = sub.isClosed;
 
-      // Bbox + centroid for size-aware clamps + radial endpoint protrude on closed paths
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      let sumX = 0, sumY = 0;
-      for (const [px, py] of cleanPoints) {
-        if (px < minX) minX = px;
-        if (py < minY) minY = py;
-        if (px > maxX) maxX = px;
-        if (py > maxY) maxY = py;
-        sumX += px;
-        sumY += py;
-      }
-      const bboxMin = Math.min(maxX - minX, maxY - minY) || 80;
-      const pScale = protrudeScaleForBbox(bboxMin);
-      const effW = effectiveWobble(m.wobble, bboxMin);
-      const ROUGH = HAND_FEEL_BASE.line * effW;
-      const pathCentroidX = cleanPoints.length > 0 ? sumX / cleanPoints.length : 0;
-      const pathCentroidY = cleanPoints.length > 0 ? sumY / cleanPoints.length : 0;
+        // Closed sub-path: APPEND first point to end for clean bezier loop
+        // (matches original case 'path' line 1234 behavior). NOT overwrite —
+        // overwriting drops the final corner (broke audit shapes 2026-06-09).
+        if (subClosed && cleanPoints.length > 1) {
+          cleanPoints.push([cleanPoints[0][0], cleanPoints[0][1]]);
+        }
 
-      return renderHandFeelShape({
-        ROUGH,
-        baseSeed: seed,
-        isClosed,
-        bboxMin,
-        rc,
-        buildPoints: (s, mods) => {
-          // Wobble jitter on every point + endpoint behavior:
-          //   - CLOSED paths: push each point RADIALLY outward from centroid
-          //     by `protrude` amount (matches playground roughRectPath line
-          //     180-184 corner protrusion behavior — applies to all "corners"
-          //     of the closed path, not just hypothetical endpoints).
-          //   - OPEN paths: extend first/last point along path direction.
-          // Plus loose-overlap shift per layer (on first/last for open, all-radial for closed).
-          const r = seededRandom(s);
-          const j = () => (r() - 0.5) * 2 * ROUGH;
-          // Endpoint amounts: playground radial values (4/9), but kink reduced
-          // (random-angle push reads as more dramatic per px than radial push).
-          // Sebs 2026-06-04 calibration: "kink per corner but not as much."
-          const protrudeFor = (mode: ShapeModifiers['endpointBehavior']): number => {
-            if (mode === 'protrude') return 4;
-            if (mode === 'long-overshoot') return 9;
-            if (mode === 'kink') return 2.5;
-            return 0;
-          };
-          const protrude = protrudeFor(mods.endpointBehavior);
-          const isKinkMode = mods.endpointBehavior === 'kink';
-          const looseOffset =
-            mods.sketchingStyle === 'loose-overlap' && mods.layerIndex
-              ? mods.layerIndex * 3  // playground LOOSE_OVERLAP_AMOUNT
-              : 0;
-          // KINK gets ALL its shift as random-angle (not radial).
-          // Other protrude modes get radial outward / path-direction extension + looseOffset.
-          const totalShift = isKinkMode ? looseOffset : (protrude + looseOffset);
-          const out: Array<[number, number]> = [];
-          for (let i = 0; i < cleanPoints.length; i++) {
-            const [px, py] = cleanPoints[i];
-            let extendX = 0, extendY = 0;
-            // KINK: random-angle push per point — produces twitchy/spasm
-            // character, distinct from protrude's regular outward push.
-            if (isKinkMode) {
-              const angle = r() * Math.PI * 2;
-              extendX += Math.cos(angle) * protrude;
-              extendY += Math.sin(angle) * protrude;
-            }
-            if (totalShift > 0) {
-              if (isClosed) {
-                // Push each point radially OUTWARD from path centroid
-                const dx = px - pathCentroidX;
-                const dy = py - pathCentroidY;
-                const len = Math.max(0.01, Math.hypot(dx, dy));
-                extendX += (dx / len) * totalShift;
-                extendY += (dy / len) * totalShift;
-              } else if (i === 0 && cleanPoints.length > 1) {
-                // Open path: extend first point backward along path direction
-                const [nx, ny] = cleanPoints[1];
-                const dx = nx - px;
-                const dy = ny - py;
-                const len = Math.max(0.01, Math.hypot(dx, dy));
-                extendX += -(dx / len) * totalShift;
-                extendY += -(dy / len) * totalShift;
-              } else if (i === cleanPoints.length - 1 && cleanPoints.length > 1) {
-                // Open path: extend last point forward along path direction
-                const [pvx, pvy] = cleanPoints[i - 1];
-                const dx = px - pvx;
-                const dy = py - pvy;
-                const len = Math.max(0.01, Math.hypot(dx, dy));
-                extendX += (dx / len) * totalShift;
-                extendY += (dy / len) * totalShift;
+        if (cleanPoints.length < 2) { subIdx++; continue; }
+
+        // Per-sub-path bbox + centroid + ROUGH (matches existing per-shape logic)
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let sumX = 0, sumY = 0;
+        for (const [px, py] of cleanPoints) {
+          if (px < minX) minX = px;
+          if (py < minY) minY = py;
+          if (px > maxX) maxX = px;
+          if (py > maxY) maxY = py;
+          sumX += px;
+          sumY += py;
+        }
+        const bboxMin = Math.min(maxX - minX, maxY - minY) || 80;
+        const sizeClampBbox = groupBBoxMin && groupBBoxMin > bboxMin
+          ? Math.sqrt(bboxMin * groupBBoxMin)
+          : bboxMin;
+        const effW = effectiveWobble(m.wobble, sizeClampBbox);
+        const ROUGH = HAND_FEEL_BASE.line * effW;
+        const subCentroidX = cleanPoints.length > 0 ? sumX / cleanPoints.length : 0;
+        const subCentroidY = cleanPoints.length > 0 ? sumY / cleanPoints.length : 0;
+
+        if ((window as { __dd_diag?: boolean }).__dd_diag) {
+          // eslint-disable-next-line no-console
+          console.log('[dd-diag] case path sub', {
+            subIdx,
+            inputPointCount: sub.points.length,
+            simplifiedPointCount: cleanPoints.length,
+            isClosed: subClosed,
+            bboxMin: Number(bboxMin.toFixed(1)),
+            sizeClampBbox: Number(sizeClampBbox.toFixed(1)),
+            effW: Number(effW.toFixed(3)),
+            ROUGH: Number(ROUGH.toFixed(3)),
+          });
+        }
+
+        const subOut = renderHandFeelShape({
+          ROUGH,
+          baseSeed: seed + subIdx * 31,
+          isClosed: subClosed,
+          bboxMin,
+          rc,
+          // SMOOTH-CURVE BUILDPATH for RDP-triggered sub-paths (drawn freehand
+          // / auto-traced). Catmull-Rom passes a smooth cubic-Bezier curve
+          // through every anchor — no visible polygon corners. Audit shapes
+          // never trigger this (rdpTriggered=false for vertex count ≤ 15) so
+          // they keep their existing pointsToPolylinePath rendering with the
+          // wobbly-straight character that's correct for rect/trapezoid sides.
+          //
+          // PARALLEL-PASS HANDLING: when sketchingStyle is parallel-pass and
+          // path is open (no Z), shift anchors perpendicular to the primary
+          // direction by layerIndex * stride BEFORE smoothing. Produces a
+          // clean parallel sister curve per layer instead of the per-vertex
+          // chaos fallback. handlesPerVertexLayer=true bypasses the gate.
+          buildPath: rdpTriggered
+            ? (s, mods) => {
+                let pts = cleanPoints;
+                if (!subClosed && mods.sketchingStyle === 'parallel-pass' && mods.layerIndex > 0) {
+                  pts = offsetLinePerpendicular(cleanPoints, mods.layerIndex);
+                }
+                const wobbleAmp = Math.max(0, ROUGH * 2);
+                // POLYGONAL INTENT DETECTION: when RDP simplified down to ≤8
+                // anchors, treat input as a polygon (rectangle / triangle /
+                // diamond / kite / etc) — straight-bezier-per-side keeps
+                // corners crisp. Smooth-curve inputs (heart, blob, spiral)
+                // have 9+ anchors → Catmull-Rom smooth interpolation.
+                const POLY_ANCHOR_CAP = 8;
+                if (pts.length <= POLY_ANCHOR_CAP) {
+                  return straightBezierPath(
+                    pts, subClosed,
+                    wobbleAmp * 0.4,
+                    m.bowing, m.curveTightness,
+                    mods.endpointBehavior,
+                    s,
+                  );
+                }
+                return catmullRomPath(
+                  pts, subClosed,
+                  wobbleAmp,
+                  m.bowing, m.curveTightness,
+                  mods.endpointBehavior,
+                  s,
+                );
               }
+            : undefined,
+          handlesPerVertexLayer: rdpTriggered,
+          buildPoints: (s, mods) => {
+            const r = seededRandom(s);
+            const j = () => (r() - 0.5) * 2 * ROUGH;
+            const protrudeFor = (mode: ShapeModifiers['endpointBehavior']): number => {
+              if (mode === 'protrude') return 4;
+              if (mode === 'long-overshoot') return 9;
+              if (mode === 'kink') return 2.5;
+              return 0;
+            };
+            const protrude = protrudeFor(mods.endpointBehavior);
+            const isKinkMode = mods.endpointBehavior === 'kink';
+            const looseOffset =
+              mods.sketchingStyle === 'loose-overlap' && mods.layerIndex
+                ? mods.layerIndex * 3
+                : 0;
+            const totalShift = isKinkMode ? looseOffset : (protrude + looseOffset);
+            const out: Array<[number, number]> = [];
+            for (let i = 0; i < cleanPoints.length; i++) {
+              const [px, py] = cleanPoints[i];
+              let extendX = 0, extendY = 0;
+              if (isKinkMode) {
+                const angle = r() * Math.PI * 2;
+                extendX += Math.cos(angle) * protrude;
+                extendY += Math.sin(angle) * protrude;
+              }
+              if (totalShift > 0) {
+                if (subClosed) {
+                  const dx = px - subCentroidX;
+                  const dy = py - subCentroidY;
+                  const len = Math.max(0.01, Math.hypot(dx, dy));
+                  extendX += (dx / len) * totalShift;
+                  extendY += (dy / len) * totalShift;
+                } else if (i === 0 && cleanPoints.length > 1) {
+                  const [nx, ny] = cleanPoints[1];
+                  const dx = nx - px;
+                  const dy = ny - py;
+                  const len = Math.max(0.01, Math.hypot(dx, dy));
+                  extendX += -(dx / len) * totalShift;
+                  extendY += -(dy / len) * totalShift;
+                } else if (i === cleanPoints.length - 1 && cleanPoints.length > 1) {
+                  const [pvx, pvy] = cleanPoints[i - 1];
+                  const dx = px - pvx;
+                  const dy = py - pvy;
+                  const len = Math.max(0.01, Math.hypot(dx, dy));
+                  extendX += (dx / len) * totalShift;
+                  extendY += (dy / len) * totalShift;
+                }
+              }
+              out.push([px + extendX + j(), py + extendY + j()]);
             }
-            out.push([px + extendX + j(), py + extendY + j()]);
-          }
-          return out;
-        },
-        // No playground-native path-builder for arbitrary paths — falls back to
-        // pointsToPolylinePath (which now has wobble-driven control-point jitter
-        // from earlier Day 1 edit). Bowing + curve apply via that fallback too.
-        pivotOverride: groupPivot,
-        bboxMinOverride: groupBBoxMin,
-      }, m, el, ownerDoc);
+            return out;
+          },
+          pivotOverride: groupPivot,
+          bboxMinOverride: groupBBoxMin,
+        }, m, el, ownerDoc);
+
+        outElements.push(...subOut);
+        subIdx++;
+      }
+
+      return outElements;
     }
     case 'text':
       return [el.cloneNode(true) as SVGElement];
@@ -1478,7 +2156,15 @@ export function TextureFilterDefs() {
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
       <defs>
-        {recipe && activeTexture && (
+        {/* Skip the recipe-driven filter for charcoal + wet-ink — those styles
+            have dedicated <filter> blocks below with the right params, and
+            buildDynamicFilterId returns the SAME id for both paths so the DOM
+            would have two filters with the same id (browser honors only one,
+            usually the recipe one, swallowing the dedicated filter's color-
+            matrix + extra feTurbulence stages). Surfaced by /audit 2026-06-08
+            when wet-ink looked identical to clean despite the dedicated filter
+            apparently being defined. */}
+        {recipe && activeTexture && style !== 'charcoal' && style !== 'wet-ink' && (
           <filter
             id={buildDynamicFilterId(style, m)}
             x={`${-margin}%`}
@@ -1489,11 +2175,28 @@ export function TextureFilterDefs() {
             {recipe.blur !== undefined && (
               <feGaussianBlur in="SourceGraphic" stdDeviation={recipe.blur * m.textureIntensity} result="blurred" />
             )}
-            <feTurbulence type={recipe.type} baseFrequency={recipe.baseFrequency} numOctaves={recipe.numOctaves} seed={recipe.seed} result="noise" />
+            {/* baseFrequency drives the dot/grain density. For the 'stipple'
+                texture (newsprint + stipple style), let dotSpacing modulate
+                it — higher dotSpacing = lower frequency = larger / sparser
+                dots. dotSpacing default = 4; scale inverse-linearly. */}
+            <feTurbulence
+              type={recipe.type}
+              baseFrequency={
+                activeTexture === 'stipple'
+                  ? String((parseFloat(recipe.baseFrequency) * 4) / Math.max(1, m.dotSpacing))
+                  : recipe.baseFrequency
+              }
+              numOctaves={recipe.numOctaves}
+              seed={recipe.seed}
+              result="noise"
+            />
+            {/* dotSize amplifies the displacement scale on stipple texture
+                so the user can dial the dot/grain prominence. Multiplier is
+                m.dotSize directly (default 1.0-1.2 → near baseline). */}
             <feDisplacementMap
               in={recipe.blur !== undefined ? 'blurred' : 'SourceGraphic'}
               in2="noise"
-              scale={recipe.baseScale * m.textureIntensity}
+              scale={recipe.baseScale * m.textureIntensity * (activeTexture === 'stipple' ? m.dotSize : 1)}
             />
           </filter>
         )}
@@ -1516,19 +2219,53 @@ export function TextureFilterDefs() {
           </filter>
         )}
         {style === 'wet-ink' && (
-          <filter id={buildDynamicFilterId('wet-ink', m)} x="-10%" y="-10%" width="120%" height="120%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation={m.blurAmount * m.textureIntensity} result="blurred" />
+          <filter id={buildDynamicFilterId('wet-ink', m)} x="-14%" y="-14%" width="128%" height="128%">
+            {/* WET-INK FILTER — rewritten 2026-06-08 after Sebs flagged the
+                prior version as "just a blur mask over everything." The fix:
+                keep SourceGraphic CRISP, build a soft bleed halo by
+                dilating + blurring + fading + displacing, then composite
+                source ON TOP of the halo. Result: crisp stroke with
+                capillary-bleed shadow behind it — actual wet-ink character,
+                not uniform softness. */}
+            {/* 1. Dilate strokes by `bleed × 1.5` px → halo's spread. */}
+            <feMorphology
+              in="SourceGraphic"
+              operator="dilate"
+              radius={m.bleed * 1.5 * m.textureIntensity}
+              result="dilated"
+            />
+            {/* 2. Blur the dilated mask by `blurAmount` → halo softness. */}
+            <feGaussianBlur
+              in="dilated"
+              stdDeviation={m.blurAmount * m.textureIntensity}
+              result="haloBlurred"
+            />
+            {/* 3. Paper-grain displacement on the halo only (not source). */}
             <feTurbulence
               type="fractalNoise"
-              baseFrequency={0.04 + m.bleed * 0.08}
+              baseFrequency={0.04 + m.bleed * 0.06}
               numOctaves="2"
               seed="79"
-              result="noise"
+              result="paperGrain"
             />
-            <feDisplacementMap in="blurred" in2="noise" scale={(0.8 + m.bleed * 2.5) * m.textureIntensity} />
+            <feDisplacementMap
+              in="haloBlurred"
+              in2="paperGrain"
+              scale={(1.0 + m.bleed * 2.0) * m.textureIntensity}
+              result="haloDisplaced"
+            />
+            {/* 4. Drop halo alpha so it reads as bleed-through, not a stroke. */}
             <feColorMatrix
+              in="haloDisplaced"
               type="matrix"
-              values={`1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 ${1 - m.bleed * 0.3} 0`}
+              values={`1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 ${0.45 + m.bleed * 0.25} 0`}
+              result="haloFaded"
+            />
+            {/* 5. Composite crisp source OVER the bleed halo. */}
+            <feComposite
+              in="SourceGraphic"
+              in2="haloFaded"
+              operator="over"
             />
           </filter>
         )}

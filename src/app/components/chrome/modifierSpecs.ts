@@ -11,6 +11,7 @@ export const SLIDER_SPECS = {
   // I-11: master proportion-preserving multiplier on HAND_FEEL_BASE.
   // > 1.4 enters Excalidraw signature zone (slider styling shows warn).
   wobble:            { min: 0,    max: 2.0, step: 0.05 },
+  jaggedness:        { min: 0,    max: 2.0, step: 0.05 },
   roughness:         { min: 0,    max: 1.6, step: 0.02 },
   bowing:            { min: 0,    max: 2.5, step: 0.05 },
   strokeWidth:       { min: 0.3,  max: 3.0, step: 0.05 },
@@ -45,10 +46,16 @@ export const MODIFIER_SETS_BY_STYLE: Record<F3SvgStyle, readonly string[]> = {
   'wireframe':       ['strokeWidth', 'inkIntensity', 'paletteMode', 'texture', 'textureIntensity'],
   'wet-ink':         ['blurAmount', 'bleed', 'inkIntensity', 'fillOpacity', 'paletteMode', 'textureIntensity'],
   'charcoal':        ['grainIntensity', 'smudgeAmount', 'pressureVariance', 'inkIntensity', 'fillOpacity', 'paletteMode', 'textureIntensity'],
-  'newsprint':       ['inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
+  // 2026-06-09: dotSize + dotSpacing now wired in TextureFilterDefs stipple
+  // path (dotSize multiplies displacement scale, dotSpacing inverse-scales
+  // baseFrequency). Newsprint exposes both so user can dial dot prominence.
+  'newsprint':       ['dotSize', 'dotSpacing', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
   'risograph':       ['offsetDistance', 'offsetAngle', 'colorShift', 'risoSecondaryColor', 'registrationError', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'rough-handdrawn': ['wobble', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'hachureAngle', 'fillDensity', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'sketchy':         ['wobble', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
+  'rough-handdrawn': ['wobble', 'jaggedness', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'hachureAngle', 'fillDensity', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
+  'sketchy':         ['wobble', 'jaggedness', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
+  // bold-ink intentionally omits multiStroke — the style's identity IS
+  // "no layered jitter" (preset locks multiStroke='off'). Showing the
+  // dropdown would lie to the user (Bug D from audit 2026-06-08).
   'bold-ink':        ['wobble', 'strokeWidth', 'bowing', 'curveTightness', 'fillStyle', 'fillDensity', 'endpointBehavior', 'penTip', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'stipple':         ['wobble', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'fillDensity', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
+  'stipple':         ['wobble', 'jaggedness', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'fillDensity', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
 };

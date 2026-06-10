@@ -116,18 +116,24 @@ export function renderSmartHachure(
     fillStyle: 'none',
   };
 
-  // SVG-level bbox-min: feed the WHOLE SVG's smaller dim down so multi-stroke
-  // layer count doesn't get silently clamped per-tiny-child (each book's
-  // bbox is 14-18px — too small per the 30px-per-layer rule). With the whole
-  // SVG's bbox-min the user-picked layer count fires.
+  // SVG-level bbox metric — feeds multi-stroke layer count + wobble clamps.
+  //
+  // Was min(w,h) originally — caused tall-thin SVGs (criterionSpine +
+  // mondoPrintTube, both ~30×90) to hit ceilings at multiStroke=3 and
+  // wobble=0.5 even though the long dim has plenty of room. Surfaced via
+  // /audit run 2026-06-08 as Bug F.
+  //
+  // Fix: geometric mean of w + h. For 30×90 → sqrt(2700) ≈ 52, giving
+  // layer cap of 5 (vs prior 3) and wobble cap of ~0.87 (vs prior 0.5).
+  // Square shapes (most items, w≈h) unchanged. Tall-thin shapes get the
+  // benefit of their long dim without losing the small-shape protection.
   //
   // We do NOT pass an SVG-level pivot — each group inside the SVG should
   // rotate/scale around its OWN center. SVG-wide pivot caused cross-hatch
   // chaos (top book rotating opposite of bottom book around a shared far
   // pivot). Each group's case 'g' handler computes its own pivot.
-  // Added 2026-06-07.
   const svgBBoxMin = rootParentBBox
-    ? Math.min(rootParentBBox.w, rootParentBBox.h)
+    ? Math.sqrt(rootParentBBox.w * rootParentBBox.h)
     : undefined;
 
   let zIdx = 0;
@@ -146,7 +152,22 @@ export function renderSmartHachure(
     const classification = classify(signals, ctx, providers, overrideStore);
 
     // 3. select treatment
-    const treatment = selectTreatment(classification, opts.styleChoice, treatmentMods);
+    const baseTreatment = selectTreatment(classification, opts.styleChoice, treatmentMods);
+    // NARROW fillStyle override — user's slider swaps which mark grammar
+    // shows up on regions the CLASSIFIER chose to fill. Classifier still
+    // owns the "fillable or not" call (paper / structural-frame /
+    // decorative-accent / line-decoration / label-text ALL stay 'none').
+    // Don't lift gap / weight / layerCount / opacity here — classifier's
+    // tonal-density per-role choice stays intact. Don't recurse <g> here
+    // either. Per memory: `feedback_fillstyle_slider_must_switch_classifier_pick`.
+    const userPick = fullModifiers.fillStyle;
+    const classifierWantsFill = baseTreatment.fillStyle !== 'none';
+    const treatment = {
+      ...baseTreatment,
+      fillStyle: userPick === 'none' || !classifierWantsFill
+        ? ('none' as const)
+        : userPick,
+    };
 
     opts.onClassification?.(regionPath, classification, treatment);
 
