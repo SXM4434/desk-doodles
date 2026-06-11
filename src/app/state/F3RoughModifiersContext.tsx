@@ -127,7 +127,11 @@ export type F3ModifiersState = {
 
 // Defaults match the rough-handdrawn preset baseline (other styles override
 // when active — but state persists across style switches).
-const DEFAULT: F3ModifiersState = {
+// Exported for the chrome's Reset button: reset = DEFAULT + style preset,
+// so keys NO preset carries (penTip / endpointBehavior / sketchingStyle /
+// palettes) actually reset too. Before 2026-06-11 Reset merged the preset
+// onto CURRENT state, silently keeping those keys (Sebs: "reset doesn't work").
+export const DEFAULT_MODIFIERS: F3ModifiersState = {
   wobble: 0.4,              // Start value per Sebs 2026-06-11 (calibration ratios I-11 unaffected)
   jaggedness: 0,            // Splinter is opt-in via slider, NOT default (2026-06-09 per Sebs)
   simplification: 1.0,      // ε(1.0) = 3.0 — pixel-identical to pre-slider behavior (doc 22 §4.8)
@@ -176,12 +180,12 @@ type Ctx = {
 const F3RoughModifiersCtx = createContext<Ctx | null>(null);
 
 export function F3RoughModifiersProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<F3ModifiersState>(DEFAULT);
+  const [state, setState] = useState<F3ModifiersState>(DEFAULT_MODIFIERS);
   const set = <K extends keyof F3ModifiersState>(key: K, value: F3ModifiersState[K]) => {
     setState((prev) => ({ ...prev, [key]: value }));
   };
   const replace = (next: F3ModifiersState) => setState(next);
-  const reset = () => setState(DEFAULT);
+  const reset = () => setState(DEFAULT_MODIFIERS);
   return <F3RoughModifiersCtx.Provider value={{ state, set, replace, reset }}>{children}</F3RoughModifiersCtx.Provider>;
 }
 

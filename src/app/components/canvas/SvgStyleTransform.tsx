@@ -540,6 +540,37 @@ function effectiveFillWeight(userDensity: number, bboxMin: number): number {
   return userDensity * 2 * sizeDamp;
 }
 
+/** Resample a built path `d` into evenly-spaced points for pen-tip inking.
+ *  The built d carries ALL line-feel modifiers (wobble/bowing/curveDamp/
+ *  jaggedness/endpoint), so sampling it — instead of the clean anchors —
+ *  makes every toggle affect pen-tip ink exactly as it affects plain mode.
+ *  Needs the source's <svg> to measure against; returns null when that (or
+ *  the path) isn't measurable so the caller can fall back to raw anchors. */
+function samplePathForPenTip(
+  d: string,
+  sourceEl: SVGElement,
+  ownerDoc: Document,
+): Array<[number, number]> | null {
+  const svg = sourceEl.ownerSVGElement;
+  if (!svg || !d) return null;
+  const tmp = ownerDoc.createElementNS('http://www.w3.org/2000/svg', 'path');
+  tmp.setAttribute('d', d);
+  svg.appendChild(tmp);
+  let len = 0;
+  try { len = tmp.getTotalLength(); } catch { /* invalid path */ }
+  if (!len) { svg.removeChild(tmp); return null; }
+  // ~4px spacing keeps the wobble field's ~60px wavelength fully sampled;
+  // cap so huge shapes × multi-stroke layers stay cheap.
+  const n = Math.max(8, Math.min(256, Math.round(len / 4)));
+  const out: Array<[number, number]> = [];
+  for (let k = 0; k <= n; k++) {
+    const p = tmp.getPointAtLength((k / n) * len);
+    out.push([p.x, p.y]);
+  }
+  svg.removeChild(tmp);
+  return out;
+}
+
 /** Ramer-Douglas-Peucker polyline simplification.
  *  Reduces dense input (drawn freehand / auto-traced) to audit-compatible
  *  vertex density without losing curve shape. A point is dropped if its
@@ -1117,15 +1148,42 @@ function renderHandFeelShape(
     }
 
     if (usePenTip) {
-      // Pen-tip mode bypasses bowing/curveDamp because perfect-freehand
-      // generates its own polygon stroke from the raw points. Bowing/curve
-      // apply only to plain (polyline) mode.
-      const d = penTipPath(pts, m.penTip, m.strokeWidth, seed, ctx.bboxMin);
+      // Pen-tip mode = "re-ink the SAME line plain mode would draw, with a
+      // different tip" — NOT "bypass the line-feel toggles." Build the plain-
+      // mode d first (wobble / bowing / curveDamp / jaggedness / endpoint all
+      // live inside the path builders), then resample points along that built
+      // path and feed THOSE to perfect-freehand. Before 2026-06-11 this branch
+      // fed the raw clean anchors, so every line-feel slider was silently dead
+      // on every tip except plain (Sebs caught it on /desk).
+      const needsPerVertexTransformPT =
+        i > 0 && sketchingStyle === 'parallel-pass' && !isClosed
+        && !ctx.handlesPerVertexLayer;
+      const canUseBuiltPathPT =
+        ctx.buildPath !== undefined
+        && !needsPerVertexTransformPT
+        && m.jaggedness <= 0.05;
+      let lineD: string;
+      if (canUseBuiltPathPT) {
+        lineD = ctx.buildPath!(seed, mods);
+      } else {
+        const wobbleForCurves = effectiveWobble(m.wobble, effectiveBboxMin);
+        const jaggedPts = m.jaggedness > 0.05
+          ? injectJaggedness(pts, m.jaggedness, seed)
+          : pts;
+        lineD = pointsToPolylinePath(jaggedPts, isClosed, m.bowing, m.curveDamp, seed, wobbleForCurves);
+      }
+      const inkPts = samplePathForPenTip(lineD, sourceEl, ownerDoc) ?? pts;
+      const d = penTipPath(inkPts, m.penTip, m.strokeWidth, seed, ctx.bboxMin);
       if (!d) continue;
       const path = ownerDoc.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
       path.setAttribute('fill', penTipColor);
       path.setAttribute('stroke', 'none');
+      // Pen-tip ink is a FILLED polygon by construction (perfect-freehand).
+      // Tag it so smartHachure's outline filter — which strips real fills to
+      // stop base-fill shapes painting over hachure — keeps the ink. Without
+      // this tag every stroke vanishes when penTip ≠ plain (2026-06-11 bug).
+      path.setAttribute('data-pen-tip-ink', '1');
       if (layerTransform) path.setAttribute('transform', layerTransform);
       out.push(path);
     } else {

@@ -275,6 +275,10 @@ export function renderSmartHachure(
       // Special case: text passes through with its source fill (we never
       // hachure text per Agent 1; let it render).
       if (el.tagName.toLowerCase() === 'text') return true;
+      // Pen-tip ink (penTip ≠ plain) is a filled polygon by construction —
+      // it IS the outline, not a base fill. Dropping it blanked every stroke
+      // on any pen-tip change (2026-06-11). transformElement tags it.
+      if (el.getAttribute('data-pen-tip-ink') === '1') return true;
       return false;
     });
 

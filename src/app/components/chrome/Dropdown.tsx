@@ -45,7 +45,48 @@ export function Dropdown({
   renderTrigger,
 }: Props) {
   const [open, setOpen] = useState(false);
+  // Popover placement, measured at open against the live viewport:
+  //   · dir  — flip UP when there isn't room below (long menus near the bottom
+  //            would otherwise get cut off); cap maxH to the space available.
+  //   · left — horizontal SHIFT (offset from the trigger's left) so a wide menu
+  //            inside a right-side panel never spills off the right edge. It
+  //            stays fully on-screen with a consistent margin, anchored as close
+  //            to the trigger as it can — extending leftward into the canvas when
+  //            needed. This is the Floating-UI "shift" / Figma menu behavior.
+  const [placement, setPlacement] = useState<{ dir: 'down' | 'up'; maxH: number; left: number; width: number }>({
+    dir: 'down',
+    maxH: 600,
+    left: 0,
+    width: popoverWidth,
+  });
   const rootRef = useRef<HTMLDivElement>(null);
+
+  function toggleOpen() {
+    if (!open) {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (r) {
+        const gap = 6;
+        const margin = 12;
+        // Match the trigger's width (native-select behavior): the menu opens
+        // straight below/above its trigger, flush to the panel, inheriting the
+        // panel's own edge margin — so it can never bulge past the panel and
+        // hug the screen edge. This kills the whole horizontal-spill class.
+        const w = r.width;
+        // vertical: flip up when there isn't room below
+        const below = window.innerHeight - r.bottom - gap - margin;
+        const above = r.top - gap - margin;
+        const dir = below < 220 && above > below ? 'up' : 'down';
+        const maxH = Math.max(160, dir === 'up' ? above : below);
+        // horizontal: with width == trigger width this is a no-op in the normal
+        // case; it stays as a safety clamp so the menu is never off-screen.
+        const vw = window.innerWidth;
+        const maxLeft = Math.max(margin, vw - w - margin);
+        const desiredLeft = Math.min(Math.max(r.left, margin), maxLeft);
+        setPlacement({ dir, maxH, left: desiredLeft - r.left, width: w });
+      }
+    }
+    setOpen((v) => !v);
+  }
 
   const allOptions = sections.flatMap((s) => s.options);
   const active = allOptions.find((o) => o.value === value);
@@ -98,7 +139,7 @@ export function Dropdown({
       </span>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggleOpen}
         aria-haspopup="listbox"
         aria-expanded={open}
         style={{
@@ -158,11 +199,18 @@ export function Dropdown({
           role="listbox"
           style={{
             position: 'absolute',
-            top: 'calc(100% + 6px)',
-            [popoverAlign]: 0,
+            // Flip up when there's no room below (cut-off fix); cap height to
+            // the available space so long menus scroll instead of spilling off.
+            ...(placement.dir === 'up'
+              ? { bottom: 'calc(100% + 6px)' }
+              : { top: 'calc(100% + 6px)' }),
+            // Horizontal shift (see placement comment) — keeps wide menus on-screen.
+            left: placement.left,
             zIndex: 200,
-            width: popoverWidth,
-            maxHeight: '70vh',
+            // Menu width == trigger width (measured at open); falls back to the
+            // popoverWidth prop before first measurement.
+            width: placement.width,
+            maxHeight: placement.maxH,
             overflowY: 'auto',
             backgroundColor: 'var(--dir-bg)',
             border: '1px solid var(--dir-border)',

@@ -34,6 +34,7 @@ import {
   ENDPOINT_BEHAVIOR_STEPS, type EndpointBehaviorStep,
   SKETCHING_STYLE_STEPS, type SketchingStyleStep,
   PEN_TIP_STEPS, type PenTipStep,
+  DEFAULT_MODIFIERS,
 } from '../../state/F3RoughModifiersContext';
 import { applyStylePreset } from '../canvas/SvgStyleTransform';
 import { SLIDER_SPECS, MODIFIER_SETS_BY_STYLE, UNIVERSAL_MODIFIERS } from './modifierSpecs';
@@ -446,7 +447,13 @@ export function SmartHachureChrome() {
       <div style={{ padding: '18px' }}>
         <button
           onClick={() => {
-            const next = applyStylePreset(mods, svgStyle);
+            // Reset = DEFAULT baseline + this style's preset — NOT current
+            // state + preset. Presets don't carry penTip / endpointBehavior /
+            // sketchingStyle / palettes, so merging onto current state left
+            // those untouched and Reset visibly "did nothing" after changing
+            // them (Sebs 2026-06-11). Building from DEFAULT_MODIFIERS resets
+            // every axis to the style's true baseline.
+            const next = applyStylePreset(DEFAULT_MODIFIERS, svgStyle);
             Object.keys(next).forEach((k) => {
               const key = k as keyof typeof next;
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
