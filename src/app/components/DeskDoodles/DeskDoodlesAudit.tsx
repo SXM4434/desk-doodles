@@ -1,8 +1,9 @@
 // DeskDoodlesAudit — full-inventory verification matrix.
 //
-// Renders ALL 93 PinShape cases as a single grid wrapped in SvgStyleTransform,
-// alongside the same SmartHachureChrome the playground uses. Twisting any
-// modifier updates all 93 simultaneously — visual scan of the grid IS the
+// Renders ALL 197 shape cases (93 Trophy Wall PinShape + 104 Pegboard
+// PegToolShape) as a single grid wrapped in SvgStyleTransform, alongside the
+// same SmartHachureChrome the playground uses. Twisting any modifier updates
+// all 197 simultaneously — visual scan of the grid IS the
 // audit pass. Per-cell label includes subject + shape id so failures are
 // pinpointable in the dd-diag console output.
 //
@@ -11,6 +12,7 @@
 import { useEffect, useMemo, type CSSProperties } from 'react';
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
+import { SECTION_LABEL } from '../../lib/chromeStyles';
 import {
   F3_TROPHY_WALL_SUBJECTS,
   F3_PEGBOARD_SUBJECTS,
@@ -86,21 +88,10 @@ export function DeskDoodlesAudit() {
   const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('audit.right');
   useMinimizeUi([{ open: rightOpen, setOpen: setRightOpen }]);
 
-  // Auto-enable Smart Hachure v2 + dd-diag console logging — playground does
-  // the same dance for smartHachure; we also flip __dd_diag so silent clamps
-  // log automatically.
+  // Enable dd-diag console logging so silent clamps log automatically. Smart
+  // Hachure is now default-ON in SvgStyleTransform (opt-out via ?smartHachure=0),
+  // so no URL-param dance + reload is needed — that reload was the white flash.
   useEffect(() => {
-    const url = new URL(window.location.href);
-    let needReload = false;
-    if (url.searchParams.get('smartHachure') !== '1') {
-      url.searchParams.set('smartHachure', '1');
-      needReload = true;
-    }
-    if (needReload) {
-      window.history.replaceState({}, '', url.toString());
-      window.location.reload();
-      return;
-    }
     (window as { __dd_diag?: boolean }).__dd_diag = true;
     return () => {
       (window as { __dd_diag?: boolean }).__dd_diag = false;
@@ -110,7 +101,10 @@ export function DeskDoodlesAudit() {
   return (
     <div
       style={{
-        minHeight: '100vh',
+        // Definite height (not min-height) so the page never scrolls — the
+        // left grid and right panel each scroll internally (/canvas pattern).
+        height: '100vh',
+        overflow: 'hidden',
         display: 'flex',
         background: 'var(--dir-bg)',
         color: 'var(--dir-text-primary)',
@@ -141,11 +135,11 @@ export function DeskDoodlesAudit() {
             >
               Desk Doodles
             </NavLink>
-            <span style={LABEL}>Audit · {inventory.length} shapes</span>
+            <span style={SECTION_LABEL}>Audit · {inventory.length} shapes</span>
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'baseline' }}>
             <NavLink to="/playground" style={LINK}>← Playground</NavLink>
-            <span style={{ ...LABEL, color: 'var(--dir-text-body-soft)' }}>
+            <span style={{ ...SECTION_LABEL, color: 'var(--dir-text-body-soft)' }}>
               dd-diag on (check console)
             </span>
             <PanelToggle
@@ -158,7 +152,7 @@ export function DeskDoodlesAudit() {
           </div>
         </header>
 
-        <p style={{ ...LABEL, color: 'var(--dir-text-body-soft)', marginBottom: 14 }}>
+        <p style={{ ...SECTION_LABEL, color: 'var(--dir-text-body-soft)', marginBottom: 14 }}>
           Every shape rendered through current Style + Modifier state. Twist controls →
           all cells update. Failures (silent clamp, broken render, no-op past threshold)
           are visible by visual scan + dd-diag console output.
@@ -245,7 +239,6 @@ export function DeskDoodlesAudit() {
           borderLeft: '1px solid var(--dir-border)',
           background: 'var(--dir-raised)',
           overflowY: 'auto',
-          maxHeight: '100vh',
         }}
       >
         <SmartHachureChrome />
@@ -253,15 +246,6 @@ export function DeskDoodlesAudit() {
     </div>
   );
 }
-
-const LABEL: CSSProperties = {
-  fontFamily: IS,
-  fontSize: 10,
-  fontWeight: 600,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase',
-  color: 'var(--dir-text-secondary)',
-};
 
 const LINK: CSSProperties = {
   fontFamily: IS,

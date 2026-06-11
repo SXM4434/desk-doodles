@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
 import { CTA, PILL, SECTION_LABEL } from '../../lib/chromeStyles';
@@ -27,16 +27,9 @@ type PlacedItem = {
 };
 
 export function DeskDoodlesPlayground() {
-  // Force Smart Hachure v2 ON for the playground — the engine is gated behind
-  // ?smartHachure=1 in SvgStyleTransform. Playground always opts in.
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('smartHachure') !== '1') {
-      url.searchParams.set('smartHachure', '1');
-      window.history.replaceState({}, '', url.toString());
-      window.location.reload();
-    }
-  }, []);
+  // Smart Hachure is now default-ON in SvgStyleTransform (opt-out via
+  // ?smartHachure=0), so the playground no longer needs the param-set + reload
+  // dance — that reload was the white flash on every fresh visit.
 
   const [mode, setMode] = useState<CanvasMode>('svg');
   const [items, setItems] = useState<PlacedItem[]>([]);
@@ -152,6 +145,7 @@ export function DeskDoodlesPlayground() {
             <button
               key={m}
               onClick={() => setMode(m)}
+              title={m === '3d' ? '3D mode lands Day 11 (Rod + Extrude)' : undefined}
               style={{
                 ...PILL,
                 border: 'none',
@@ -173,7 +167,11 @@ export function DeskDoodlesPlayground() {
             onToggle={toggleRight}
             controlsId="playground-right-panel"
           />
-          <button disabled style={{ ...CTA, opacity: 0.4, cursor: 'not-allowed' }}>
+          <button
+            disabled
+            title="Publishing lives on /desk — this page is the test surface"
+            style={{ ...CTA, opacity: 0.4, cursor: 'not-allowed' }}
+          >
             Publish
           </button>
         </div>
@@ -214,7 +212,7 @@ export function DeskDoodlesPlayground() {
                 style={{
                   borderRight: '1px solid var(--dir-border)',
                   overflowY: 'auto',
-                  padding: '8px 0',
+                  padding: '8px 6px',
                 }}
               >
                 {F3_TROPHY_WALL_SUBJECTS.map((subj) => {
@@ -230,7 +228,9 @@ export function DeskDoodlesPlayground() {
                         padding: '8px 14px',
                         background: active ? 'var(--dir-bg)' : 'transparent',
                         border: `1px solid ${active ? 'var(--dir-accent)' : 'transparent'}`,
-                        borderRadius: 999,
+                        // Nested nav rows, some multi-line ("Roots (CO / US)")
+                        // — soft radius like dropdown rows, NOT full pill.
+                        borderRadius: 10,
                         color: active ? 'var(--dir-text-primary)' : 'var(--dir-text-body)',
                         fontFamily: IS,
                         fontSize: 12,
@@ -387,6 +387,7 @@ export function DeskDoodlesPlayground() {
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
                 onPointerEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                onPointerLeave={(e) => (e.currentTarget.style.opacity = '0')}
               >
                 ✕
               </button>

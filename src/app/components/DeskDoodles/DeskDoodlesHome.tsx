@@ -58,9 +58,11 @@ export function DeskDoodlesHome() {
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {/* Primary CTA → /desk (the real shared-desk flow). /canvas is the
+              engine test surface — reachable but not advertised as the entry. */}
           <NavLink
-            to="/canvas"
+            to="/desk"
             style={{
               ...CTA,
               padding: '12px 20px', // hero CTA — keep larger padding than chrome PILL
@@ -69,8 +71,10 @@ export function DeskDoodlesHome() {
           >
             Start doodling →
           </NavLink>
+          {/* Browse the wall → /desks (the public desk gallery — wall of walls).
+              Repointed from /public so the gallery is the reachable entry. */}
           <NavLink
-            to="/public"
+            to="/desks"
             style={{
               ...PILL,
               padding: '12px 20px', // hero CTA — keep larger padding than chrome PILL
@@ -78,6 +82,18 @@ export function DeskDoodlesHome() {
             }}
           >
             Browse the wall
+          </NavLink>
+          <NavLink
+            to="/canvas"
+            style={{
+              fontFamily: IS,
+              fontSize: 13,
+              color: 'var(--dir-text-body-soft)',
+              textDecoration: 'none',
+              marginLeft: 4,
+            }}
+          >
+            Try the engine
           </NavLink>
         </div>
 
@@ -87,7 +103,7 @@ export function DeskDoodlesHome() {
             padding: 24,
             background: 'var(--dir-raised)',
             border: '1px solid var(--dir-border)',
-            borderRadius: 4,
+            borderRadius: 6, // soft band floor — non-interactive cards use 6-16
             fontFamily: IS,
             fontSize: 11,
             color: 'var(--dir-text-secondary)',
@@ -95,7 +111,7 @@ export function DeskDoodlesHome() {
             textTransform: 'uppercase',
           }}
         >
-          Day 6 placeholder · 2026-06-07 · building in public · github.com/SXM4434/desk-doodles
+          Built in public · github.com/SXM4434/desk-doodles
         </div>
       </main>
     </div>

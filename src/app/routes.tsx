@@ -2,6 +2,8 @@ import { createBrowserRouter, NavLink } from 'react-router';
 import { IS } from './lib/typography';
 import { DeskDoodlesHome } from './components/DeskDoodles/DeskDoodlesHome';
 import { DeskDoodlesCanvas } from './components/DeskDoodles/DeskDoodlesCanvas';
+import { DeskPage } from './components/DeskDoodles/DeskPage';
+import { DeskGallery } from './components/DeskDoodles/DeskGallery';
 import { DeskDoodlesPublicCanvas } from './components/DeskDoodles/DeskDoodlesPublicCanvas';
 import { DeskDoodlesPlayground } from './components/DeskDoodles/DeskDoodlesPlayground';
 import { DeskDoodlesAudit } from './components/DeskDoodles/DeskDoodlesAudit';
@@ -33,7 +35,13 @@ function NotFound() {
 
 export const router = createBrowserRouter([
   { path: '/', Component: DeskDoodlesHome },
+  // /canvas = the drawing primitive's TEST surface; /desk = the real product
+  // flow (desk canvas + DrawPanel popup) per project_desk_doodles_draw_panel_vs_desk_canvas.
   { path: '/canvas', Component: DeskDoodlesCanvas },
+  { path: '/desk', Component: DeskPage },
+  // /desks = the public desk GALLERY (browse the wall of walls — newest-first
+  // grid of desk cards; a card opens /desk?desk=<desk_index>).
+  { path: '/desks', Component: DeskGallery },
   { path: '/public', Component: DeskDoodlesPublicCanvas },
   { path: '/playground', Component: DeskDoodlesPlayground },
   { path: '/audit', Component: DeskDoodlesAudit },

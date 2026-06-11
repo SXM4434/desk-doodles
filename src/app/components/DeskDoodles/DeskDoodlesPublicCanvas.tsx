@@ -36,7 +36,7 @@ export function DeskDoodlesPublicCanvas() {
           Desk Doodles
         </NavLink>
         <NavLink
-          to="/canvas"
+          to="/desk"
           style={{
             ...CTA,
             padding: '8px 16px', // header CTA — keep larger padding than chrome PILL
@@ -68,7 +68,7 @@ export function DeskDoodlesPublicCanvas() {
             color: 'var(--dir-text-primary)',
           }}
         >
-          Public canvas — coming Day 9
+          The wall lives on your desk.
         </h1>
         <p
           style={{
@@ -81,10 +81,20 @@ export function DeskDoodlesPublicCanvas() {
             textAlign: 'center',
           }}
         >
-          Infinite Figma-style canvas where everyone's published doodles get scattered together.
-          Mixed styles, mixed modes, slight rotation, anti-cover placement. Wiring lands Day 9
-          (Supabase + anonymous session ID + opt-in publish).
+          Everyone&rsquo;s published doodles scatter onto a shared desk — mixed styles, mixed
+          modes, slight tilt. Draw something, hit Done, and watch it land live next to everyone
+          else&rsquo;s.
         </p>
+        <NavLink
+          to="/desk"
+          style={{
+            ...CTA,
+            padding: '10px 18px',
+            textDecoration: 'none',
+          }}
+        >
+          Open the desk →
+        </NavLink>
       </main>
     </div>
   );
