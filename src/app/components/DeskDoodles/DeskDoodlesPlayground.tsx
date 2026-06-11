@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
+import { CTA, PILL, SECTION_LABEL } from '../../lib/chromeStyles';
 import {
   F3_TROPHY_WALL_SUBJECTS,
   type F3SubjectId,
@@ -8,6 +9,12 @@ import {
 } from '../../lib/items/identitySet';
 import { PinShape } from '../../lib/items/PinShape';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
+import {
+  CollapsiblePanel,
+  PanelToggle,
+  useMinimizeUi,
+  usePanelOpen,
+} from '../chrome/CollapsiblePanel';
 import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
 
 type CanvasMode = 'svg' | '3d';
@@ -17,38 +24,6 @@ type PlacedItem = {
   shape: F3TrophyWallShapeId;
   x: number;
   y: number;
-};
-
-const PILL: CSSProperties = {
-  borderRadius: 999,
-  fontFamily: IS,
-  fontSize: 11,
-  fontWeight: 600,
-  letterSpacing: '0.04em',
-  textTransform: 'uppercase',
-  cursor: 'pointer',
-  border: '1px solid var(--dir-border)',
-  background: 'transparent',
-  color: 'var(--dir-text-body)',
-  padding: '6px 14px',
-  transition: 'background 0.15s, color 0.15s, border-color 0.15s',
-};
-
-const CTA: CSSProperties = {
-  ...PILL,
-  background: 'var(--dir-cta-bg)',
-  color: 'var(--dir-cta-text)',
-  borderColor: 'var(--dir-cta-border)',
-};
-
-const SECTION_LABEL: CSSProperties = {
-  fontFamily: IS,
-  fontSize: 10,
-  fontWeight: 600,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase',
-  color: 'var(--dir-text-secondary)',
-  margin: 0,
 };
 
 export function DeskDoodlesPlayground() {
@@ -66,8 +41,12 @@ export function DeskDoodlesPlayground() {
   const [mode, setMode] = useState<CanvasMode>('svg');
   const [items, setItems] = useState<PlacedItem[]>([]);
   const [activeSubject, setActiveSubject] = useState<F3SubjectId>('sketching');
-  const [leftOpen, setLeftOpen] = useState(true);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [leftOpen, toggleLeft, setLeftOpen] = usePanelOpen('playground.left');
+  const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('playground.right');
+  useMinimizeUi([
+    { open: leftOpen, setOpen: setLeftOpen },
+    { open: rightOpen, setOpen: setRightOpen },
+  ]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const dragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -152,13 +131,13 @@ export function DeskDoodlesPlayground() {
           >
             Desk Doodles
           </NavLink>
-          <button
-            onClick={() => setLeftOpen((v) => !v)}
-            title={leftOpen ? 'Hide items panel' : 'Show items panel'}
-            style={{ ...PILL, padding: '4px 10px', fontSize: 10 }}
-          >
-            {leftOpen ? '◀ Items' : 'Items ▶'}
-          </button>
+          <PanelToggle
+            side="left"
+            open={leftOpen}
+            label="Items"
+            onToggle={toggleLeft}
+            controlsId="playground-left-panel"
+          />
         </div>
 
         <div
@@ -187,13 +166,13 @@ export function DeskDoodlesPlayground() {
         </div>
 
         <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button
-            onClick={() => setRightOpen((v) => !v)}
-            title={rightOpen ? 'Hide controls panel' : 'Show controls panel'}
-            style={{ ...PILL, padding: '4px 10px', fontSize: 10 }}
-          >
-            {rightOpen ? 'Controls ▶' : '◀ Controls'}
-          </button>
+          <PanelToggle
+            side="right"
+            open={rightOpen}
+            label="Controls"
+            onToggle={toggleRight}
+            controlsId="playground-right-panel"
+          />
           <button disabled style={{ ...CTA, opacity: 0.4, cursor: 'not-allowed' }}>
             Publish
           </button>
@@ -203,17 +182,18 @@ export function DeskDoodlesPlayground() {
       {/* ─── Body: left panel + canvas + right panel ──────────────── */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* LEFT PANEL — items picker */}
-        {leftOpen && (
-          <aside
-            style={{
-              width: 360,
-              borderRight: '1px solid var(--dir-border)',
-              background: 'var(--dir-raised)',
-              display: 'flex',
-              flexDirection: 'column',
-              flexShrink: 0,
-            }}
-          >
+        <CollapsiblePanel
+          side="left"
+          open={leftOpen}
+          width={360}
+          id="playground-left-panel"
+          style={{
+            borderRight: '1px solid var(--dir-border)',
+            background: 'var(--dir-raised)',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
             <div
               style={{
                 padding: '14px 16px',
@@ -246,11 +226,11 @@ export function DeskDoodlesPlayground() {
                       style={{
                         display: 'block',
                         width: '100%',
-                        textAlign: 'left',
+                        textAlign: 'center',
                         padding: '8px 14px',
                         background: active ? 'var(--dir-bg)' : 'transparent',
-                        border: 'none',
-                        borderLeft: `2px solid ${active ? 'var(--dir-accent)' : 'transparent'}`,
+                        border: `1px solid ${active ? 'var(--dir-accent)' : 'transparent'}`,
+                        borderRadius: 999,
                         color: active ? 'var(--dir-text-primary)' : 'var(--dir-text-body)',
                         fontFamily: IS,
                         fontSize: 12,
@@ -289,7 +269,7 @@ export function DeskDoodlesPlayground() {
                       alignItems: 'center',
                       justifyContent: 'center',
                       gap: 6,
-                      borderRadius: 8,
+                      borderRadius: 16,
                       transition: 'background 0.15s',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--dir-bg)')}
@@ -326,8 +306,7 @@ export function DeskDoodlesPlayground() {
                 ))}
               </div>
             </div>
-          </aside>
-        )}
+        </CollapsiblePanel>
 
         {/* MAIN CANVAS */}
         <main
@@ -416,21 +395,21 @@ export function DeskDoodlesPlayground() {
         </main>
 
         {/* RIGHT PANEL — verbatim Hero8Shell modifier chrome */}
-        {rightOpen && (
-          <aside
-            style={{
-              width: 480,
-              borderLeft: '1px solid var(--dir-border)',
-              background: 'var(--dir-raised)',
-              display: 'flex',
-              flexDirection: 'column',
-              flexShrink: 0,
-              overflowY: 'auto',
-            }}
-          >
-            <SmartHachureChrome />
-          </aside>
-        )}
+        <CollapsiblePanel
+          side="right"
+          open={rightOpen}
+          width={480}
+          id="playground-right-panel"
+          style={{
+            borderLeft: '1px solid var(--dir-border)',
+            background: 'var(--dir-raised)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflowY: 'auto',
+          }}
+        >
+          <SmartHachureChrome />
+        </CollapsiblePanel>
       </div>
     </div>
   );

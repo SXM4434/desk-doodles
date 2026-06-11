@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
+import { CTA, PILL } from '../../lib/chromeStyles';
 
 export function DeskDoodlesHome() {
   return (
@@ -61,15 +62,9 @@ export function DeskDoodlesHome() {
           <NavLink
             to="/canvas"
             style={{
-              fontFamily: IS,
-              fontSize: 13,
-              fontWeight: 600,
-              padding: '12px 20px',
-              background: 'var(--dir-cta-bg)',
-              color: 'var(--dir-cta-text)',
-              border: '1px solid var(--dir-cta-border)',
+              ...CTA,
+              padding: '12px 20px', // hero CTA — keep larger padding than chrome PILL
               textDecoration: 'none',
-              borderRadius: 4,
             }}
           >
             Start doodling →
@@ -77,15 +72,9 @@ export function DeskDoodlesHome() {
           <NavLink
             to="/public"
             style={{
-              fontFamily: IS,
-              fontSize: 13,
-              fontWeight: 600,
-              padding: '12px 20px',
-              background: 'transparent',
-              color: 'var(--dir-text-primary)',
-              border: '1px solid var(--dir-border)',
+              ...PILL,
+              padding: '12px 20px', // hero CTA — keep larger padding than chrome PILL
               textDecoration: 'none',
-              borderRadius: 4,
             }}
           >
             Browse the wall

@@ -220,6 +220,9 @@ export function Dropdown({
                       textAlign: 'left',
                       fontFamily: IS,
                       color: 'var(--dir-text-primary)',
+                      // Concentric radius: popover is 16 with 6px padding,
+                      // so nested rows get 16 - 6 = 10. NOT pill — full-round
+                      // reads as a lozenge on multi-line option rows.
                       borderRadius: 10,
                       transition: 'background 0.1s',
                     }}

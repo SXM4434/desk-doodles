@@ -2,8 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router';
 import { getStroke } from 'perfect-freehand';
 import { IS, ISe } from '../../lib/typography';
+import { PILL, CTA } from '../../lib/chromeStyles';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
+import {
+  CollapsiblePanel,
+  PanelToggle,
+  useMinimizeUi,
+  usePanelOpen,
+} from '../chrome/CollapsiblePanel';
 
 type StrokePoint = [number, number, number]; // x, y, pressure
 type Stroke = { id: string; points: StrokePoint[] };
@@ -49,6 +56,12 @@ type InputMode = 'draw' | 'upload-svg' | 'upload-image';
 export function DeskDoodlesCanvas() {
   const [mode, setMode] = useState<CanvasMode>('svg');
   const [input, setInput] = useState<InputMode>('draw');
+  const [leftOpen, toggleLeft, setLeftOpen] = usePanelOpen('canvas.left');
+  const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('canvas.right');
+  useMinimizeUi([
+    { open: leftOpen, setOpen: setLeftOpen },
+    { open: rightOpen, setOpen: setRightOpen },
+  ]);
 
   return (
     <div
@@ -73,18 +86,27 @@ export function DeskDoodlesCanvas() {
           background: 'var(--dir-bg)',
         }}
       >
-        <NavLink
-          to="/"
-          style={{
-            fontFamily: ISe,
-            fontSize: 18,
-            letterSpacing: '-0.01em',
-            color: 'var(--dir-text-primary)',
-            textDecoration: 'none',
-          }}
-        >
-          Desk Doodles
-        </NavLink>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <NavLink
+            to="/"
+            style={{
+              fontFamily: ISe,
+              fontSize: 18,
+              letterSpacing: '-0.01em',
+              color: 'var(--dir-text-primary)',
+              textDecoration: 'none',
+            }}
+          >
+            Desk Doodles
+          </NavLink>
+          <PanelToggle
+            side="left"
+            open={leftOpen}
+            label="Input"
+            onToggle={toggleLeft}
+            controlsId="canvas-left-panel"
+          />
+        </div>
 
         <div
           role="tablist"
@@ -92,7 +114,7 @@ export function DeskDoodlesCanvas() {
           style={{
             display: 'inline-flex',
             border: '1px solid var(--dir-border)',
-            borderRadius: 4,
+            borderRadius: 999,
             overflow: 'hidden',
           }}
         >
@@ -120,19 +142,19 @@ export function DeskDoodlesCanvas() {
           ))}
         </div>
 
-        <div style={{ justifySelf: 'end' }}>
+        <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <PanelToggle
+            side="right"
+            open={rightOpen}
+            label="Controls"
+            onToggle={toggleRight}
+            controlsId="canvas-right-panel"
+          />
           <button
             disabled
             title="Publish wiring lands Day 9"
             style={{
-              fontFamily: IS,
-              fontSize: 13,
-              fontWeight: 600,
-              padding: '8px 16px',
-              background: 'var(--dir-cta-bg)',
-              color: 'var(--dir-cta-text)',
-              border: '1px solid var(--dir-cta-border)',
-              borderRadius: 4,
+              ...CTA,
               cursor: 'not-allowed',
               opacity: 0.5,
             }}
@@ -143,9 +165,13 @@ export function DeskDoodlesCanvas() {
       </header>
 
       {/* Body — left dock + main canvas + right Smart Hachure chrome */}
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '280px 1fr 360px', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* Left dock */}
-        <aside
+        <CollapsiblePanel
+          side="left"
+          open={leftOpen}
+          width={280}
+          id="canvas-left-panel"
           style={{
             borderRight: '1px solid var(--dir-border)',
             background: 'var(--dir-raised)',
@@ -181,15 +207,17 @@ export function DeskDoodlesCanvas() {
                   key={key}
                   onClick={() => setInput(key)}
                   style={{
-                    fontFamily: IS,
+                    ...PILL,
+                    width: '100%',
+                    textAlign: 'center',
+                    textTransform: 'none',
+                    letterSpacing: 'normal',
                     fontSize: 13,
+                    fontWeight: 400,
                     padding: '10px 14px',
-                    textAlign: 'left',
                     background: input === key ? 'var(--dir-bg)' : 'transparent',
                     color: 'var(--dir-text-primary)',
-                    border: `1px solid ${input === key ? 'var(--dir-accent)' : 'var(--dir-border)'}`,
-                    borderRadius: 4,
-                    cursor: 'pointer',
+                    borderColor: input === key ? 'var(--dir-accent)' : 'var(--dir-border)',
                   }}
                 >
                   {label}
@@ -226,11 +254,13 @@ export function DeskDoodlesCanvas() {
               (lib/smartHachure/, lib/f3HandFeel.ts).
             </p>
           </section>
-        </aside>
+        </CollapsiblePanel>
 
         {/* Main canvas area */}
         <main
           style={{
+            flex: 1,
+            minWidth: 0,
             padding: 48,
             display: 'flex',
             flexDirection: 'column',
@@ -242,17 +272,19 @@ export function DeskDoodlesCanvas() {
           <DrawSurface mode={mode} input={input} />
         </main>
         {/* Right chrome — Smart Hachure modifier panel from the audit/playground */}
-        <aside
+        <CollapsiblePanel
+          side="right"
+          open={rightOpen}
+          width={360}
+          id="canvas-right-panel"
           style={{
-            width: 360,
             borderLeft: '1px solid var(--dir-border)',
             background: 'var(--dir-raised)',
             overflowY: 'auto',
-            flexShrink: 0,
           }}
         >
           <SmartHachureChrome />
-        </aside>
+        </CollapsiblePanel>
       </div>
     </div>
   );
@@ -344,7 +376,7 @@ function DrawSurface({ mode, input }: { mode: CanvasMode; input: InputMode }) {
   }
 
   function handlePointerDown(e: React.PointerEvent) {
-    if (input !== 'draw') return;
+    if (input !== 'draw' || mode === '3d') return;
     (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
     setCurrent({ id: `s-${Date.now()}`, points: [eventToSvgPoint(e)] });
   }
@@ -671,6 +703,31 @@ function DrawSurface({ mode, input }: { mode: CanvasMode; input: InputMode }) {
           >
             Clear
           </button>
+        </div>
+      )}
+      {/* 3D HONESTY GATE — opaque placeholder covers the live 2D surface so the
+          toggle doesn't lie. Strokes/upload state stay intact underneath; flipping
+          back to 2D restores everything. Real 3D (Rod + Extrude) lands Day 11. */}
+      {mode === '3d' && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            background: 'var(--dir-bg)',
+            fontFamily: IS,
+            fontSize: 11,
+            color: 'var(--dir-text-secondary)',
+            letterSpacing: '0.04em',
+            textAlign: 'center',
+          }}
+        >
+          <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>3D mode lands Day 11</span>
+          <span>Rod &amp; Extrude geometry built from your strokes — coming 06-12.</span>
         </div>
       )}
     </div>

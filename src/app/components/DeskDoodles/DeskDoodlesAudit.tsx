@@ -21,6 +21,12 @@ import { PinShape } from '../../lib/items/PinShape';
 import { PegToolShape } from '../../lib/items/PegToolShape';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
+import {
+  CollapsiblePanel,
+  PanelToggle,
+  useMinimizeUi,
+  usePanelOpen,
+} from '../chrome/CollapsiblePanel';
 
 type AuditCell = {
   kind: 'trophy';
@@ -77,6 +83,8 @@ function flattenInventory(): AuditCell[] {
 
 export function DeskDoodlesAudit() {
   const inventory = useMemo(flattenInventory, []);
+  const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('audit.right');
+  useMinimizeUi([{ open: rightOpen, setOpen: setRightOpen }]);
 
   // Auto-enable Smart Hachure v2 + dd-diag console logging — playground does
   // the same dance for smartHachure; we also flip __dd_diag so silent clamps
@@ -103,15 +111,14 @@ export function DeskDoodlesAudit() {
     <div
       style={{
         minHeight: '100vh',
-        display: 'grid',
-        gridTemplateColumns: '1fr 480px',
+        display: 'flex',
         background: 'var(--dir-bg)',
         color: 'var(--dir-text-primary)',
         fontFamily: IS,
       }}
     >
       {/* ─── LEFT — audit grid ─────────────────────────────────────── */}
-      <main style={{ padding: '20px 28px', overflowY: 'auto' }}>
+      <main style={{ flex: 1, minWidth: 0, padding: '20px 28px', overflowY: 'auto' }}>
         <header
           style={{
             display: 'flex',
@@ -141,6 +148,13 @@ export function DeskDoodlesAudit() {
             <span style={{ ...LABEL, color: 'var(--dir-text-body-soft)' }}>
               dd-diag on (check console)
             </span>
+            <PanelToggle
+              side="right"
+              open={rightOpen}
+              label="Controls"
+              onToggle={toggleRight}
+              controlsId="audit-right-panel"
+            />
           </div>
         </header>
 
@@ -222,7 +236,11 @@ export function DeskDoodlesAudit() {
       </main>
 
       {/* ─── RIGHT — same chrome as playground ─────────────────────── */}
-      <aside
+      <CollapsiblePanel
+        side="right"
+        open={rightOpen}
+        width={480}
+        id="audit-right-panel"
         style={{
           borderLeft: '1px solid var(--dir-border)',
           background: 'var(--dir-raised)',
@@ -231,7 +249,7 @@ export function DeskDoodlesAudit() {
         }}
       >
         <SmartHachureChrome />
-      </aside>
+      </CollapsiblePanel>
     </div>
   );
 }

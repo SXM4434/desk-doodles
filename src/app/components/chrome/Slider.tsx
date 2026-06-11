@@ -67,6 +67,7 @@ export function Slider({ label, value, min, max, step, onChange, width = 170, un
       </div>
       <input
         type="range"
+        className="dd-range"
         min={min}
         max={max}
         step={step}
@@ -74,7 +75,6 @@ export function Slider({ label, value, min, max, step, onChange, width = 170, un
         onChange={(e) => onChange(parseFloat(e.target.value))}
         style={{
           width: '100%',
-          accentColor: 'var(--dir-text-primary)',
           height: 14,
           cursor: 'pointer',
         }}

@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
+import { CTA } from '../../lib/chromeStyles';
 
 export function DeskDoodlesPublicCanvas() {
   return (
@@ -37,14 +38,8 @@ export function DeskDoodlesPublicCanvas() {
         <NavLink
           to="/canvas"
           style={{
-            fontFamily: IS,
-            fontSize: 13,
-            fontWeight: 600,
-            padding: '8px 16px',
-            background: 'var(--dir-cta-bg)',
-            color: 'var(--dir-cta-text)',
-            border: '1px solid var(--dir-cta-border)',
-            borderRadius: 4,
+            ...CTA,
+            padding: '8px 16px', // header CTA — keep larger padding than chrome PILL
             textDecoration: 'none',
           }}
         >

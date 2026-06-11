@@ -110,3 +110,38 @@
     outline-offset: 3px;
   }
 }
+
+/* Pill slider track + round thumb — native range pseudo-elements can't be styled inline */
+input[type='range'].dd-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  background: transparent;
+}
+input[type='range'].dd-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--dir-border);
+}
+input[type='range'].dd-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--dir-text-primary);
+  border: none;
+  margin-top: -4px;
+}
+input[type='range'].dd-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--dir-border);
+}
+input[type='range'].dd-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--dir-text-primary);
+  border: none;
+}
