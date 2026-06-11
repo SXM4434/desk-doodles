@@ -48,7 +48,21 @@ Plus two infra gates that don't exist yet:
 4. **Object cap = 50 per public desk.** The research-backed Lighthouse-headroom default (50 × 20–80 DOM nodes stays under the ~800-node warn line). Drives the auto-spawn-at-cap → desk N+1 transaction.
 5. **Sandbox before Edit.** The object surface ships **Sandbox mode first** (re-renders someone else's markup through viewer config, writes nothing — lowest risk, exactly the S12 mechanism). Edit-after-place comes second and needs source-stroke retention (a real slice — strokes are currently discarded at Done), which is **post-makeathon** unless time remains.
 
-### D. Day-by-day — 06-11 through 06-18 (THE current grid)
+### D′. STATUS PATCH 2026-06-11 PM (GOVERNING over D where they conflict — reality overtook the morning grid)
+
+**Landed ahead of grid:** multi-desk (#5) LIVE early (schema-v2 pasted; cap **120** — Sebs raised it from §C-4's 50; /desks gallery with live mini-desk previews; deterministic names). Object surface shipped BOTH modes (Sandbox shell + Edit name/why save via schema-v3 RPCs; delete/drag/meta all live — §C-5's "Edit post-makeathon" superseded by pace). Keepalive = GitHub Action daily cron (replaces M10 Edge-Function heartbeat; inert until committed+pushed). Desk craft (#6 part): two-scale paper grain + warm pool + sit shadows DONE. Agents delivered: 3D build plan (`docs/design/3d-roundtrip-build-plan.md`) · mixed-3d toggle semantics doc (`docs/design/global-toggles-and-mixed-3d.md`, 6 Sebs-decisions D-1..D-6 open) · geometry3d lib (Rod/Extrude + R3F scene, NEW files, 15/15 smoke, UNWIRED).
+
+**Fix batch 06-11 PM (all browser-verified):** pen-tip vanish · line-feel toggles dead on non-plain tips · Reset button · dropdown right-edge spill · reload-flash · grain visibility (2-scale).
+
+**THE ORDER from here (Sebs: social before 3D wiring; parallel agents, main thread reviews):**
+1. **NOW (agents):** desk PAN/ZOOM (~25%–400%, locked, in M9 scope all along) · Sandbox live-controls (viewer-config re-render, nothing saves) · social smalls (friendly owner handle, publish double-read, empty-art guard) · drawer scoping (report-only → Sebs).
+2. **COMMIT GATE (Sebs go)** — tree is 2+ days deep; commit before 3D wiring.
+3. **3D wiring (after social slice):** geometry3d → /canvas honesty-gate toggle per the build plan — **PORT-FIRST from Free Stroke `origin/main`** (Sebs 2026-06-11: recent version is on GitHub, local checkout stale; read via `git show origin/main:<path>`). Remote has 3 WORKING modes (rod / extrude w/ perceptual sliders / solid via buildMaskSolid + draw-in anim; inflate TODO there too) + `lib/style-system.ts` (materials/dither/ascii/texture-lock) = the seed for M8 style-port + the mixed-3d decisions. Character-match the fresh geometry3d lib against Free Stroke before shipping. Desk-level 3D WAITS for pan/zoom + the mixed-3d D-decisions.
+4. D-grid resumes: M7/M8 round-trip core → **HARD PATH (the best-fit wedge — Sebs 2026-06-11 "don't forget")** + identity → M11 design language → video → submission. og-image (1200×630) before submit.
+
+**HARD PATH IS THE CENTERPIECE, NOT GARNISH:** the character-preserving route (vision-LLM router → Tripo / TRELLIS-via-fal) is the fidelity-to-the-hand pole no competitor occupies — the easy-path modes (rod/extrude/solid/inflate) are the floor that guarantees a working demo, the hard path is the wedge that wins it. Prep in flight: `docs/design/vision-router-spec.md` (agent, 06-11). Demo-safety rule stands: ship with a CACHED example fallback so an API failure can't kill the moment. **Only blockers are Sebs-side: Tripo key rotation + fal credits (~$5) — Sebs will do them at point-of-need (~Day 14, when the hard-path build starts). Don't re-ask before then.**
+
+### D. Day-by-day — 06-11 through 06-18 (the morning grid — D′ wins on conflict)
 
 One coherent sequence. Build-full default per `feedback_build_full_dont_self_stop_at_mvp` — the per-day list is the floor; push into the next block if a day finishes early. Sebs calls time.
 

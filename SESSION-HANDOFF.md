@@ -6,7 +6,26 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 ---
 
-## Current state · 2026-06-10 (Day 9 of 14 CLOSED — Make checkpoint + doc mirror + research spree + 21-synthesis v1.2 finalized)
+## Current state · 2026-06-11 PM (Day 10 — pen-tip/reset/grain/dropdown fix batch + 3D rocks fleet)
+
+### Pen-tip + toggles + reset + grain fix batch (06-11 PM, uncommitted; tsc + build clean; all browser-verified via playwright + screenshots)
+
+- **Pen-tip vanish FIXED**: penTip ≠ plain outputs FILLED perfect-freehand polygons; smartHachure's outline filter (index.ts ~269, strips real fills) dropped them → every stroke blanked on any tip change. Fix: `data-pen-tip-ink="1"` tag at creation (SvgStyleTransform ~1125) + filter keeps tagged ink. Verified: all 12 desk objects render under chisel/pencil-2b.
+- **Line-feel toggles dead on non-plain tips FIXED**: pen-tip branch fed RAW anchors to penTipPath, bypassing wobble/bowing/curveDamp/jaggedness (they live in the path builders). Fix: build the plain-mode `d` first, resample via NEW `samplePathForPenTip` (~4px spacing, cap 256), ink THAT. Verified: wobble/bowing/jaggedness visibly change chisel ink; plain-mode desk screenshot BYTE-IDENTICAL pre/post (regression clean).
+- **Reset button FIXED**: presets carry no penTip/endpoint/sketching/palette keys, so preset-onto-current merge left them stale. Fix: `DEFAULT` → exported `DEFAULT_MODIFIERS` (F3RoughModifiersContext); chrome Reset = `applyStylePreset(DEFAULT_MODIFIERS, svgStyle)`. Style-SWITCH keeps merge semantics (tip survives switching; Reset = true baseline). Verified: chisel→plain, wobble 2→0.4.
+- **Paper grain VISIBLE**: 0.05 opacity was imperceptible (1:1 A/B proof). deskCraft PAPER_GRAIN → 0.22 (f0.8 fine tooth; coarser variants went blotchy — A/B at /tmp/grain-ab2.html). Sebs may want to dial.
+- **Dropdown cutoff FIXED for real**: root cause = popover 480px vs trigger 323px → bulged past the right panel to screen edge. Fix: menu width == trigger width (native-select), opens under trigger, flip-up + maxHeight clamp retained. Verified: all menus alignedToTrigger + onScreen at 1440/2000px.
+- **Disappear-on-load reload-flash** (earlier): smartHachure force-reload effects removed from DeskPage + DrawSurface.
+- **Fable fleet LANDED (wf_c44fa189)**: ① /desks gallery mini-desks (6 most-recent doodles, deterministic scatter, shared PAPER_GRAIN/WARM_POOL, sanitized, CHIP badges) — verified pass. ② .github/workflows/supabase-keepalive.yml (daily cron + manual; inert until committed/pushed; publishable key inline = intentional) — verified pass. ③ docs/design/3d-roundtrip-build-plan.md — build-ready: strokes SURVIVE Done on /canvas but are DISCARDED at DrawPanel→DeskPage; MVP 3D mounts on /canvas; Rod/Extrude via new geometry3d lib; procedural 8-band hatch post-process (uniforms from existing Shading sliders).
+- **Fleet RUNNING (wf_b4c385c5)**: ① docs/design/global-toggles-and-mixed-3d.md (Sebs's mixed-treatment 3D-toggle semantics question — option space + precedents + Sebs-decisions flagged). ② geometry3d lib build (strokeTo3d.ts + Stroke3DScene.tsx, NEW FILES ONLY, native-first, no new deps).
+- **SOCIAL FLEET LANDED (wf_02eb1cdc, all verified ✓):** ① PAN/ZOOM live on /desk — 25%–400% cursor-anchored zoom, empty-desk drag + 2-finger-scroll pan, −/%/+/Fit pills in header, Cmd+0 reset, desk coords camera-independent (verified vs live DB: drag at 212% zoom → row x/y == style 0.00 delta), modals unscaled, grain zooms with desk. Known smalls: +/- pills step ×1.25 (never exactly 200%), no pan leash (Fit recovers), no touch-pinch (scope was wheel/trackpad). ② SANDBOX LIVE-CONTROLS — nested F3 providers wrap just the card; 3 sliders + style dropdown scoped local; desk byte-identical both directions; reset on close. ③ SOCIAL SMALLS — friendly handles (@doodled-finch style, "you" for own), no raw UUIDs anywhere, publish double-read removed, empty-art guard. ④ DRAWER = report only, 7 Sebs questions (stash-vs-index is load-bearing; recommended passive index, left CollapsiblePanel, half-day build).
+- **PERF ALARM (fleet-3 diagnostic, receipts /tmp/dd-perf/):** dragging ONE object re-runs the FULL pipeline on ALL N per pointermove — 5fps at 30 realistic objects, ~1fps at 120. Memoization fix = FIRST main-thread rock now that DeskPage is free. Same root cause hits pan/zoom + realtime inserts. Also: newest doodle renders BOTTOM of stack (buried under scatter) — z-order fix should ride the memo slice.
+- **Leg-up fleet LANDED (wf_1a10cbb2):** demo-video-plan.md ✓ · 25-research-own-design-language.md (3 identity candidates; 2 citation defects patched by main) · vision-router-spec.md (price defect patched) · submission-checklist.md ✓ (README says "Day 5 of 14" publicly! Contra URL ≠ entry; Make ~47 files stale → interim checkpoint 06-13 recommended) · cap-perf diagnostic (above).
+- **NEXT**: per-object memoization + newest-on-top (main, DeskPage now free) · wire geometry3d into /canvas honesty gate (port-first from free-stroke origin/main) · Sebs decision batch (identity pick · demo voice · mixed-3d D-1..D-6 · drawer Qs · Make checkpoint 06-13) · COMMIT (Sebs go) · README refresh.
+
+---
+
+## Previous state · 2026-06-10 (Day 9 of 14 CLOSED — Make checkpoint + doc mirror + research spree + 21-synthesis v1.2 finalized)
 
 ### Day 9 (06-10) — Make + docs + research
 
