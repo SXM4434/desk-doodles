@@ -1,0 +1,1053 @@
+// ─── strokeTo3d — pure stroke→geometry math for the 3D round-trip ───────────
+// Implements docs/design/3d-roundtrip-build-plan.md §1.1 (Rod + Extrude easy
+// path, research doc 21 §5b) + the §6.6 Inflate-Lite stretch mode (swept
+// capsule — explicit-only, never auto-picked). NEW file: imports NOTHING from
+// the 2D pipeline (SvgStyleTransform / smartHachure / handFeel stay
+// untouched).
+//
+// PURITY CONTRACT (node-runnable — tools/3d/strokeTo3d-smoke.mjs imports this
+// file directly):
+//   - no React, no DOM, no window/document
+//   - no wall-clock reads, no unseeded randomness — same input, same geometry
+//
+// Coordinate flow:
+//   VIEWBOX (800×600, y-down) ──normalize──▶ world space (y-up, centered,
+//   ~8 units wide) ──▶ Rod (open stroke) | Extrude (closed stroke)
+//                      | Inflate (EXPLICIT pick — swept variable-radius capsule)
+//                      | Solid (EXPLICIT pick — pool raster → marching squares)
+
+import * as THREE from 'three';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+/** Raw stroke point in viewBox coords (y-down).
+ *  Accepts both the repo's StrokePoint shape ([x, y, pressure] —
+ *  DrawSurface.tsx:13) and bare [x, y] pairs. Pressure (index 2) is accepted
+ *  and IGNORED in MVP — the radius-modulation stretch (plan §6.1) consumes it
+ *  later. Kept structurally compatible so the wiring layer can pass
+ *  `stroke.points` through unchanged. */
+export type StrokeInputPoint = [number, number] | [number, number, number];
+
+export type GeometryMode = 'rod' | 'extrude' | 'inflate' | 'solid';
+/** Modes the AUTO pick can resolve to. 'inflate' and 'solid' are
+ *  EXPLICIT-ONLY (the stretch modes, plan §6.6 / research §5b) — auto never
+ *  selects them. */
+export type AutoGeometryMode = Extract<GeometryMode, 'rod' | 'extrude'>;
+export type GeometryModeSetting = GeometryMode | 'auto';
+
+export interface ViewBoxSize {
+  w: number;
+  h: number;
+}
+
+export interface RodGeometryResult {
+  kind: 'rod';
+  geometry: THREE.TubeGeometry;
+  /** Endpoint cap centers (empty when the curve is closed). Rendered as
+   *  sibling sphere meshes — simpler than CSG merge (plan §1.1). */
+  capPositions: THREE.Vector3[];
+  radius: number;
+}
+
+export interface ExtrudeGeometryResult {
+  kind: 'extrude';
+  geometry: THREE.ExtrudeGeometry;
+}
+
+export interface InflateGeometryResult {
+  kind: 'inflate';
+  /** Custom swept-capsule BufferGeometry (TubeGeometry cannot vary radius). */
+  geometry: THREE.BufferGeometry;
+  /** Centerline sample count (ring count). Vertex layout:
+   *  rings · (radialSegments + 1) side vertices + 2 pole vertices. */
+  rings: number;
+  radialSegments: number;
+  /** Per-ring world radius after profile + pressure modulation — honest
+   *  introspection for the smoke harness + future debug overlays. */
+  ringRadii: number[];
+}
+
+export interface SolidGeometryResult {
+  kind: 'solid';
+  geometry: THREE.ExtrudeGeometry;
+  /** How many outer contours / holes the marching-squares pass produced —
+   *  honest introspection for the smoke harness + future debug overlays. */
+  outerContours: number;
+  holes: number;
+}
+
+export type StrokeGeometryResult =
+  | RodGeometryResult
+  | ExtrudeGeometryResult
+  | InflateGeometryResult
+  | SolidGeometryResult;
+
+// ─── Constants (plan §1.1 + §5b budgets) ─────────────────────────────────────
+
+export const DEFAULT_VIEWBOX: ViewBoxSize = { w: 800, h: 600 };
+
+/** ε matches the 2D canonical RDP epsilon (research doc 22 dispatch-freeze). */
+export const RDP_EPSILON = 3.0;
+
+/** viewBox px → world units. 800px-wide canvas → 8 world units. */
+export const WORLD_SCALE = 0.01;
+
+export const ROD_RADIUS = 0.05; // world units
+export const ROD_RADIAL_SEGMENTS = 10; // §5b budget: 8-12 thin, 16 hero
+export const ROD_MAX_TUBULAR_SEGMENTS = 512;
+
+export const EXTRUDE_DEPTH = 0.5;
+
+/** Inflate-Lite (swept capsule, research §5b "Free Stroke heuristic" — true
+ *  Teddy chordal-axis inflation is explicitly OUT of scope). */
+export const INFLATE_BASE_RADIUS = 0.22; // mid-stroke fullness, world units
+export const INFLATE_TIP_RADIUS = 0.035; // end taper floor (never 0 — degenerate rings)
+export const INFLATE_RADIAL_SEGMENTS = 12; // §5b budget: 8-12 thin, 16 hero
+export const INFLATE_MIN_SEGMENTS = 32; // radius profile needs longitudinal resolution
+export const INFLATE_MAX_SEGMENTS = 256;
+/** sin(πt)^exp profile: exp < 1 → fuller shoulders (capsule read, not football). */
+export const INFLATE_PROFILE_EXP = 0.8;
+/** How strongly pressure (0..1, neutral 0.5) scales the local radius. */
+export const INFLATE_PRESSURE_INFLUENCE = 0.35;
+/** Base radius is clamped to this fraction of the stroke's arc length so a
+ *  short stroke reads as a small blob, not a sphere swallowing its footprint. */
+export const INFLATE_MAX_BASE_TO_LENGTH = 0.35;
+
+/** Solid (research §5b "raster → marching squares → contour → extrude").
+ *  Pool-level: ALL strokes rasterize into ONE binary grid (pure JS, no
+ *  canvas/DOM) so overlapping strokes merge into a watertight mass. */
+export const SOLID_INK_RADIUS = 0.08; // world-unit half-width of the stamped ink body
+export const SOLID_GRID_RESOLUTION = 144; // samples along the pool bbox's longest side
+export const SOLID_MAX_GRID_RESOLUTION = 200;
+/** Contour loops below this area (grid-cell units²) are rasterization noise. */
+export const SOLID_MIN_LOOP_AREA = 2;
+/** RDP epsilon for contour simplification, in grid-cell units (< 1 cell).
+ *  0.6 filters the marching-squares staircase (~0.25–0.35 cell deviation)
+ *  while keeping curvature; one Chaikin pass then rounds the corners so a
+ *  drawn circle reads as a circle, not a 14-gon. */
+export const SOLID_RDP_EPSILON_CELLS = 0.6;
+
+/** Closed-stroke endpoint gap thresholds (plan §1.1 isClosedStroke). */
+export const CLOSE_GAP_PX = 24;
+export const CLOSE_GAP_BBOX_RATIO = 0.08;
+
+/** Shoelace-area floor (world units²) below which a "closed" stroke is
+ *  treated as degenerate (collinear scribble) and falls back to Rod.
+ *  0.005 world² ≈ 50 viewBox px² at WORLD_SCALE 0.01 — same order as the 2D
+ *  tiny-area clamp (40px², 18-scope-audit row 13). */
+export const MIN_EXTRUDE_AREA = 0.005;
+
+// ─── Simplification ──────────────────────────────────────────────────────────
+
+/** Ramer-Douglas-Peucker polyline simplification.
+ *  PROVENANCE: local copy of the module-private `rdp()` in
+ *  src/app/components/canvas/SvgStyleTransform.tsx (~line 579), duplicated
+ *  here per build plan §1.1 so the 2D pipeline file stays untouched.
+ *  Generalized over the point tuple so pressure (index 2) carries through
+ *  unchanged. A point is dropped if its perpendicular distance from the
+ *  chord through the segment endpoints is < epsilon. */
+export function rdpPoints<P extends StrokeInputPoint>(
+  points: P[],
+  epsilon: number = RDP_EPSILON,
+): P[] {
+  if (points.length < 3) return points.slice();
+  const [x1, y1] = points[0];
+  const [x2, y2] = points[points.length - 1];
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lineLen = Math.hypot(dx, dy);
+  let maxDist = 0;
+  let maxIdx = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [px, py] = points[i];
+    const dist =
+      lineLen === 0
+        ? Math.hypot(px - x1, py - y1)
+        : Math.abs(dy * px - dx * py + x2 * y1 - y2 * x1) / lineLen;
+    if (dist > maxDist) {
+      maxDist = dist;
+      maxIdx = i;
+    }
+  }
+  if (maxDist > epsilon) {
+    const left = rdpPoints(points.slice(0, maxIdx + 1), epsilon);
+    const right = rdpPoints(points.slice(maxIdx), epsilon);
+    return [...left.slice(0, -1), ...right];
+  }
+  return [points[0], points[points.length - 1]];
+}
+
+// ─── Closure detection + mode pick ───────────────────────────────────────────
+
+/** Closed iff the endpoint gap < max(24 viewBox px, 8% of the stroke's bbox
+ *  diagonal). Drives the auto Rod/Extrude pick (plan §1.1). */
+export function isClosedStroke(points: StrokeInputPoint[]): boolean {
+  if (points.length < 3) return false;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of points) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const diag = Math.hypot(maxX - minX, maxY - minY);
+  const [fx, fy] = points[0];
+  const [lx, ly] = points[points.length - 1];
+  const gap = Math.hypot(lx - fx, ly - fy);
+  return gap < Math.max(CLOSE_GAP_PX, diag * CLOSE_GAP_BBOX_RATIO);
+}
+
+/** Auto pick: closed → Extrude, open → Rod (§5b Phase-D auto-pick; the user
+ *  toggle overrides per the I-1 spirit — see resolveGeometryMode).
+ *  UNTOUCHED SEMANTICS: auto resolves rod/extrude ONLY — 'inflate' is an
+ *  explicit user choice, enforced by the AutoGeometryMode return type. */
+export function pickGeometryMode(points: StrokeInputPoint[]): AutoGeometryMode {
+  return isClosedStroke(points) ? 'extrude' : 'rod';
+}
+
+/** Map the chrome setting onto a concrete mode for one stroke. */
+export function resolveGeometryMode(
+  setting: GeometryModeSetting,
+  points: StrokeInputPoint[],
+): GeometryMode {
+  return setting === 'auto' ? pickGeometryMode(points) : setting;
+}
+
+// ─── Normalization (viewBox y-down → world y-up) ─────────────────────────────
+
+/** Whole-pool bbox center in viewBox coords. Passing this as the `center` of
+ *  normalizeStrokePoints centers the GROUP at the origin while preserving the
+ *  strokes' relative layout (plan §1.2 — pool center, never per-stroke).
+ *  Empty pool → viewBox center. */
+export function poolCenter(
+  strokes: StrokeInputPoint[][],
+  viewBox: ViewBoxSize = DEFAULT_VIEWBOX,
+): { x: number; y: number } {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const stroke of strokes) {
+    for (const [x, y] of stroke) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (!Number.isFinite(minX)) return { x: viewBox.w / 2, y: viewBox.h / 2 };
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+/** viewBox (y-down) → world (y-up, centered):
+ *    x' = (x − cx) · scale,  y' = −(y − cy) · scale,  z = 0
+ *  Default center = viewBox center; pass poolCenter(...) to center a
+ *  multi-stroke pool on its own bbox. 800px → 8 world units at the default
+ *  scale. Pressure is ignored here (MVP — plan §6.1 stretch). */
+export function normalizeStrokePoints(
+  points: StrokeInputPoint[],
+  viewBox: ViewBoxSize = DEFAULT_VIEWBOX,
+  scale: number = WORLD_SCALE,
+  center?: { x: number; y: number },
+): THREE.Vector3[] {
+  const cx = center ? center.x : viewBox.w / 2;
+  const cy = center ? center.y : viewBox.h / 2;
+  return points.map(([x, y]) => new THREE.Vector3((x - cx) * scale, -(y - cy) * scale, 0));
+}
+
+// ─── Geometry builders ───────────────────────────────────────────────────────
+
+/** Drop consecutive duplicate points — identical neighbors make centripetal
+ *  Catmull-Rom produce NaN tangents. RDP upstream removes most, this is the
+ *  deterministic last guard. */
+function dedupeConsecutive(world: THREE.Vector3[]): THREE.Vector3[] {
+  const out: THREE.Vector3[] = [];
+  for (const v of world) {
+    const prev = out[out.length - 1];
+    if (!prev || prev.distanceToSquared(v) > 1e-12) out.push(v);
+  }
+  return out;
+}
+
+/** Open-stroke Rod: TubeGeometry over a centripetal CatmullRomCurve3
+ *  (plan §1.1). Degenerate inputs (0-1 points — a dot tap) synthesize a tiny
+ *  straight segment so the geometry never throws. Endpoint sphere caps are
+ *  returned as positions for sibling meshes. */
+export function buildRodGeometry(
+  world: THREE.Vector3[],
+  opts: { radius?: number; closed?: boolean } = {},
+): RodGeometryResult {
+  const radius = opts.radius ?? ROD_RADIUS;
+  const closed = opts.closed ?? false;
+
+  let pts = dedupeConsecutive(world);
+  if (pts.length === 0) pts = [new THREE.Vector3(0, 0, 0)];
+  if (pts.length === 1) {
+    const p = pts[0];
+    pts = [
+      p.clone().add(new THREE.Vector3(-radius, 0, 0)),
+      p.clone().add(new THREE.Vector3(radius, 0, 0)),
+    ];
+  }
+  const canClose = closed && pts.length >= 3;
+  const curve = new THREE.CatmullRomCurve3(pts, canClose, 'centripetal', 0.5);
+  const tubularSegments = Math.min(Math.max(pts.length * 3, 8), ROD_MAX_TUBULAR_SEGMENTS);
+  const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, ROD_RADIAL_SEGMENTS, canClose);
+  const capPositions = canClose ? [] : [pts[0].clone(), pts[pts.length - 1].clone()];
+  return { kind: 'rod', geometry, capPositions, radius };
+}
+
+/** Signed shoelace area of the world-space polygon (xy plane). */
+function shoelaceArea(world: THREE.Vector3[]): number {
+  let area = 0;
+  for (let i = 0; i < world.length; i++) {
+    const a = world[i];
+    const b = world[(i + 1) % world.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
+}
+
+/** True if any vertex coordinate is non-finite — self-intersecting input can
+ *  triangulate into garbage without throwing (plan §5 risk 3). */
+function hasNonFinitePositions(geometry: THREE.BufferGeometry): boolean {
+  const pos = geometry.getAttribute('position');
+  if (!pos) return true;
+  const arr = pos.array as ArrayLike<number>;
+  for (let i = 0; i < arr.length; i++) {
+    if (!Number.isFinite(arr[i])) return true;
+  }
+  return false;
+}
+
+/** Closed-stroke Extrude: THREE.Shape + ExtrudeGeometry (plan §1.1).
+ *  Degenerate (collinear / near-zero area) inputs fall back to Rod
+ *  PROACTIVELY; triangulation throws / NaN output fall back in the catch —
+ *  honest degradation, never a crash. Geometry is z-centered so Rods and
+ *  Extrudes share the z=0 plane. */
+export function buildExtrudeGeometry(
+  world: THREE.Vector3[],
+  opts: { depth?: number; rodRadius?: number } = {},
+): StrokeGeometryResult {
+  const depth = opts.depth ?? EXTRUDE_DEPTH;
+  const pts = dedupeConsecutive(world);
+
+  // Drop an exactly-duplicated closing point; THREE.Shape closes implicitly.
+  if (pts.length > 1 && pts[0].distanceToSquared(pts[pts.length - 1]) < 1e-12) pts.pop();
+
+  if (pts.length < 3 || Math.abs(shoelaceArea(pts)) < MIN_EXTRUDE_AREA) {
+    return buildRodGeometry(world, { radius: opts.rodRadius });
+  }
+
+  try {
+    const shape = new THREE.Shape(pts.map((v) => new THREE.Vector2(v.x, v.y)));
+    const geometry = new THREE.ExtrudeGeometry(shape, {
+      depth,
+      bevelEnabled: true,
+      bevelSize: 0.02,
+      bevelThickness: 0.02,
+      bevelSegments: 2,
+      curveSegments: 12,
+      steps: 1,
+    });
+    if (hasNonFinitePositions(geometry)) {
+      geometry.dispose();
+      throw new Error('extrude produced non-finite positions');
+    }
+    geometry.translate(0, 0, -depth / 2);
+    return { kind: 'extrude', geometry };
+  } catch {
+    return buildRodGeometry(world, { radius: opts.rodRadius, closed: true });
+  }
+}
+
+// ─── Inflate-Lite (swept capsule — custom BufferGeometry) ────────────────────
+
+/** Deterministic seed normal ⟂ the first tangent: cross against the world
+ *  axis LEAST aligned with it (no randomness, no frame-dependent state). */
+function seedNormal(tangent: THREE.Vector3): THREE.Vector3 {
+  const ax = Math.abs(tangent.x);
+  const ay = Math.abs(tangent.y);
+  const az = Math.abs(tangent.z);
+  const axis =
+    ax <= ay && ax <= az
+      ? new THREE.Vector3(1, 0, 0)
+      : ay <= az
+        ? new THREE.Vector3(0, 1, 0)
+        : new THREE.Vector3(0, 0, 1);
+  return new THREE.Vector3().crossVectors(axis, tangent).normalize();
+}
+
+/** Linear interpolation of a per-anchor pressure array at parameter u∈[0,1]
+ *  (by anchor index fraction — an arc-length map would be marginally truer
+ *  but anchor-index is smooth, deterministic, and indistinguishable at the
+ *  radii involved). */
+function samplePressure(pressures: number[], u: number): number {
+  if (pressures.length === 0) return 0.5;
+  if (pressures.length === 1) return pressures[0];
+  const f = u * (pressures.length - 1);
+  const i = Math.min(Math.floor(f), pressures.length - 2);
+  const t = f - i;
+  return pressures[i] * (1 - t) + pressures[i + 1] * t;
+}
+
+/** Pull the pressure channel ([x, y, pressure]) out of raw stroke points as
+ *  the parallel array buildInflateGeometry consumes (plan §1.1 note). Returns
+ *  undefined when NO point carries pressure (bare [x, y] input) so the
+ *  capsule profile stays purely sine-eased. Missing entries default to the
+ *  pointer-event neutral 0.5. */
+export function extractPressures(points: StrokeInputPoint[]): number[] | undefined {
+  let has = false;
+  const out = points.map((p) => {
+    const v = p.length > 2 ? p[2] : undefined;
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      has = true;
+      return Math.min(Math.max(v, 0), 1);
+    }
+    return 0.5;
+  });
+  return has ? out : undefined;
+}
+
+/** Inflate-Lite: swept tube whose RADIUS VARIES along the stroke — tapered
+ *  ends, fuller middle (sine-eased profile), optionally modulated by pressure.
+ *  THREE.TubeGeometry cannot vary radius, so this builds a custom
+ *  BufferGeometry: arc-length-uniform centerline samples on the same
+ *  centripetal Catmull-Rom the Rod uses, PARALLEL-TRANSPORT frames (rotate the
+ *  previous normal by the angle between consecutive tangents — no Frenet
+ *  twist/flip at inflections), one vertex ring per sample with per-ring
+ *  radius, and pole-fan end caps offset by the tip radius for a rounded tip.
+ *
+ *  Vertex normals account for the radius slope (surface-of-revolution local
+ *  correction: n = radial − tangent·(dr/ds)) so the taper shades correctly.
+ *
+ *  Degenerate input (< 2 distinct points) and any non-finite output fall back
+ *  to Rod — same honest-degradation contract as the extrude path. */
+export function buildInflateGeometry(
+  world: THREE.Vector3[],
+  opts: {
+    baseRadius?: number;
+    tipRadius?: number;
+    radialSegments?: number;
+    /** Parallel per-point pressure channel (0..1, neutral 0.5) — pass
+     *  extractPressures(simplifiedPoints). Omit for pure sine profile. */
+    pressures?: number[];
+    pressureInfluence?: number;
+    /** Radius for the Rod fallback, not the capsule. */
+    rodRadius?: number;
+  } = {},
+): StrokeGeometryResult {
+  const tipRadius = opts.tipRadius ?? INFLATE_TIP_RADIUS;
+  const radialSegments = opts.radialSegments ?? INFLATE_RADIAL_SEGMENTS;
+  const pressures = opts.pressures;
+  const influence = opts.pressureInfluence ?? INFLATE_PRESSURE_INFLUENCE;
+
+  const pts = dedupeConsecutive(world);
+  if (pts.length < 2) return buildRodGeometry(world, { radius: opts.rodRadius });
+
+  try {
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5);
+    const arcLen = curve.getLength();
+    if (!Number.isFinite(arcLen) || arcLen <= 0) throw new Error('degenerate arc length');
+
+    // Short strokes stay blobs, not spheres bigger than their own footprint.
+    const baseRadius = Math.max(
+      tipRadius,
+      Math.min(opts.baseRadius ?? INFLATE_BASE_RADIUS, arcLen * INFLATE_MAX_BASE_TO_LENGTH),
+    );
+
+    const segments = Math.min(
+      Math.max(pts.length * 4, INFLATE_MIN_SEGMENTS),
+      INFLATE_MAX_SEGMENTS,
+    );
+    const rings = segments + 1;
+
+    // ── Centerline samples + parallel-transport frames ──
+    const centers: THREE.Vector3[] = [];
+    const tangents: THREE.Vector3[] = [];
+    const normals: THREE.Vector3[] = [];
+    const binormals: THREE.Vector3[] = [];
+    for (let i = 0; i < rings; i++) {
+      const u = i / segments;
+      centers.push(curve.getPointAt(u));
+      const t = curve.getTangentAt(u);
+      // getTangentAt can collapse on pathological curves — reuse the previous
+      // direction (deterministic) rather than emit NaN frames.
+      if (t.lengthSq() < 1e-12) {
+        tangents.push(i > 0 ? tangents[i - 1].clone() : new THREE.Vector3(1, 0, 0));
+      } else {
+        tangents.push(t.normalize());
+      }
+    }
+    normals.push(seedNormal(tangents[0]));
+    binormals.push(new THREE.Vector3().crossVectors(tangents[0], normals[0]).normalize());
+    for (let i = 1; i < rings; i++) {
+      const prevT = tangents[i - 1];
+      const currT = tangents[i];
+      const n = normals[i - 1].clone();
+      const axis = new THREE.Vector3().crossVectors(prevT, currT);
+      if (axis.lengthSq() > 1e-12) {
+        axis.normalize();
+        const angle = Math.acos(Math.min(Math.max(prevT.dot(currT), -1), 1));
+        n.applyAxisAngle(axis, angle);
+      }
+      n.normalize();
+      normals.push(n);
+      binormals.push(new THREE.Vector3().crossVectors(currT, n).normalize());
+    }
+
+    // ── Per-ring radius: sine-eased capsule profile × pressure modulation ──
+    const ringRadii: number[] = [];
+    for (let i = 0; i < rings; i++) {
+      const u = i / segments;
+      const profile = Math.pow(Math.sin(Math.PI * u), INFLATE_PROFILE_EXP);
+      let r = tipRadius + (baseRadius - tipRadius) * profile;
+      if (pressures && influence > 0) {
+        const p = samplePressure(pressures, u);
+        r *= Math.max(1 + influence * 2 * (p - 0.5), 0.25);
+      }
+      ringRadii.push(Math.max(r, tipRadius * 0.5));
+    }
+
+    // ── Assemble: rings·(radialSegments+1) side verts + 2 poles ──
+    const vertsPerRing = radialSegments + 1; // seam duplicate, TubeGeometry-style
+    const vertexCount = rings * vertsPerRing + 2;
+    const positions = new Float32Array(vertexCount * 3);
+    const vNormals = new Float32Array(vertexCount * 3);
+    const uvs = new Float32Array(vertexCount * 2);
+    const ds = arcLen / segments;
+
+    const radial = new THREE.Vector3();
+    const vNrm = new THREE.Vector3();
+    for (let i = 0; i < rings; i++) {
+      // Radius slope dr/ds (central difference; one-sided at the ends) tilts
+      // the normal along the axis so the taper doesn't shade like a cylinder.
+      const rPrev = ringRadii[Math.max(i - 1, 0)];
+      const rNext = ringRadii[Math.min(i + 1, rings - 1)];
+      const span = (Math.min(i + 1, rings - 1) - Math.max(i - 1, 0)) * ds;
+      const slope = span > 0 ? (rNext - rPrev) / span : 0;
+      for (let j = 0; j <= radialSegments; j++) {
+        const theta = (j / radialSegments) * Math.PI * 2;
+        const cos = Math.cos(theta);
+        const sin = Math.sin(theta);
+        radial
+          .copy(normals[i])
+          .multiplyScalar(cos)
+          .addScaledVector(binormals[i], sin);
+        const vi = i * vertsPerRing + j;
+        positions[vi * 3] = centers[i].x + radial.x * ringRadii[i];
+        positions[vi * 3 + 1] = centers[i].y + radial.y * ringRadii[i];
+        positions[vi * 3 + 2] = centers[i].z + radial.z * ringRadii[i];
+        vNrm.copy(radial).addScaledVector(tangents[i], -slope).normalize();
+        vNormals[vi * 3] = vNrm.x;
+        vNormals[vi * 3 + 1] = vNrm.y;
+        vNormals[vi * 3 + 2] = vNrm.z;
+        uvs[vi * 2] = j / radialSegments;
+        uvs[vi * 2 + 1] = i / segments;
+      }
+    }
+    // Poles: offset along the outward tangent by the end radius → rounded tip.
+    const startPole = vertexCount - 2;
+    const endPole = vertexCount - 1;
+    const sp = centers[0].clone().addScaledVector(tangents[0], -ringRadii[0]);
+    const ep = centers[rings - 1].clone().addScaledVector(tangents[rings - 1], ringRadii[rings - 1]);
+    positions.set([sp.x, sp.y, sp.z], startPole * 3);
+    positions.set([ep.x, ep.y, ep.z], endPole * 3);
+    vNormals.set([-tangents[0].x, -tangents[0].y, -tangents[0].z], startPole * 3);
+    vNormals.set(
+      [tangents[rings - 1].x, tangents[rings - 1].y, tangents[rings - 1].z],
+      endPole * 3,
+    );
+    uvs.set([0.5, 0], startPole * 2);
+    uvs.set([0.5, 1], endPole * 2);
+
+    // ── Indices: side quads + pole fans (windings derived for outward CCW) ──
+    const indices: number[] = [];
+    for (let i = 0; i < segments; i++) {
+      for (let j = 0; j < radialSegments; j++) {
+        const a = i * vertsPerRing + j;
+        const b = a + 1;
+        const c = (i + 1) * vertsPerRing + j;
+        const d = c + 1;
+        indices.push(a, b, c, b, d, c);
+      }
+    }
+    const lastRing = segments * vertsPerRing;
+    for (let j = 0; j < radialSegments; j++) {
+      indices.push(startPole, j + 1, j); // cap normal faces −tangent
+      indices.push(endPole, lastRing + j, lastRing + j + 1); // faces +tangent
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(vNormals, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+
+    if (hasNonFinitePositions(geometry)) {
+      geometry.dispose();
+      throw new Error('inflate produced non-finite positions');
+    }
+    return { kind: 'inflate', geometry, rings, radialSegments, ringRadii };
+  } catch {
+    return buildRodGeometry(world, { radius: opts.rodRadius });
+  }
+}
+
+// ─── Solid (stroke-polygon raster → marching squares → contour → extrude) ───
+// Research §5b Solid mode, pool-level: every stroke rasterizes into ONE binary
+// sample grid — closed-stroke interiors via even-odd SCANLINE fill, stroke ink
+// bodies via per-segment capsule stamping — so overlapping strokes merge into
+// a watertight mass. Marching squares (midpoint interpolation, deterministic
+// saddle resolution) extracts boundary loops; containment depth classifies
+// outer contours vs holes; RDP simplifies; ExtrudeGeometry builds the solid.
+// Pure JS throughout: no canvas, no DOM, no randomness.
+
+/** World-space closure check (same thresholds as isClosedStroke, scaled by
+ *  WORLD_SCALE) for callers that only have normalized points. */
+function isClosedWorldLoop(pts: THREE.Vector3[]): boolean {
+  if (pts.length < 3) return false;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const diag = Math.hypot(maxX - minX, maxY - minY);
+  const gap = pts[0].distanceTo(pts[pts.length - 1]);
+  return gap < Math.max(CLOSE_GAP_PX * WORLD_SCALE, diag * CLOSE_GAP_BBOX_RATIO);
+}
+
+/** Even-odd scanline fill of a closed polygon onto the sample grid. */
+function scanlineFillPolygon(
+  grid: Uint8Array,
+  w: number,
+  h: number,
+  originX: number,
+  originY: number,
+  cell: number,
+  poly: THREE.Vector3[],
+): void {
+  for (let row = 0; row < h; row++) {
+    const y = originY + row * cell;
+    const xs: number[] = [];
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      if (a.y > y !== b.y > y) {
+        xs.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
+      }
+    }
+    xs.sort((p, q) => p - q);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const c0 = Math.max(Math.ceil((xs[k] - originX) / cell), 0);
+      const c1 = Math.min(Math.floor((xs[k + 1] - originX) / cell), w - 1);
+      for (let col = c0; col <= c1; col++) grid[row * w + col] = 1;
+    }
+  }
+}
+
+/** Stamp a thick polyline (capsule per segment) onto the sample grid:
+ *  row-by-row scan of each segment's expanded bbox, marking samples within
+ *  inkRadius of the segment. */
+function stampInkBody(
+  grid: Uint8Array,
+  w: number,
+  h: number,
+  originX: number,
+  originY: number,
+  cell: number,
+  pts: THREE.Vector3[],
+  inkRadius: number,
+): void {
+  const r2 = inkRadius * inkRadius;
+  const segs = Math.max(pts.length - 1, 0);
+  for (let s = 0; s < Math.max(segs, 1); s++) {
+    const a = pts[Math.min(s, pts.length - 1)];
+    const b = pts[Math.min(s + 1, pts.length - 1)];
+    const minX = Math.min(a.x, b.x) - inkRadius;
+    const maxX = Math.max(a.x, b.x) + inkRadius;
+    const minY = Math.min(a.y, b.y) - inkRadius;
+    const maxY = Math.max(a.y, b.y) + inkRadius;
+    const r0 = Math.max(Math.ceil((minY - originY) / cell), 0);
+    const r1 = Math.min(Math.floor((maxY - originY) / cell), h - 1);
+    const c0 = Math.max(Math.ceil((minX - originX) / cell), 0);
+    const c1 = Math.min(Math.floor((maxX - originX) / cell), w - 1);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    for (let row = r0; row <= r1; row++) {
+      const y = originY + row * cell;
+      for (let col = c0; col <= c1; col++) {
+        const x = originX + col * cell;
+        let t = lenSq > 0 ? ((x - a.x) * dx + (y - a.y) * dy) / lenSq : 0;
+        t = Math.min(Math.max(t, 0), 1);
+        const ex = x - (a.x + t * dx);
+        const ey = y - (a.y + t * dy);
+        if (ex * ex + ey * ey <= r2) grid[row * w + col] = 1;
+      }
+    }
+  }
+}
+
+/** Marching squares over the binary sample grid → closed loops of [x, y]
+ *  points in SAMPLE units. Midpoint interpolation (binary data), saddle cases
+ *  resolved by a fixed deterministic choice. Every boundary point has degree
+ *  exactly 2, so chaining always yields clean loops. The grid border is
+ *  guaranteed empty by the margin, so every loop closes. */
+function marchingSquaresLoops(grid: Uint8Array, w: number, h: number): Array<Array<[number, number]>> {
+  // Point ids: coords doubled to stay integral (edge midpoints are .5).
+  const STRIDE = 4096; // > 2·(SOLID_MAX_GRID_RESOLUTION + 2)
+  const pid = (x2: number, y2: number) => x2 * STRIDE + y2;
+  const adj = new Map<number, number[]>();
+  const segList: Array<[number, number]> = [];
+  const addSeg = (px2: number, py2: number, qx2: number, qy2: number) => {
+    const p = pid(px2, py2);
+    const q = pid(qx2, qy2);
+    if (!adj.has(p)) adj.set(p, []);
+    if (!adj.has(q)) adj.set(q, []);
+    adj.get(p)!.push(q);
+    adj.get(q)!.push(p);
+    segList.push([p, q]);
+  };
+
+  for (let row = 0; row < h - 1; row++) {
+    for (let col = 0; col < w - 1; col++) {
+      const a = grid[row * w + col]; // bottom-left
+      const b = grid[row * w + col + 1]; // bottom-right
+      const c = grid[(row + 1) * w + col + 1]; // top-right
+      const d = grid[(row + 1) * w + col]; // top-left
+      const code = a | (b << 1) | (c << 2) | (d << 3);
+      if (code === 0 || code === 15) continue;
+      // Edge midpoints in doubled coords.
+      const bot: [number, number] = [col * 2 + 1, row * 2];
+      const rgt: [number, number] = [col * 2 + 2, row * 2 + 1];
+      const top: [number, number] = [col * 2 + 1, row * 2 + 2];
+      const lft: [number, number] = [col * 2, row * 2 + 1];
+      switch (code) {
+        case 1: case 14: addSeg(...lft, ...bot); break;
+        case 2: case 13: addSeg(...bot, ...rgt); break;
+        case 3: case 12: addSeg(...lft, ...rgt); break;
+        case 4: case 11: addSeg(...rgt, ...top); break;
+        case 6: case 9: addSeg(...bot, ...top); break;
+        case 7: case 8: addSeg(...lft, ...top); break;
+        case 5: // saddle (a,c) — fixed deterministic resolution
+          addSeg(...lft, ...bot);
+          addSeg(...rgt, ...top);
+          break;
+        case 10: // saddle (b,d) — fixed deterministic resolution
+          addSeg(...bot, ...rgt);
+          addSeg(...top, ...lft);
+          break;
+      }
+    }
+  }
+
+  const edgeKey = (p: number, q: number) => (p < q ? p * 16777216 + q : q * 16777216 + p);
+  const visited = new Set<number>();
+  const loops: Array<Array<[number, number]>> = [];
+  for (const [p0, p1] of segList) {
+    if (visited.has(edgeKey(p0, p1))) continue;
+    const loop: number[] = [p0];
+    let prev = p0;
+    let curr = p1;
+    visited.add(edgeKey(p0, p1));
+    let guard = adj.size + 8;
+    while (curr !== p0 && guard-- > 0) {
+      loop.push(curr);
+      const nbrs = adj.get(curr)!;
+      const next = nbrs[0] === prev ? nbrs[1] : nbrs[0];
+      if (next === undefined) break; // dangling — malformed, drop below
+      visited.add(edgeKey(curr, next));
+      prev = curr;
+      curr = next;
+    }
+    if (curr !== p0 || loop.length < 3) continue;
+    loops.push(loop.map((id) => [Math.floor(id / STRIDE) / 2, (id % STRIDE) / 2]));
+  }
+  return loops;
+}
+
+/** Shoelace area of a [x, y] loop (absolute value). */
+function loopArea(loop: Array<[number, number]>): number {
+  let area = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const [ax, ay] = loop[i];
+    const [bx, by] = loop[(i + 1) % loop.length];
+    area += ax * by - bx * ay;
+  }
+  return Math.abs(area / 2);
+}
+
+/** One Chaikin corner-cutting pass on a CLOSED loop (deterministic): each
+ *  edge contributes its 1/4 and 3/4 points. Rounds the RDP corners so solid
+ *  contours keep a hand-drawn curve read instead of a low-poly facet read. */
+function chaikinClosed(loop: Array<[number, number]>): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < loop.length; i++) {
+    const [ax, ay] = loop[i];
+    const [bx, by] = loop[(i + 1) % loop.length];
+    out.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25]);
+    out.push([ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]);
+  }
+  return out;
+}
+
+/** Even-odd ray-cast point-in-polygon ([x, y] loops, sample units). */
+function pointInLoop(x: number, y: number, loop: Array<[number, number]>): boolean {
+  let inside = false;
+  for (let i = 0; i < loop.length; i++) {
+    const [ax, ay] = loop[i];
+    const [bx, by] = loop[(i + 1) % loop.length];
+    if (ay > y !== by > y && x < ax + ((y - ay) / (by - ay)) * (bx - ax)) inside = !inside;
+  }
+  return inside;
+}
+
+/** Solid: rasterize ALL strokes into one binary grid (closed interiors
+ *  scanline-filled + ink bodies stamped), extract contours via marching
+ *  squares, classify outer/hole by containment depth, RDP-simplify, extrude.
+ *  Overlapping strokes merge watertight (research §5b). Degenerate input or
+ *  non-finite output falls back to Rod on the first stroke — same contract as
+ *  the other builders. NOTE: per-stroke modes go through buildStrokeGeometry;
+ *  this is POOL-level (one geometry for the whole drawing). */
+export function buildSolidGeometry(
+  worldStrokes: THREE.Vector3[][],
+  opts: {
+    inkRadius?: number;
+    resolution?: number;
+    depth?: number;
+    /** Per-stroke closedness (pass viewBox-space isClosedStroke results when
+     *  available); computed from world points when omitted. */
+    closedFlags?: boolean[];
+    rodRadius?: number;
+  } = {},
+): StrokeGeometryResult {
+  const inkRadius = opts.inkRadius ?? SOLID_INK_RADIUS;
+  const depth = opts.depth ?? EXTRUDE_DEPTH;
+  const resolution = Math.min(opts.resolution ?? SOLID_GRID_RESOLUTION, SOLID_MAX_GRID_RESOLUTION);
+
+  const pool = worldStrokes.map(dedupeConsecutive).filter((s) => s.length > 0);
+  const fallback = () =>
+    buildRodGeometry(pool[0] ?? [], { radius: opts.rodRadius });
+  if (pool.length === 0) return fallback();
+
+  try {
+    // ── Grid spec: pool bbox + margin so the border stays empty ──
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const s of pool) {
+      for (const p of s) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+    }
+    const spanX = Math.max(maxX - minX, 1e-6);
+    const spanY = Math.max(maxY - minY, 1e-6);
+    const cell = Math.max(spanX, spanY) / resolution;
+    const margin = inkRadius + 2 * cell;
+    const originX = minX - margin;
+    const originY = minY - margin;
+    const w = Math.ceil((spanX + 2 * margin) / cell) + 1;
+    const h = Math.ceil((spanY + 2 * margin) / cell) + 1;
+    const grid = new Uint8Array(w * h);
+
+    // ── Rasterize: closed interiors (scanline) + ink bodies (stamp) ──
+    for (let i = 0; i < pool.length; i++) {
+      const closed = opts.closedFlags?.[i] ?? isClosedWorldLoop(pool[i]);
+      if (closed) scanlineFillPolygon(grid, w, h, originX, originY, cell, pool[i]);
+      stampInkBody(grid, w, h, originX, originY, cell, pool[i], inkRadius);
+    }
+
+    // ── Contours → classify → simplify → shapes ──
+    const rawLoops = marchingSquaresLoops(grid, w, h).filter(
+      (l) => loopArea(l) >= SOLID_MIN_LOOP_AREA,
+    );
+    if (rawLoops.length === 0) return fallback();
+
+    // Containment depth: even = outer contour, odd = hole of its innermost
+    // even-depth container. Loop points never coincide across loops (each
+    // boundary midpoint has degree exactly 2), so the ray-cast is safe.
+    const depths = rawLoops.map((loop, i) => {
+      const [x, y] = loop[0];
+      let d = 0;
+      for (let j = 0; j < rawLoops.length; j++) {
+        if (j !== i && pointInLoop(x, y, rawLoops[j])) d++;
+      }
+      return d;
+    });
+
+    const simplify = (loop: Array<[number, number]>): THREE.Vector2[] => {
+      const open = [...loop, loop[0]] as Array<[number, number]>;
+      const simple = rdpPoints(open, SOLID_RDP_EPSILON_CELLS);
+      simple.pop(); // re-open (Shape/Path close implicitly)
+      const rounded = simple.length >= 3 ? chaikinClosed(simple) : simple;
+      return rounded.map(([x, y]) => new THREE.Vector2(originX + x * cell, originY + y * cell));
+    };
+
+    const shapes: THREE.Shape[] = [];
+    const shapeDepths: number[] = [];
+    const shapeLoops: Array<Array<[number, number]>> = [];
+    for (let i = 0; i < rawLoops.length; i++) {
+      if (depths[i] % 2 !== 0) continue;
+      const pts = simplify(rawLoops[i]);
+      if (pts.length < 3) continue;
+      shapes.push(new THREE.Shape(pts));
+      shapeDepths.push(depths[i]);
+      shapeLoops.push(rawLoops[i]);
+    }
+    if (shapes.length === 0) return fallback();
+
+    let holeCount = 0;
+    for (let i = 0; i < rawLoops.length; i++) {
+      if (depths[i] % 2 !== 1) continue;
+      // Innermost containing outer = the smallest-area outer that contains it.
+      const [x, y] = rawLoops[i][0];
+      let best = -1;
+      let bestArea = Infinity;
+      for (let s = 0; s < shapes.length; s++) {
+        if (shapeDepths[s] === depths[i] - 1 && pointInLoop(x, y, shapeLoops[s])) {
+          const a = loopArea(shapeLoops[s]);
+          if (a < bestArea) {
+            bestArea = a;
+            best = s;
+          }
+        }
+      }
+      if (best < 0) continue;
+      const pts = simplify(rawLoops[i]);
+      if (pts.length < 3) continue;
+      const path = new THREE.Path(pts);
+      shapes[best].holes.push(path);
+      holeCount++;
+    }
+
+    const geometry = new THREE.ExtrudeGeometry(shapes, {
+      depth,
+      bevelEnabled: true,
+      bevelSize: 0.02,
+      bevelThickness: 0.02,
+      bevelSegments: 2,
+      curveSegments: 12,
+      steps: 1,
+    });
+    if (hasNonFinitePositions(geometry)) {
+      geometry.dispose();
+      throw new Error('solid produced non-finite positions');
+    }
+    geometry.translate(0, 0, -depth / 2); // share the z=0 plane with the other modes
+    return { kind: 'solid', geometry, outerContours: shapes.length, holes: holeCount };
+  } catch {
+    return fallback();
+  }
+}
+
+/** Pool-level convenience mirroring buildStrokeGeometry's front half:
+ *  rdp simplify each stroke (viewBox space, where closure thresholds are
+ *  calibrated) → compute closed flags → normalize to world → buildSolid. */
+export function buildPoolSolidGeometry(
+  strokes: StrokeInputPoint[][],
+  opts: {
+    viewBox?: ViewBoxSize;
+    center?: { x: number; y: number };
+    epsilon?: number;
+    inkRadius?: number;
+    resolution?: number;
+    depth?: number;
+    rodRadius?: number;
+  } = {},
+): StrokeGeometryResult {
+  const viewBox = opts.viewBox ?? DEFAULT_VIEWBOX;
+  const simplified = strokes
+    .filter((s) => s.length > 0)
+    .map((s) => rdpPoints(s, opts.epsilon ?? RDP_EPSILON));
+  const closedFlags = simplified.map((s) => isClosedStroke(s));
+  const world = simplified.map((s) =>
+    normalizeStrokePoints(s, viewBox, WORLD_SCALE, opts.center),
+  );
+  return buildSolidGeometry(world, {
+    inkRadius: opts.inkRadius,
+    resolution: opts.resolution,
+    depth: opts.depth,
+    closedFlags,
+    rodRadius: opts.rodRadius,
+  });
+}
+
+// ─── Top-level convenience ───────────────────────────────────────────────────
+
+/** Full per-stroke pipeline: rdp simplify → resolve mode → normalize → build.
+ *  The scene component calls this once per stroke inside a useMemo. */
+export function buildStrokeGeometry(
+  points: StrokeInputPoint[],
+  opts: {
+    viewBox?: ViewBoxSize;
+    mode?: GeometryModeSetting;
+    /** Pool bbox center (poolCenter) — keeps multi-stroke layout intact. */
+    center?: { x: number; y: number };
+    epsilon?: number;
+    radius?: number;
+    depth?: number;
+    /** Mid-stroke fullness for the explicit 'inflate' mode. */
+    inflateRadius?: number;
+  } = {},
+): StrokeGeometryResult {
+  const viewBox = opts.viewBox ?? DEFAULT_VIEWBOX;
+  const simplified = rdpPoints(points, opts.epsilon ?? RDP_EPSILON);
+  const mode = resolveGeometryMode(opts.mode ?? 'auto', simplified);
+  const world = normalizeStrokePoints(simplified, viewBox, WORLD_SCALE, opts.center);
+  if (mode === 'extrude') {
+    return buildExtrudeGeometry(world, { depth: opts.depth, rodRadius: opts.radius });
+  }
+  if (mode === 'inflate') {
+    // Explicit-only (auto never lands here). Pressure rides the rdp-simplified
+    // tuples — rdpPoints preserves index 2 — and modulates the capsule radius.
+    // A forced-inflate on a closed-ish stroke stays an OPEN capsule whose tips
+    // meet (croissant read) — that taper IS the mode's character.
+    return buildInflateGeometry(world, {
+      baseRadius: opts.inflateRadius,
+      pressures: extractPressures(simplified),
+      rodRadius: opts.radius,
+    });
+  }
+  if (mode === 'solid') {
+    // Explicit-only. Solid is POOL-level by nature (overlapping strokes merge
+    // — the scene calls buildPoolSolidGeometry); this branch keeps the
+    // per-stroke API total with a single-stroke solid.
+    return buildSolidGeometry([world], {
+      depth: opts.depth,
+      closedFlags: [isClosedStroke(simplified)],
+      rodRadius: opts.radius,
+    });
+  }
+  // Forced-Rod on a closed-ish stroke renders as a closed loop (honest read).
+  return buildRodGeometry(world, { radius: opts.radius, closed: isClosedStroke(simplified) });
+}
+
+// ─── Memo key ────────────────────────────────────────────────────────────────
+
+/** Cheap synchronous key for useMemo deps (plan §1.1 — NOT lib/contentHash,
+ *  which is async SHA-1 and overkill for a render memo). Stroke count +
+ *  per-stroke length + endpoints catch every add/clear/edit the draw flow
+ *  can produce. */
+export function strokesKey(strokes: StrokeInputPoint[][]): string {
+  return strokes
+    .map((s) => {
+      if (s.length === 0) return '0';
+      const [fx, fy] = s[0];
+      const [lx, ly] = s[s.length - 1];
+      return `${s.length}:${fx.toFixed(1)},${fy.toFixed(1)}:${lx.toFixed(1)},${ly.toFixed(1)}`;
+    })
+    .join('|');
+}

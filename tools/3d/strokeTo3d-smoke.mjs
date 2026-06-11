@@ -1,0 +1,389 @@
+// ─── strokeTo3d smoke test (pure logic, node-run) ────────────────────────────
+// Exercises the REAL src/app/lib/geometry3d/strokeTo3d.ts module — node ≥23.6
+// strips TS types natively, and `three` is pure JS so the geometry builders
+// run headless (no DOM in the lib, by contract).
+//
+//   node tools/3d/strokeTo3d-smoke.mjs
+//
+// Repo-side tool only — NOT part of the Make drag-drop set (tools/ stays out).
+
+const mod = await import(new URL('../../src/app/lib/geometry3d/strokeTo3d.ts', import.meta.url));
+const {
+  rdpPoints,
+  normalizeStrokePoints,
+  isClosedStroke,
+  pickGeometryMode,
+  resolveGeometryMode,
+  buildRodGeometry,
+  buildExtrudeGeometry,
+  buildInflateGeometry,
+  buildSolidGeometry,
+  buildPoolSolidGeometry,
+  buildStrokeGeometry,
+  extractPressures,
+  poolCenter,
+  strokesKey,
+  DEFAULT_VIEWBOX,
+} = mod;
+
+const results = [];
+function check(name, fn) {
+  try {
+    fn();
+    results.push({ ok: true, name });
+  } catch (e) {
+    results.push({ ok: false, name, msg: e.message });
+  }
+}
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+function approx(a, b, eps = 1e-9) {
+  return Math.abs(a - b) < eps;
+}
+
+// ── Fixtures (all deterministic — fixed trig, no randomness) ────────────────
+
+// Dense open sine stroke: 401 points across the canvas.
+const sine = [];
+for (let i = 0; i <= 400; i++) {
+  sine.push([100 + (600 * i) / 400, 300 + 80 * Math.sin((i / 400) * Math.PI * 2), 0.5]);
+}
+
+// Closed loop: 120-point circle, last point ~5px from the first.
+const loop = [];
+for (let i = 0; i < 120; i++) {
+  const t = (i / 120) * Math.PI * 2;
+  loop.push([400 + 100 * Math.cos(t), 300 + 100 * Math.sin(t), 0.5]);
+}
+
+// Degenerate "closed" stroke: collinear, endpoints 5px apart (gap < 24).
+const collinear = [
+  [100, 300, 0.5],
+  [200, 300, 0.5],
+  [300, 300, 0.5],
+  [105, 300, 0.5],
+];
+
+// ── 1. RDP reduces a dense sine ─────────────────────────────────────────────
+check('rdp reduces dense sine (401 → few anchors, endpoints kept)', () => {
+  const out = rdpPoints(sine);
+  assert(out.length < sine.length / 4, `expected <${sine.length / 4} anchors, got ${out.length}`);
+  assert(out.length >= 5, `expected ≥5 anchors, got ${out.length}`);
+  assert(out[0] === sine[0] && out[out.length - 1] === sine[sine.length - 1], 'endpoints not preserved');
+  console.log(`   rdp: ${sine.length} → ${out.length} anchors (ε=3.0)`);
+});
+
+check('rdp carries pressure through (tuple width preserved)', () => {
+  const out = rdpPoints(sine);
+  assert(out.every((p) => p.length === 3 && p[2] === 0.5), 'pressure index dropped');
+});
+
+// ── 2. Closure detection ────────────────────────────────────────────────────
+check('isClosedStroke: circle loop → closed', () => {
+  assert(isClosedStroke(loop) === true, 'loop should read closed');
+});
+
+check('isClosedStroke: open sine → open', () => {
+  assert(isClosedStroke(sine) === false, 'sine should read open');
+});
+
+// ── 3. Auto mode pick ───────────────────────────────────────────────────────
+check('pickGeometryMode: open → rod, closed → extrude', () => {
+  assert(pickGeometryMode(sine) === 'rod', `sine picked ${pickGeometryMode(sine)}`);
+  assert(pickGeometryMode(loop) === 'extrude', `loop picked ${pickGeometryMode(loop)}`);
+});
+
+check("resolveGeometryMode: 'auto' delegates, explicit wins", () => {
+  assert(resolveGeometryMode('auto', loop) === 'extrude', 'auto should pick extrude for loop');
+  assert(resolveGeometryMode('rod', loop) === 'rod', 'explicit rod must override');
+});
+
+// ── 4. Normalization (y-flip + centering + scale) ───────────────────────────
+check('normalizeStrokePoints: y-flip, centering, 800px → 8 units', () => {
+  const w = normalizeStrokePoints(
+    [
+      [400, 300, 0.5], // viewBox center → origin
+      [400, 200, 0.5], // above center (y-down) → +y in world (y-up)
+      [800, 300, 0.5], // right edge → +4 x
+      [0, 300, 0.5], // left edge → −4 x
+    ],
+    DEFAULT_VIEWBOX,
+  );
+  assert(approx(w[0].x, 0) && approx(w[0].y, 0) && approx(w[0].z, 0), 'center not at origin');
+  assert(approx(w[1].y, 1), `y-flip wrong: viewBox y=200 → world y=${w[1].y} (want +1)`);
+  assert(approx(w[2].x, 4) && approx(w[3].x, -4), '800px span should map to 8 world units');
+});
+
+check('poolCenter: multi-stroke bbox center (preserves relative layout)', () => {
+  const c = poolCenter([
+    [
+      [100, 100, 0.5],
+      [200, 200, 0.5],
+    ],
+    [
+      [300, 500, 0.5],
+    ],
+  ]);
+  assert(approx(c.x, 200) && approx(c.y, 300), `pool center wrong: ${c.x},${c.y} (want 200,300)`);
+});
+
+// ── 5. Rod build ────────────────────────────────────────────────────────────
+check('buildRodGeometry: tube + 2 endpoint caps, finite positions', () => {
+  const world = normalizeStrokePoints(rdpPoints(sine), DEFAULT_VIEWBOX);
+  const rod = buildRodGeometry(world);
+  assert(rod.kind === 'rod', 'kind should be rod');
+  const pos = rod.geometry.getAttribute('position');
+  assert(pos && pos.count > 0, 'tube has no vertices');
+  for (let i = 0; i < pos.array.length; i++) {
+    assert(Number.isFinite(pos.array[i]), `non-finite position at ${i}`);
+  }
+  assert(rod.capPositions.length === 2, `open rod should have 2 caps, got ${rod.capPositions.length}`);
+  console.log(`   rod: ${pos.count} vertices, radius ${rod.radius}, caps ${rod.capPositions.length}`);
+});
+
+check('buildRodGeometry: dot tap (1 point) does not throw', () => {
+  const rod = buildRodGeometry(normalizeStrokePoints([[400, 300, 0.5]], DEFAULT_VIEWBOX));
+  assert(rod.kind === 'rod' && rod.geometry.getAttribute('position').count > 0, 'degenerate rod empty');
+});
+
+// ── 6. Extrude build + fallbacks ────────────────────────────────────────────
+check('buildExtrudeGeometry: closed loop → extrude', () => {
+  const world = normalizeStrokePoints(rdpPoints(loop), DEFAULT_VIEWBOX);
+  const out = buildExtrudeGeometry(world);
+  assert(out.kind === 'extrude', `loop should extrude, got ${out.kind}`);
+  const pos = out.geometry.getAttribute('position');
+  assert(pos && pos.count > 0, 'extrude has no vertices');
+  for (let i = 0; i < pos.array.length; i++) {
+    assert(Number.isFinite(pos.array[i]), `non-finite position at ${i}`);
+  }
+  console.log(`   extrude: ${pos.count} vertices`);
+});
+
+check('buildExtrudeGeometry: collinear "closed" stroke falls back to rod (no throw)', () => {
+  assert(isClosedStroke(collinear) === true, 'fixture should read closed (gap 5px < 24)');
+  const world = normalizeStrokePoints(collinear, DEFAULT_VIEWBOX);
+  const out = buildExtrudeGeometry(world);
+  assert(out.kind === 'rod', `degenerate area should fall back to rod, got ${out.kind}`);
+});
+
+// ── 6b. Inflate-Lite build (swept variable-radius capsule) ──────────────────
+
+/** Ring radius measured from raw POSITIONS (don't trust result metadata
+ *  alone): ring center = vertex mean, radius = mean distance to center.
+ *  The seam duplicate (j = radialSegments coincides with j = 0) is EXCLUDED —
+ *  the remaining evenly-spaced ring vertices sum to the exact center. */
+function measuredRingRadius(result, ringIndex) {
+  const pos = result.geometry.getAttribute('position').array;
+  const vpr = result.radialSegments + 1;
+  const n = result.radialSegments; // exclude seam duplicate
+  const start = ringIndex * vpr;
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (let j = 0; j < n; j++) {
+    cx += pos[(start + j) * 3];
+    cy += pos[(start + j) * 3 + 1];
+    cz += pos[(start + j) * 3 + 2];
+  }
+  cx /= n;
+  cy /= n;
+  cz /= n;
+  let r = 0;
+  for (let j = 0; j < n; j++) {
+    r += Math.hypot(pos[(start + j) * 3] - cx, pos[(start + j) * 3 + 1] - cy, pos[(start + j) * 3 + 2] - cz);
+  }
+  return r / n;
+}
+
+check('buildInflateGeometry: ring/vertex layout sane, all positions finite', () => {
+  const world = normalizeStrokePoints(rdpPoints(sine), DEFAULT_VIEWBOX);
+  const out = buildInflateGeometry(world);
+  assert(out.kind === 'inflate', `expected inflate, got ${out.kind}`);
+  const pos = out.geometry.getAttribute('position');
+  const expected = out.rings * (out.radialSegments + 1) + 2; // side rings + 2 poles
+  assert(pos.count === expected, `vertex count ${pos.count} ≠ rings·(radial+1)+2 = ${expected}`);
+  assert(out.ringRadii.length === out.rings, 'ringRadii length ≠ rings');
+  for (let i = 0; i < pos.array.length; i++) {
+    assert(Number.isFinite(pos.array[i]), `non-finite position at ${i}`);
+  }
+  const nrm = out.geometry.getAttribute('normal');
+  assert(nrm && nrm.count === pos.count, 'normal attribute missing/short');
+  for (let i = 0; i < nrm.array.length; i++) {
+    assert(Number.isFinite(nrm.array[i]), `non-finite normal at ${i}`);
+  }
+  assert(out.geometry.getIndex().count % 3 === 0, 'index count not a triangle multiple');
+  console.log(`   inflate: ${out.rings} rings × ${out.radialSegments + 1} verts + 2 poles = ${pos.count} vertices`);
+});
+
+check('buildInflateGeometry: radius profile varies — middle ring > end rings', () => {
+  const world = normalizeStrokePoints(rdpPoints(sine), DEFAULT_VIEWBOX);
+  const out = buildInflateGeometry(world);
+  const mid = measuredRingRadius(out, Math.floor(out.rings / 2));
+  const first = measuredRingRadius(out, 0);
+  const last = measuredRingRadius(out, out.rings - 1);
+  assert(mid > first * 1.5 && mid > last * 1.5, `no capsule taper: ends ${first.toFixed(4)}/${last.toFixed(4)}, mid ${mid.toFixed(4)}`);
+  // Measured geometry agrees with the reported ringRadii (cross-check).
+  assert(approx(mid, out.ringRadii[Math.floor(out.rings / 2)], 1e-4), 'measured mid radius ≠ reported ringRadii');
+  console.log(`   radii: end ${first.toFixed(4)} → mid ${mid.toFixed(4)} → end ${last.toFixed(4)} (world units)`);
+});
+
+check('buildInflateGeometry: pressure modulates radius (high > low at mid)', () => {
+  const anchors = rdpPoints(sine);
+  const world = normalizeStrokePoints(anchors, DEFAULT_VIEWBOX);
+  const hi = buildInflateGeometry(world, { pressures: anchors.map(() => 1) });
+  const lo = buildInflateGeometry(world, { pressures: anchors.map(() => 0) });
+  const m = Math.floor(hi.rings / 2);
+  assert(hi.ringRadii[m] > lo.ringRadii[m], `pressure inert: hi ${hi.ringRadii[m]} ≤ lo ${lo.ringRadii[m]}`);
+});
+
+check('extractPressures: channel pulled through, bare [x,y] → undefined', () => {
+  const p = extractPressures([[0, 0, 0.9], [1, 1, 0.1]]);
+  assert(p && p.length === 2 && approx(p[0], 0.9) && approx(p[1], 0.1), 'pressure channel mangled');
+  assert(extractPressures([[0, 0], [1, 1]]) === undefined, 'bare points should yield undefined');
+});
+
+check('buildInflateGeometry: determinism — two builds byte-equal', () => {
+  const world = normalizeStrokePoints(rdpPoints(sine), DEFAULT_VIEWBOX);
+  const a = buildInflateGeometry(world);
+  const b = buildInflateGeometry(world);
+  for (const attr of ['position', 'normal', 'uv']) {
+    const p1 = a.geometry.getAttribute(attr).array;
+    const p2 = b.geometry.getAttribute(attr).array;
+    assert(p1.length === p2.length, `${attr} lengths differ across runs`);
+    for (let i = 0; i < p1.length; i++) {
+      assert(p1[i] === p2[i], `${attr}[${i}] differs: ${p1[i]} vs ${p2[i]}`);
+    }
+  }
+});
+
+check('buildInflateGeometry: degenerate input (dot tap) falls back to rod', () => {
+  const single = buildInflateGeometry(normalizeStrokePoints([[400, 300, 0.5]], DEFAULT_VIEWBOX));
+  assert(single.kind === 'rod', `1-point input should fall back to rod, got ${single.kind}`);
+  const empty = buildInflateGeometry([]);
+  assert(empty.kind === 'rod', `empty input should fall back to rod, got ${empty.kind}`);
+});
+
+check("auto semantics untouched: pickGeometryMode never returns 'inflate'", () => {
+  assert(pickGeometryMode(sine) !== 'inflate' && pickGeometryMode(loop) !== 'inflate', 'auto picked inflate');
+  assert(resolveGeometryMode('auto', sine) === 'rod' && resolveGeometryMode('auto', loop) === 'extrude', 'auto resolution drifted');
+  assert(resolveGeometryMode('inflate', sine) === 'inflate', 'explicit inflate must win');
+});
+
+check("buildStrokeGeometry mode:'inflate' → inflate (pipeline route)", () => {
+  const out = buildStrokeGeometry(sine, { mode: 'inflate' });
+  assert(out.kind === 'inflate', `pipeline picked ${out.kind}`);
+});
+
+// ── 6c. Solid build (pool raster → marching squares → extrude) ──────────────
+
+check('buildPoolSolidGeometry: closed loop → solid disc (1 outer, 0 holes)', () => {
+  const out = buildPoolSolidGeometry([loop]);
+  assert(out.kind === 'solid', `expected solid, got ${out.kind}`);
+  assert(out.outerContours === 1, `disc should have 1 outer contour, got ${out.outerContours}`);
+  assert(out.holes === 0, `disc should have 0 holes, got ${out.holes}`);
+  const pos = out.geometry.getAttribute('position');
+  assert(pos && pos.count > 0, 'solid has no vertices');
+  for (let i = 0; i < pos.array.length; i++) {
+    assert(Number.isFinite(pos.array[i]), `non-finite position at ${i}`);
+  }
+  // Footprint sanity: the 100px-radius loop spans ~2 world units (+ink).
+  out.geometry.computeBoundingBox();
+  const bb = out.geometry.boundingBox;
+  const spanX = bb.max.x - bb.min.x;
+  assert(spanX > 1.8 && spanX < 2.6, `disc x-span ${spanX.toFixed(2)} outside 1.8–2.6`);
+  console.log(`   solid disc: ${pos.count} vertices, x-span ${spanX.toFixed(2)}`);
+});
+
+check('buildPoolSolidGeometry: overlapping open strokes merge watertight (1 outer)', () => {
+  // Two crossing open strokes — ink bodies overlap at the center.
+  const strokeA = [];
+  const strokeB = [];
+  for (let i = 0; i <= 100; i++) {
+    strokeA.push([300 + 2 * i, 250 + i, 0.5]);
+    strokeB.push([300 + 2 * i, 350 - i, 0.5]);
+  }
+  const out = buildPoolSolidGeometry([strokeA, strokeB]);
+  assert(out.kind === 'solid', `expected solid, got ${out.kind}`);
+  assert(out.outerContours === 1, `crossing strokes should merge into 1 contour, got ${out.outerContours}`);
+});
+
+check('buildPoolSolidGeometry: open ring of arc strokes → annulus (1 outer, 1 hole)', () => {
+  // Two open half-circle strokes whose ink bodies overlap at the seams,
+  // enclosing an empty middle — the hole-classification path.
+  const arcA = [];
+  const arcB = [];
+  for (let i = 0; i <= 80; i++) {
+    const t1 = -0.2 + (i / 80) * (Math.PI + 0.4); // overshoot so ink overlaps
+    arcA.push([400 + 150 * Math.cos(t1), 300 + 150 * Math.sin(t1), 0.5]);
+    const t2 = Math.PI - 0.2 + (i / 80) * (Math.PI + 0.4);
+    arcB.push([400 + 150 * Math.cos(t2), 300 + 150 * Math.sin(t2), 0.5]);
+  }
+  const out = buildPoolSolidGeometry([arcA, arcB]);
+  assert(out.kind === 'solid', `expected solid, got ${out.kind}`);
+  assert(out.outerContours === 1, `annulus should have 1 outer contour, got ${out.outerContours}`);
+  assert(out.holes === 1, `annulus should have 1 hole, got ${out.holes}`);
+  console.log(`   solid annulus: ${out.outerContours} outer + ${out.holes} hole`);
+});
+
+check('buildSolidGeometry: determinism — two builds byte-equal', () => {
+  const a = buildPoolSolidGeometry([loop, sine]);
+  const b = buildPoolSolidGeometry([loop, sine]);
+  assert(a.kind === 'solid' && b.kind === 'solid', 'both builds should be solid');
+  const p1 = a.geometry.getAttribute('position').array;
+  const p2 = b.geometry.getAttribute('position').array;
+  assert(p1.length === p2.length, 'vertex counts differ across runs');
+  for (let i = 0; i < p1.length; i++) {
+    assert(p1[i] === p2[i], `position[${i}] differs: ${p1[i]} vs ${p2[i]}`);
+  }
+});
+
+check('buildSolidGeometry: degenerate input falls back to rod', () => {
+  const empty = buildSolidGeometry([]);
+  assert(empty.kind === 'rod', `empty pool should fall back to rod, got ${empty.kind}`);
+});
+
+check("buildStrokeGeometry mode:'solid' → single-stroke solid (API total)", () => {
+  const out = buildStrokeGeometry(loop, { mode: 'solid' });
+  assert(out.kind === 'solid', `pipeline picked ${out.kind}`);
+  assert(resolveGeometryMode('auto', loop) === 'extrude', 'auto must still pick extrude, never solid');
+});
+
+// ── 7. Full pipeline ────────────────────────────────────────────────────────
+check('buildStrokeGeometry auto: sine → rod, loop → extrude', () => {
+  const a = buildStrokeGeometry(sine);
+  const b = buildStrokeGeometry(loop);
+  assert(a.kind === 'rod', `sine pipeline picked ${a.kind}`);
+  assert(b.kind === 'extrude', `loop pipeline picked ${b.kind}`);
+});
+
+// ── 8. Determinism ──────────────────────────────────────────────────────────
+check('determinism: identical input → byte-identical geometry', () => {
+  const p1 = buildStrokeGeometry(sine).geometry.getAttribute('position').array;
+  const p2 = buildStrokeGeometry(sine).geometry.getAttribute('position').array;
+  assert(p1.length === p2.length, 'vertex counts differ across runs');
+  for (let i = 0; i < p1.length; i++) {
+    assert(p1[i] === p2[i], `position[${i}] differs: ${p1[i]} vs ${p2[i]}`);
+  }
+});
+
+check('strokesKey: stable + sensitive to stroke edits', () => {
+  const k1 = strokesKey([sine, loop]);
+  const k2 = strokesKey([sine, loop]);
+  const k3 = strokesKey([sine]);
+  assert(k1 === k2, 'key not stable');
+  assert(k1 !== k3, 'key not sensitive to pool changes');
+});
+
+// ── Report ──────────────────────────────────────────────────────────────────
+let failed = 0;
+for (const r of results) {
+  if (r.ok) {
+    console.log(`PASS  ${r.name}`);
+  } else {
+    failed++;
+    console.log(`FAIL  ${r.name} — ${r.msg}`);
+  }
+}
+console.log(`\n${results.length - failed}/${results.length} checks passed`);
+process.exit(failed === 0 ? 0 : 1);
