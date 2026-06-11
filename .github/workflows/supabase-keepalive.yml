@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Supabase keepalive — prevents the free-tier project from auto-pausing.
+#
+# WHY: Supabase free-tier projects pause after ~7 idle days. A paused project
+# returns errors, which would kill the live demo during judging week. A
+# client-side ping does NOT help — if no one opens the app, nothing pings, and
+# the project still goes idle. This runs ON A SCHEDULE from GitHub's servers,
+# independent of whether anyone has the app open, so the project stays warm.
+#
+# WHAT: Once a day it hits a lightweight read on the Supabase REST API. Any
+# successful query resets the idle clock. If the response is NOT 2xx, the job
+# fails loudly so a paused/broken project is visible in the Actions tab.
+#
+# KEY NOTE: the apikey below is the project's PUBLISHABLE (anon) key. It is
+# public/client-safe by design — the same key ships in the browser bundle and
+# is gated by Row Level Security on the database. It is intentionally inline
+# here (not a GitHub secret) because it carries no privilege a visitor of the
+# live site doesn't already have.
+#
+# Manual run: Actions tab → "Supabase keepalive" → "Run workflow".
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Supabase keepalive
+
+on:
+  schedule:
+    # 14:17 UTC daily. Off-the-hour minute avoids GitHub's top-of-hour cron
+    # congestion (scheduled runs can be delayed/dropped when too many fire at :00).
+    - cron: "17 14 * * *"
+  workflow_dispatch: {}
+
+# No write access needed — this only makes an outbound HTTP request.
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST endpoint
+        env:
+          SUPABASE_URL: "https://revoukwqlisqdjteortc.supabase.co"
+          # Publishable / anon key — public by design (see header comment).
+          SUPABASE_ANON_KEY: "sb_publishable_3YwGoTCMKQZFZhgKdvwu3w_GXfX3m80"
+        run: |
+          set -euo pipefail
+
+          echo "Pinging Supabase to keep the free-tier project warm..."
+
+          # Lightweight read: one id from the desks table. -s silent, -S still
+          # show errors, --fail-with-body would mask the body, so capture status
+          # separately and decide ourselves. Write the HTTP status on its own line.
+          HTTP_STATUS=$(curl -sS \
+            -o /tmp/supabase_response.txt \
+            -w "%{http_code}" \
+            --max-time 30 \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            "${SUPABASE_URL}/rest/v1/desks?select=id&limit=1")
+
+          echo "HTTP status: ${HTTP_STATUS}"
+          echo "Response body:"
+          cat /tmp/supabase_response.txt
+          echo ""
+
+          # Fail loudly on anything that is not 2xx so a paused or broken
+          # project is impossible to miss in the Actions tab.
+          if [ "${HTTP_STATUS}" -ge 200 ] && [ "${HTTP_STATUS}" -lt 300 ]; then
+            echo "✅ Supabase responded 2xx — project is awake."
+          else
+            echo "❌ Supabase keepalive FAILED with HTTP ${HTTP_STATUS}."
+            echo "The project may be paused, the key may be wrong, or REST is down."
+            exit 1
+          fi
