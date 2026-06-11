@@ -136,7 +136,9 @@ export async function publishDoodle(
 
   // The name the NEXT public desk should get if THIS publish fills the current
   // one. We can't know the next index without a round-trip, so peek the open
-  // desk; if that's unavailable (pre-v2), the RPC path is moot anyway.
+  // desk; if that's unavailable (pre-v2), the RPC path is moot anyway. The
+  // peeked row is REUSED below to resolve the landed desk, so publish costs
+  // one desks read total, not two.
   let nextDeskName: string | null = null;
   const openDesk = await getOpenDesk();
   if (openDesk) nextDeskName = deskName(openDesk.desk_index + 1);
@@ -169,15 +171,30 @@ export async function publishDoodle(
   }
 
   const row = data as DoodleRow;
-  // Resolve the desk the row landed on (best-effort — null if lookup fails).
+  // Resolve the desk the row landed on WITHOUT a second desks round-trip: in
+  // the common case the row lands on the open desk peeked above, and the RPC's
+  // post-state is fully determined from that peek (object_count + 1; the RPC
+  // closes the desk at cap) — the same snapshot the old re-read fetched. Only
+  // when the peek missed (null on a fresh DB → genesis spawn, or the open desk
+  // advanced between peek and RPC) do we actually fetch the landed desk
+  // (best-effort — null if the lookup fails).
   let desk: DeskRow | null = null;
   if (row.desk_id) {
-    const { data: deskData } = await supabase
-      .from(DESKS_TABLE)
-      .select('*')
-      .eq('id', row.desk_id)
-      .single();
-    desk = (deskData as DeskRow) ?? null;
+    if (openDesk && openDesk.id === row.desk_id) {
+      const object_count = openDesk.object_count + 1;
+      desk = {
+        ...openDesk,
+        object_count,
+        is_open: object_count >= openDesk.object_cap ? false : openDesk.is_open,
+      };
+    } else {
+      const { data: deskData } = await supabase
+        .from(DESKS_TABLE)
+        .select('*')
+        .eq('id', row.desk_id)
+        .single();
+      desk = (deskData as DeskRow) ?? null;
+    }
   }
   return { row, desk };
 }
@@ -276,14 +293,30 @@ export async function updateDoodlePosition(
   y: number,
   rotation: number,
 ): Promise<boolean> {
-  const { data, error } = await supabase
-    .from(TABLE)
-    .update({ x, y, rotation })
-    .eq('id', id)
-    .eq('session_id', getSessionId())
-    .select('id');
-  if (error) throw new Error(`updateDoodlePosition failed: ${error.message}`);
-  return (data ?? []).length > 0;
+  // v2+ DROPS the open anon UPDATE policy (security), so a direct .update()
+  // silently no-ops. Route through the session-scoped SECURITY DEFINER RPC
+  // (move_my_doodle), which enforces session_id server-side. Fall back to the
+  // direct update on a pre-v3 DB where the RPC isn't installed yet.
+  const { data, error } = await supabase.rpc('move_my_doodle', {
+    p_id: id,
+    p_session: getSessionId(),
+    p_x: x,
+    p_y: y,
+    p_rotation: rotation,
+  });
+  if (error) {
+    if (isMissingV2(error)) {
+      const fb = await supabase
+        .from(TABLE)
+        .update({ x, y, rotation })
+        .eq('id', id)
+        .eq('session_id', getSessionId())
+        .select('id');
+      return (fb.data ?? []).length > 0;
+    }
+    throw new Error(`updateDoodlePosition failed: ${error.message}`);
+  }
+  return data === true;
 }
 
 /**
@@ -295,14 +328,49 @@ export async function updateDoodlePosition(
  * doesn't own — the where-clause makes that a silent 0-row delete).
  */
 export async function deleteDoodle(id: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from(TABLE)
-    .delete()
-    .eq('id', id)
-    .eq('session_id', getSessionId())
-    .select('id');
-  if (error) throw new Error(`deleteDoodle failed: ${error.message}`);
-  return (data ?? []).length > 0;
+  // Same as updateDoodlePosition: v2+ drops the open anon DELETE policy, so go
+  // through the session-scoped delete_my_doodle RPC (also decrements the desk
+  // object_count). Fall back to a direct delete on a pre-v3 DB.
+  const { data, error } = await supabase.rpc('delete_my_doodle', {
+    p_id: id,
+    p_session: getSessionId(),
+  });
+  if (error) {
+    if (isMissingV2(error)) {
+      const fb = await supabase
+        .from(TABLE)
+        .delete()
+        .eq('id', id)
+        .eq('session_id', getSessionId())
+        .select('id');
+      return (fb.data ?? []).length > 0;
+    }
+    throw new Error(`deleteDoodle failed: ${error.message}`);
+  }
+  return data === true;
+}
+
+/**
+ * Edit-mode save: rename / re-why one of your own doodles. Routes through the
+ * session-scoped update_my_doodle_meta RPC (schema-v3). Resolves true if a row
+ * matched. No-op fallback returns false on a pre-v3 DB (the RPC isn't there).
+ */
+export async function updateDoodleMeta(
+  id: string,
+  name: string | null,
+  why: string | null,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc('update_my_doodle_meta', {
+    p_id: id,
+    p_session: getSessionId(),
+    p_name: name,
+    p_why: why,
+  });
+  if (error) {
+    if (isMissingV2(error)) return false;
+    throw new Error(`updateDoodleMeta failed: ${error.message}`);
+  }
+  return data === true;
 }
 
 /**

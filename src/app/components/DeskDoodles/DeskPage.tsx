@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink } from 'react-router';
+import { NavLink, useSearchParams } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
-import { CTA, PILL, SECTION_LABEL } from '../../lib/chromeStyles';
+import { CTA, PILL, SECTION_LABEL, CHIP } from '../../lib/chromeStyles';
+import { PAPER_GRAIN, WARM_POOL, OBJECT_SIT_SHADOW } from '../../lib/deskCraft';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
@@ -21,6 +22,7 @@ import {
   publishDoodle,
   subscribeDoodles,
   subscribeDoodlesForDesk,
+  updateDoodleMeta,
   updateDoodlePosition,
   type DeskRow,
   type DoodleRow,
@@ -71,21 +73,40 @@ type DeskObject = {
 };
 
 // ─── DESK SURFACE CRAFT ─────────────────────────────────────────────────────
-// The desk should feel like a warm paper surface objects SIT on, not a flat
-// div they float over (design doc §"The desk as a crafted surface"). Warmth,
-// not realism: a whisper of fractalNoise grain (NEVER wood/cork — that's the
-// tacky failure) + a soft surface vignette for depth. Grain is a tiled,
-// desaturated feTurbulence at ~4% opacity baked into a data-URI so it costs
-// nothing to render and never reflows.
-const DESK_GRAIN =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.05'/%3E%3C/svg%3E\")";
+// The desk should feel like a warm paper surface objects SIT on, not a flat div
+// they float over (design doc §"The desk as a crafted surface"). The shared
+// warm-paper material — PAPER_GRAIN (whisper of grain, NEVER wood/cork) +
+// WARM_POOL (soft lamp pool) + OBJECT_SIT_SHADOW (lifted-not-floating shadow) —
+// lives in lib/deskCraft so the desk and the ObjectCard read as the SAME stock.
+// The desk adds one desk-only layer on top: an edge vignette + inset boxShadow
+// for surface depth (a card has no edge vignette).
 
-// Objects sit, not float — layered, hue-tinted (warm, not pure black) shadows:
-// a tight contact shadow + a softer ambient one, light from above-left
-// (Comeau). Subtle enough on loose ink that it reads as "lifted off the
-// paper," never embossed.
-const OBJECT_SIT_SHADOW =
-  'drop-shadow(0.5px 1px 0.5px rgba(60,50,40,0.13)) drop-shadow(1.5px 3px 3px rgba(60,50,40,0.07))';
+// ─── DESK CAMERA (pan/zoom) ─────────────────────────────────────────────────
+// The camera is a pure VIEW transform: screen = desk·zoom + pan. Doodle
+// positions are stored in DESK coordinates (x/y on the doodles table) and are
+// NEVER rewritten because of camera state. The transform is applied to ONE
+// desk-surface div that carries the warm-paper material (grain + pool +
+// vignette) AND the objects, so zooming reads as leaning into a real desk —
+// the grain magnifies with the doodles. Limits 25%–400% per Sebs's locked
+// decision (desk metaphor, not Figma's 2%–25,600%).
+type DeskCamera = { zoom: number; panX: number; panY: number };
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 4;
+const CAMERA_HOME: DeskCamera = { zoom: 1, panX: 0, panY: 0 };
+/** Per-click zoom step for the header − / + pills. */
+const ZOOM_STEP = 1.25;
+
+/** Zoom the camera by `factor`, keeping the desk point under the screen-space
+ *  anchor (sx, sy — relative to the desk viewport) stationary:
+ *  desk = (screen − pan) / zoom must be equal before and after, so
+ *  pan' = screen − (screen − pan) · (zoom'/zoom). */
+function zoomCameraAt(c: DeskCamera, sx: number, sy: number, factor: number): DeskCamera {
+  const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, c.zoom * factor));
+  if (zoom === c.zoom) return c;
+  const k = zoom / c.zoom;
+  return { zoom, panX: sx - (sx - c.panX) * k, panY: sy - (sy - c.panY) * k };
+}
 
 /** Deterministic 32-bit FNV-1a hash of an object id — seeds the scatter
  *  offset + rotation so a given id always lands the same way (no unseeded
@@ -134,18 +155,18 @@ function readDeskParam(): { index: number | null; id: string | null } | null {
 }
 
 export function DeskPage() {
-  // Auto-enable Smart Hachure on the desk (same opt-in pattern as /canvas +
-  // /playground). Running it at page level means the param is already set
-  // before the DrawPanel ever mounts — DrawSurface's own check then no-ops,
-  // so opening the panel never triggers a mid-session reload.
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('smartHachure') !== '1') {
-      url.searchParams.set('smartHachure', '1');
-      window.history.replaceState({}, '', url.toString());
-      window.location.reload();
-    }
-  }, []);
+  // (Removed the smartHachure param-set + window.location.reload effect — the
+  // engine defaults ON now (SvgStyleTransform), so it was dead weight AND it
+  // caused a white reload-flash on every /desk visit where the desk briefly
+  // emptied before objects reloaded. That flash read as "all objects
+  // disappeared". Smart Hachure is on by default; ?smartHachure=0 opts out.)
+
+  // The ?desk= target (numeric index or uuid). Read via react-router so a
+  // gallery click that navigates to /desk?desk=N while ALREADY on /desk
+  // re-resolves the view (the resolve effect keys on this value) — without it,
+  // the param was read once on mount only and never switched.
+  const [searchParams] = useSearchParams();
+  const deskParam = searchParams.get('desk');
 
   const [objects, setObjects] = useState<DeskObject[]>([]);
   const [drawOpen, setDrawOpen] = useState(false);
@@ -280,7 +301,10 @@ export function DeskPage() {
       flatUnsub?.();
       if (freshNoteTimerRef.current) clearTimeout(freshNoteTimerRef.current);
     };
-  }, [loadDeskView]);
+    // deskParam: re-resolve the viewed desk when the ?desk= target changes
+    // (e.g. clicking another gallery card while already on /desk). readDeskParam
+    // inside reads the now-current URL, so the resolve picks up the new target.
+  }, [loadDeskView, deskParam]);
 
   // Surface a transient "a fresh desk opened" note (auto-clears).
   const announceFreshDesk = useCallback((name: string) => {
@@ -290,13 +314,99 @@ export function DeskPage() {
   }, []);
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  // Drag offset in DESK coordinates: pointer-desk-position minus object
+  // origin at pointer-down. Desk-space (not screen-space) so the same offset
+  // stays exact at any zoom — moves divide screen deltas by zoom implicitly
+  // by recomputing the pointer's desk position each event.
   const dragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
   // Pointer-down position — lets pointer-up tell a CLICK (open the object
-  // surface) from a DRAG (persist position) by movement distance.
+  // surface) from a DRAG (persist position) by movement distance. Screen-space
+  // on purpose: click slop is a finger/mouse steadiness budget, not a desk
+  // distance, so it must NOT shrink/grow with zoom.
   const downPosRef = useRef<{ x: number; y: number } | null>(null);
   const deskRef = useRef<HTMLDivElement>(null);
   // Monotonic counter for object ids — deterministic within a session.
   const counterRef = useRef(0);
+
+  // ── Camera state ─────────────────────────────────────────────────────────
+  // State drives the render; the ref mirror is updated inside the setter so
+  // native listeners (non-passive wheel) + pointer handlers always read the
+  // CURRENT camera without dep-array churn or stale closures.
+  const [camera, setCameraState] = useState<DeskCamera>(CAMERA_HOME);
+  const cameraRef = useRef<DeskCamera>(CAMERA_HOME);
+  const setCamera = useCallback((updater: (c: DeskCamera) => DeskCamera) => {
+    setCameraState((prev) => {
+      const next = updater(prev);
+      cameraRef.current = next;
+      return next;
+    });
+  }, []);
+
+  // Empty-desk drag-to-pan (mouse drag on the paper, not on an object).
+  const [panning, setPanning] = useState(false);
+  const panDragRef = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(
+    null,
+  );
+
+  /** Screen (client) point → desk coordinates through the current camera. */
+  const screenToDesk = useCallback((clientX: number, clientY: number) => {
+    const rect = deskRef.current?.getBoundingClientRect();
+    const c = cameraRef.current;
+    const left = rect ? rect.left : 0;
+    const top = rect ? rect.top : 0;
+    return { x: (clientX - left - c.panX) / c.zoom, y: (clientY - top - c.panY) / c.zoom };
+  }, []);
+
+  /** Header − / + pills: zoom about the CENTER of the desk viewport. */
+  const zoomBy = useCallback(
+    (factor: number) => {
+      const rect = deskRef.current?.getBoundingClientRect();
+      const sx = rect ? rect.width / 2 : 0;
+      const sy = rect ? rect.height / 2 : 0;
+      setCamera((c) => zoomCameraAt(c, sx, sy, factor));
+    },
+    [setCamera],
+  );
+
+  /** Fit = the full desk: zoom 100%, pan 0 (also ⌘/Ctrl+0). */
+  const resetCamera = useCallback(() => setCamera(() => CAMERA_HOME), [setCamera]);
+
+  // Wheel/trackpad camera input — native non-passive listener (React's onWheel
+  // can't reliably preventDefault browser pinch-zoom/overscroll). Pinch
+  // (ctrlKey wheel) + ⌘/Ctrl-wheel = zoom toward the CURSOR; plain two-finger
+  // scroll = pan. Event-driven reads only — no per-frame measurement.
+  useEffect(() => {
+    const el = deskRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const rect = el.getBoundingClientRect();
+        // Clamp the per-event delta so one mouse-wheel notch (±100+) steps
+        // ~1.28× while trackpad pinch (small deltas) stays butter-smooth.
+        const d = Math.min(50, Math.max(-50, e.deltaY));
+        const factor = Math.exp(-d * 0.005);
+        setCamera((c) => zoomCameraAt(c, e.clientX - rect.left, e.clientY - rect.top, factor));
+      } else {
+        setCamera((c) => ({ ...c, panX: c.panX - e.deltaX, panY: c.panY - e.deltaY }));
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [setCamera]);
+
+  // ⌘/Ctrl+0 — reset the camera (and keep the browser's own zoom-reset from
+  // firing while the desk is the surface being looked at).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+        e.preventDefault();
+        resetCamera();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [resetCamera]);
 
   // The ONE object surface slot (design doc §2) — Create lives in DrawPanel;
   // this holds Edit (your object) / Sandbox (someone else's). A single slot
@@ -313,11 +423,17 @@ export function DeskPage() {
       const svgMarkup = normalizeSvgSize(rawMarkup, 180);
       counterRef.current += 1;
       const id = `doodle-${counterRef.current}`;
-      // Scatter near desk center with a small seeded offset + tilt. The desk
-      // measurement is event-driven (add click), not a render-path read.
+      // Scatter near the center of the CURRENT VIEW, converted to desk
+      // coordinates through the camera — so a new doodle always lands where
+      // the user is looking, at any zoom/pan, and its stored x/y stay pure
+      // desk coords. The measurement is event-driven (add click), not a
+      // render-path read.
       const deskRect = deskRef.current?.getBoundingClientRect();
-      const cx = (deskRect ? deskRect.width / 2 : 400) - 90; // ~180px object → center it
-      const cy = (deskRect ? deskRect.height / 2 : 300) - 90;
+      const cam = cameraRef.current;
+      const vw = deskRect ? deskRect.width : 800;
+      const vh = deskRect ? deskRect.height : 600;
+      const cx = (vw / 2 - cam.panX) / cam.zoom - 90; // ~180px object → center it
+      const cy = (vh / 2 - cam.panY) / cam.zoom - 90;
       const h = hashId(id);
       const dx = (((h & 0xff) / 255) - 0.5) * 160; // ±80px
       const dy = ((((h >> 8) & 0xff) / 255) - 0.5) * 120; // ±60px
@@ -378,29 +494,60 @@ export function DeskPage() {
     [isViewingOpenDesk, openDeskId, desk, loadDeskView, announceFreshDesk],
   );
 
-  // Drag — same pointer-event pattern as the playground's placed items.
-  const handlePointerDown = useCallback((e: React.PointerEvent, obj: DeskObject) => {
-    e.stopPropagation();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    dragOffsetRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
-    downPosRef.current = { x: e.clientX, y: e.clientY };
-    setDraggingId(obj.id);
+  // Drag — same pointer-event pattern as the playground's placed items, but
+  // camera-aware: the grab offset is captured in DESK coordinates (pointer's
+  // desk position minus the object's origin), and every move recomputes the
+  // pointer's desk position. Screen deltas therefore divide by zoom exactly —
+  // the desk point grabbed at pointer-down stays under the cursor at 50% and
+  // 200% alike. Stored x/y never change because of camera state.
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent, obj: DeskObject) => {
+      e.stopPropagation();
+      const p = screenToDesk(e.clientX, e.clientY);
+      dragOffsetRef.current = { dx: p.x - obj.x, dy: p.y - obj.y };
+      downPosRef.current = { x: e.clientX, y: e.clientY };
+      setDraggingId(obj.id);
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    },
+    [screenToDesk],
+  );
+
+  // Pointer-down on the EMPTY desk (objects stopPropagation, so reaching the
+  // desk means paper) → start a drag-to-pan. Pan deltas are screen-space —
+  // the camera's pan IS screen pixels (transform = translate(pan) scale(zoom)).
+  const handleDeskPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const c = cameraRef.current;
+    panDragRef.current = { startX: e.clientX, startY: e.clientY, panX: c.panX, panY: c.panY };
+    setPanning(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   }, []);
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
+      // Desk pan in flight — move the camera, never the objects.
+      const pan = panDragRef.current;
+      if (pan) {
+        const dx = e.clientX - pan.startX;
+        const dy = e.clientY - pan.startY;
+        setCamera((c) => ({ ...c, panX: pan.panX + dx, panY: pan.panY + dy }));
+        return;
+      }
       if (!draggingId || !deskRef.current) return;
-      const deskRect = deskRef.current.getBoundingClientRect();
-      const x = e.clientX - deskRect.left - dragOffsetRef.current.dx;
-      const y = e.clientY - deskRect.top - dragOffsetRef.current.dy;
+      const p = screenToDesk(e.clientX, e.clientY);
+      const x = p.x - dragOffsetRef.current.dx;
+      const y = p.y - dragOffsetRef.current.dy;
       setObjects((prev) => prev.map((o) => (o.id === draggingId ? { ...o, x, y } : o)));
     },
-    [draggingId],
+    [draggingId, screenToDesk, setCamera],
   );
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
+      if (panDragRef.current) {
+        panDragRef.current = null;
+        setPanning(false);
+      }
       if (draggingId) {
         const obj = objects.find((o) => o.id === draggingId);
         const dp = downPosRef.current;
@@ -426,18 +573,30 @@ export function DeskPage() {
 
   // A cancelled/interrupted pointer (touch scroll-steal, OS gesture, palm
   // rejection) fires neither pointerup nor a reliable leave — without this the
-  // drag stays glued to the object forever. Just end the drag, never a click.
+  // drag stays glued to the object forever. Just end the drag/pan, never a click.
   const handlePointerCancel = useCallback(() => {
     setDraggingId(null);
     downPosRef.current = null;
+    panDragRef.current = null;
+    setPanning(false);
   }, []);
 
   // Delete one of your own objects (Edit-mode action) — removes from the DB
   // (session-scoped) and the desk, then closes the surface.
   const handleDeleteObject = useCallback((obj: DeskObject) => {
-    if (obj.dbId) deleteDoodle(obj.dbId).catch(() => {});
-    setObjects((prev) => prev.filter((o) => o.id !== obj.id));
     setActiveSurface(null);
+    // Optimistic remove, but ROLL BACK if the DB delete didn't actually remove
+    // the row (not yours / failed) — never claim a delete that didn't happen.
+    setObjects((prev) => prev.filter((o) => o.id !== obj.id));
+    if (obj.dbId) {
+      const restore = () =>
+        setObjects((prev) => (prev.some((o) => o.id === obj.id) ? prev : [...prev, obj]));
+      deleteDoodle(obj.dbId)
+        .then((ok) => {
+          if (!ok) restore();
+        })
+        .catch(restore);
+    }
   }, []);
 
   // Header desk readout — name + count/cap. Falls back to a neutral label on
@@ -517,6 +676,40 @@ export function DeskPage() {
         </button>
 
         <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Desk camera controls — toggles live in chrome, never on the desk.
+              − / % / + zoom about the viewport center; Fit = full desk (⌘0). */}
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button
+              onClick={() => zoomBy(1 / ZOOM_STEP)}
+              title="Zoom out"
+              aria-label="Zoom out"
+              style={{ ...PILL, padding: '6px 10px' }}
+            >
+              −
+            </button>
+            <span
+              title="Desk zoom"
+              style={{ ...CHIP, minWidth: 52, justifyContent: 'center', letterSpacing: '0.02em' }}
+            >
+              {Math.round(camera.zoom * 100)}%
+            </span>
+            <button
+              onClick={() => zoomBy(ZOOM_STEP)}
+              title="Zoom in"
+              aria-label="Zoom in"
+              style={{ ...PILL, padding: '6px 10px' }}
+            >
+              +
+            </button>
+            <button
+              onClick={resetCamera}
+              title="Fit the full desk (⌘0)"
+              aria-label="Fit the full desk"
+              style={PILL}
+            >
+              Fit
+            </button>
+          </div>
           <PanelToggle
             side="right"
             open={rightOpen}
@@ -535,14 +728,8 @@ export function DeskPage() {
                   : 'Offline — doodles stay on this desk until reconnect'
             }
             style={{
-              fontFamily: IS,
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase',
-              padding: '4px 12px',
-              borderRadius: 999,
-              border: '1px solid var(--dir-border)',
+              ...CHIP,
+              // Offline reads quieter; live/connecting use the default body ink.
               color:
                 feedStatus === 'offline'
                   ? 'var(--dir-text-body-soft)'
@@ -559,6 +746,7 @@ export function DeskPage() {
         {/* THE DESK — full leftover viewport, objects scattered + draggable */}
         <main
           ref={deskRef}
+          onPointerDown={handleDeskPointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
@@ -566,18 +754,62 @@ export function DeskPage() {
             flex: 1,
             minWidth: 0,
             position: 'relative',
-            // Warm paper surface — a desk under a soft lamp. Restraint over
-            // ornament (no scraps/wood): just three quiet layers — fine grain,
-            // a warm pool of light pooling toward the working center, and an
-            // edge vignette for depth. Together they read "lit desk," not
-            // "flat div," without competing with the doodles.
+            // The VIEWPORT — plain warm bg; the paper material lives on the
+            // camera-transformed desk surface below, so leaning back (zoom
+            // out) shows the desk's grained edge against the same warm tone.
             backgroundColor: 'var(--dir-bg)',
-            backgroundImage: `${DESK_GRAIN}, radial-gradient(ellipse 70% 64% at 50% 40%, rgba(255,246,229,0.55) 0%, rgba(255,246,229,0) 62%), radial-gradient(ellipse at 50% 38%, transparent 48%, rgba(60,50,40,0.07) 100%)`,
-            boxShadow: 'inset 0 0 160px rgba(60,50,40,0.05)',
             overflow: 'hidden',
-            cursor: draggingId ? 'grabbing' : 'default',
+            cursor: panning || draggingId ? 'grabbing' : 'default',
+            // The desk owns its gestures — no browser scroll/pinch stealing.
+            touchAction: 'none',
           }}
         >
+          {/* THE DESK SURFACE — the camera-transformed plane. Warm paper craft
+              (fine grain, lamp pool, edge vignette — restraint over ornament,
+              no scraps/wood) + every object ride ONE transform, so zooming
+              magnifies the grain with the doodles and reads as leaning into a
+              real desk, not scaling a flat div. transformOrigin 0 0 keeps the
+              screen = desk·zoom + pan math exact. */}
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              width: '100%',
+              height: '100%',
+              transform: `translate(${camera.panX}px, ${camera.panY}px) scale(${camera.zoom})`,
+              transformOrigin: '0 0',
+              willChange: 'transform',
+              backgroundColor: 'var(--dir-bg)',
+              backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}, radial-gradient(ellipse at 50% 38%, transparent 48%, rgba(60,50,40,0.07) 100%)`,
+              boxShadow: 'inset 0 0 160px rgba(60,50,40,0.05)',
+            }}
+          >
+            {objects.map((obj) => (
+              <div
+                key={obj.id}
+                onPointerDown={(e) => handlePointerDown(e, obj)}
+                style={{
+                  position: 'absolute',
+                  left: obj.x,
+                  top: obj.y,
+                  transform: `rotate(${obj.rotation}deg)`,
+                  // Sit on the surface, not float over it (warm layered shadow).
+                  filter: OBJECT_SIT_SHADOW,
+                  cursor: draggingId === obj.id ? 'grabbing' : 'grab',
+                  touchAction: 'none',
+                  userSelect: 'none',
+                }}
+              >
+                {/* Markup already normalized to ~180px at the add boundary;
+                    SvgStyleTransform applies the active style/modifiers. */}
+                <SvgStyleTransform>
+                  <div dangerouslySetInnerHTML={{ __html: obj.svgMarkup }} />
+                </SvgStyleTransform>
+              </div>
+            ))}
+          </div>
+
           {/* Fresh-desk note — friendly, transient, auto-clears. Floats top-
               center over the desk so it doesn't reflow the layout. */}
           {freshNote && (
@@ -636,29 +868,6 @@ export function DeskPage() {
             </div>
           )}
 
-          {objects.map((obj) => (
-            <div
-              key={obj.id}
-              onPointerDown={(e) => handlePointerDown(e, obj)}
-              style={{
-                position: 'absolute',
-                left: obj.x,
-                top: obj.y,
-                transform: `rotate(${obj.rotation}deg)`,
-                // Sit on the surface, not float over it (warm layered shadow).
-                filter: OBJECT_SIT_SHADOW,
-                cursor: draggingId === obj.id ? 'grabbing' : 'grab',
-                touchAction: 'none',
-                userSelect: 'none',
-              }}
-            >
-              {/* Markup already normalized to ~180px at the add boundary;
-                  SvgStyleTransform applies the active style/modifiers. */}
-              <SvgStyleTransform>
-                <div dangerouslySetInnerHTML={{ __html: obj.svgMarkup }} />
-              </SvgStyleTransform>
-            </div>
-          ))}
         </main>
 
         {/* Right chrome — Smart Hachure modifier panel; tweaks re-render the desk */}
@@ -677,8 +886,15 @@ export function DeskPage() {
         </CollapsiblePanel>
       </div>
 
-      {/* Draw popup — unmounts on close, so each open is a fresh session. */}
-      {drawOpen && <DrawPanel onDone={addObject} onCancel={() => setDrawOpen(false)} />}
+      {/* Draw popup — unmounts on close, so each open is a fresh session.
+          rightInset centers it over the desk area when the controls panel is open. */}
+      {drawOpen && (
+        <DrawPanel
+          onDone={addObject}
+          onCancel={() => setDrawOpen(false)}
+          rightInset={rightOpen ? 360 : 0}
+        />
+      )}
 
       {/* The one object surface — click an object to inspect it. Edit (yours)
           or Sandbox (someone else's); a single slot means it can never stack
@@ -702,6 +918,19 @@ export function DeskPage() {
               }}
               onClose={() => setActiveSurface(null)}
               onDelete={activeSurface.mode === 'edit' ? () => handleDeleteObject(obj) : undefined}
+              onSave={
+                activeSurface.mode === 'edit'
+                  ? (name, why) => {
+                      // Optimistic local update + persist (session-scoped RPC).
+                      setObjects((prev) =>
+                        prev.map((o) => (o.id === obj.id ? { ...o, name, why } : o)),
+                      );
+                      if (obj.dbId) updateDoodleMeta(obj.dbId, name, why).catch(() => {});
+                    }
+                  : undefined
+              }
+              // Center over the desk area, not behind the open controls panel.
+              rightInset={rightOpen ? 360 : 0}
             />
           );
         })()}

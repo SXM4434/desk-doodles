@@ -138,15 +138,8 @@ export function DrawSurface({
     setUploadError(null);
   }
 
-  // Auto-enable Smart Hachure on canvas page (same opt-in pattern as /audit).
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('smartHachure') !== '1') {
-      url.searchParams.set('smartHachure', '1');
-      window.history.replaceState({}, '', url.toString());
-      window.location.reload();
-    }
-  }, []);
+  // (Removed the smartHachure param-set + reload — engine defaults ON now;
+  // the reload caused the white flash. ?smartHachure=0 opts out.)
 
   function eventToSvgPoint(e: React.PointerEvent): StrokePoint {
     const svg = svgRef.current;

@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
-import { SECTION_LABEL } from '../../lib/chromeStyles';
-import { listDesks, type DeskRow } from '../../lib/publish';
+import { SECTION_LABEL, CHIP } from '../../lib/chromeStyles';
+import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
+import { normalizeSvgSize } from '../../lib/normalizeInput';
+import {
+  listDesks,
+  listDoodlesForDesk,
+  type DeskRow,
+  type DoodleRow,
+} from '../../lib/publish';
 import { sanitizeSvgMarkup } from '../../lib/svgUpload';
 
 // ─── DeskGallery — the public "wall of walls" (/desks) ──────────────────────
 // Grounds in docs/design/object-model-and-desk-architecture.md, Multi-desk
 // section: "Gallery to browse past desks — a newest-first grid of desk cards.
 // Keep it simple." Each card is a VIEW of a desk RECORD (the doc's unifying
-// frame): name + object-count + a cached preview_svg thumbnail. Clicking a
-// card opens that desk at /desk?desk=<desk_index> (DeskPage reads the param).
+// frame): name + object-count + a LIVE-CAPPED mini-desk preview (the desk's
+// first ~6 doodles scattered on a tiny warm-paper surface — see MiniDesk).
+// Clicking a card opens that desk at /desk?desk=<desk_index> (DeskPage reads).
 //
 // Two load states are not crashes: a pre-v2 DB makes listDesks return [] and a
 // thrown listDesks (any other failure) is caught here — both show a friendly
@@ -200,58 +208,37 @@ function DeskCard({ desk, onOpen }: { desk: DeskRow; onOpen: () => void }) {
         color: 'inherit',
       }}
     >
-      {/* Thumbnail — cached preview_svg (sanitized on read) or empty placeholder */}
+      {/* Mini-desk preview — the desk's first ~6 doodles scattered on a tiny
+          warm-paper surface so the card reads as a real little desk, not a
+          single thumbnail (decided 06-11, LIVE-CAPPED approach). */}
       <div
         style={{
           position: 'relative',
           aspectRatio: '4 / 3',
           width: '100%',
-          background: 'var(--dir-recessed)',
           borderBottom: '1px solid var(--dir-border)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
           overflow: 'hidden',
+          // The shared warm-paper craft material (lib/deskCraft) — the SAME
+          // stock the real desk + ObjectCard use, composed as the card bg:
+          // backgroundColor (paper) under the grain + the warm light pool.
+          backgroundColor: 'var(--dir-bg)',
+          backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
         }}
       >
-        {desk.preview_svg ? (
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-            // preview_svg is server-cached but still untrusted markup → sanitize
-            // on read before dangerouslySetInnerHTML, exactly like the feed rows.
-            dangerouslySetInnerHTML={{ __html: sanitizeSvgMarkup(desk.preview_svg) }}
-          />
-        ) : (
-          <EmptyDeskThumb />
-        )}
+        <MiniDesk desk={desk} />
 
         {/* Live indicator — the single currently-open desk (is_open, partial
             unique index guarantees exactly one). Sits over the thumbnail. */}
         {desk.is_open && (
           <span
             style={{
+              ...CHIP,
+              // Float over the thumbnail; opaque bg so the mark behind doesn't
+              // bleed through (the desk surface is transparent in CHIP).
               position: 'absolute',
               top: 10,
               left: 10,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '4px 10px',
-              borderRadius: 999,
-              fontFamily: IS,
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: '0.04em',
-              textTransform: 'uppercase',
               background: 'var(--dir-bg)',
-              border: '1px solid var(--dir-border)',
-              color: 'var(--dir-text-body)',
             }}
           >
             <span
@@ -299,17 +286,10 @@ function DeskCard({ desk, onOpen }: { desk: DeskRow; onOpen: () => void }) {
 
         <span
           style={{
+            ...CHIP,
             flexShrink: 0,
-            fontFamily: IS,
-            fontSize: 10,
-            fontWeight: 600,
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
-            padding: '4px 10px',
-            borderRadius: 999,
             // Full desks read as "closed/complete"; filling desks stay neutral.
             background: full ? 'var(--dir-chip-bg)' : 'transparent',
-            border: '1px solid var(--dir-border)',
             color: full ? 'var(--dir-text-body)' : 'var(--dir-text-secondary)',
           }}
           title={full ? 'This desk is full' : `${desk.object_count} of ${desk.object_cap} objects`}
@@ -322,21 +302,120 @@ function DeskCard({ desk, onOpen }: { desk: DeskRow; onOpen: () => void }) {
   );
 }
 
-/** Tasteful empty-desk placeholder — a faint inline mark, no external asset. */
-function EmptyDeskThumb() {
+// ─── MiniDesk — the card's live-capped mini preview ─────────────────────────
+// Renders a desk's first ~6 doodles small + scattered on the card's warm-paper
+// surface (the card div owns the paper material; this only places the marks).
+// Deck approach (decided 06-11, LIVE-CAPPED): fetch the first 6 via
+// listDoodlesForDesk(id, 6) — cheap at demo scale, no schema change. The full
+// SvgStyleTransform engine is deliberately NOT pulled in: each doodle's stored
+// markup is normalized small + sanitized + injected as plain inline SVG.
+//
+// SCATTER IS DETERMINISTIC FROM INDEX (no unseeded randomness, no wall-clock):
+// a fixed offset + rotation + scale table indexed by the doodle's slot. A
+// given slot always lands the same way, so a card never reflows between
+// renders and two machines show the identical little desk.
+
+/** ~88px square mini-doodle target — small enough that ~6 sit on a card. */
+const MINI_DOODLE_PX = 88;
+
+/** Fixed per-slot scatter table — { left%, top%, rotation°, scale }. Six slots
+ *  spread across the surface (the cap is ~6 doodles per card). Hand-placed so
+ *  they read as a loosely-arranged little desk, not a grid; pure constants so
+ *  the layout is fully deterministic from a doodle's index. */
+const SCATTER: ReadonlyArray<{ left: number; top: number; rot: number; scale: number }> = [
+  { left: 30, top: 36, rot: -6, scale: 1.0 },
+  { left: 68, top: 30, rot: 7, scale: 0.82 },
+  { left: 50, top: 64, rot: -3, scale: 0.9 },
+  { left: 22, top: 68, rot: 9, scale: 0.7 },
+  { left: 78, top: 66, rot: -10, scale: 0.66 },
+  { left: 58, top: 20, rot: 4, scale: 0.6 },
+];
+
+/** How many doodles a mini-desk shows (matches the SCATTER table length). */
+const MINI_CAP = SCATTER.length;
+
+type MiniState =
+  | { phase: 'loading' }
+  | { phase: 'ready'; doodles: DoodleRow[] }
+  | { phase: 'error' };
+
+function MiniDesk({ desk }: { desk: DeskRow }) {
+  const [state, setState] = useState<MiniState>({ phase: 'loading' });
+
+  useEffect(() => {
+    let cancelled = false;
+    // listDoodlesForDesk already takes a limit — cap the fetch at MINI_CAP so
+    // each card only pays for its own handful of rows.
+    listDoodlesForDesk(desk.id, MINI_CAP)
+      .then((doodles) => {
+        if (!cancelled) setState({ phase: 'ready', doodles });
+      })
+      .catch(() => {
+        // A pre-v2 DB / network / RLS hiccup must never crash a card — fall
+        // back to the empty-desk mark, same friendly-failure rule as the grid.
+        if (!cancelled) setState({ phase: 'error' });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [desk.id]);
+
+  const doodles = state.phase === 'ready' ? state.doodles : [];
+
+  // Empty (no doodles yet) or a caught error → the quiet empty-desk mark on the
+  // paper surface, so even an empty card still reads as a real little desk.
+  if (state.phase !== 'loading' && doodles.length === 0) {
+    return <EmptyDeskMark />;
+  }
+
   return (
-    <svg
-      width="64"
-      height="48"
-      viewBox="0 0 64 48"
-      fill="none"
+    <div style={{ position: 'absolute', inset: 0 }} aria-hidden>
+      {doodles.slice(0, MINI_CAP).map((d, i) => {
+        const slot = SCATTER[i];
+        // Normalize the stored markup small (so several fit), then sanitize on
+        // read before injection — same XSS rule the real desk + feed rows use.
+        const markup = sanitizeSvgMarkup(
+          normalizeSvgSize(d.svg, Math.round(MINI_DOODLE_PX * slot.scale)),
+        );
+        return (
+          <div
+            key={d.id}
+            style={{
+              position: 'absolute',
+              left: `${slot.left}%`,
+              top: `${slot.top}%`,
+              // Center the mark on its slot point, then tilt — deterministic
+              // from the slot, so the scatter never moves between renders.
+              transform: `translate(-50%, -50%) rotate(${slot.rot}deg)`,
+              display: 'flex',
+            }}
+            dangerouslySetInnerHTML={{ __html: markup }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Quiet empty-desk mark — a faint desk-horizon line + stray dot, centered on
+ *  the paper surface. Reads as an empty desk waiting for its first doodle.
+ *  Deterministic, no external asset. */
+function EmptyDeskMark() {
+  return (
+    <div
       aria-hidden
-      style={{ opacity: 0.5 }}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
     >
-      {/* A simple desk-surface horizon line with a stray dot — reads as an
-          empty desk waiting for its first doodle. Deterministic, no randomness. */}
-      <line x1="8" y1="34" x2="56" y2="34" stroke="var(--dir-text-body-soft)" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="32" cy="22" r="6" stroke="var(--dir-text-body-soft)" strokeWidth="1.5" />
-    </svg>
+      <svg width="64" height="48" viewBox="0 0 64 48" fill="none" style={{ opacity: 0.5 }}>
+        <line x1="8" y1="34" x2="56" y2="34" stroke="var(--dir-text-body-soft)" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="32" cy="22" r="6" stroke="var(--dir-text-body-soft)" strokeWidth="1.5" />
+      </svg>
+    </div>
   );
 }

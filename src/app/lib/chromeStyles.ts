@@ -38,3 +38,33 @@ export const SECTION_LABEL: CSSProperties = {
   color: 'var(--dir-text-secondary)',
   margin: 0,
 };
+
+// CHIP — a non-interactive status/count badge. Shares PILL's pill shape +
+// uppercase 600 idiom but at badge sizing (10/4×12) and cursor:default, so the
+// desk Live chip + gallery Live/count badges stop hand-rolling near-copies.
+// Override background/color/border at the call site for state (full/offline).
+export const CHIP: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  borderRadius: 999,
+  fontFamily: IS,
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: '0.04em',
+  textTransform: 'uppercase',
+  cursor: 'default',
+  padding: '4px 12px',
+  border: '1px solid var(--dir-border)',
+  background: 'transparent',
+  color: 'var(--dir-text-body)',
+  whiteSpace: 'nowrap',
+};
+
+// RAISED_SHADOW — the tinted elevation used by raised modals + cards (the
+// ObjectSurface modal, DrawPanel modal, standalone ObjectCard). One layered,
+// hue-tinted drop: a wide ambient cast (primary 10%) + a tight contact cast
+// (primary 6%). Single source so every raised surface lifts off the page by the
+// same amount instead of drifting between 9% and 10%.
+export const RAISED_SHADOW =
+  '0 12px 36px color-mix(in srgb, var(--dir-text-primary) 10%, transparent), 0 2px 8px color-mix(in srgb, var(--dir-text-primary) 6%, transparent)';

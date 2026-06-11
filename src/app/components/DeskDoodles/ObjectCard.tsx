@@ -1,5 +1,8 @@
 import { type CSSProperties } from 'react';
 import { IS, ISe } from '../../lib/typography';
+import { SECTION_LABEL, RAISED_SHADOW } from '../../lib/chromeStyles';
+import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
+import { getSessionId } from '../../lib/session';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 
 // ─── ObjectCard — the collectible read-view of one doodle record ─────────────
@@ -11,10 +14,6 @@ import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 // Craft bar (feedback_no_cheap_polish): TCG-tall, the doodle IS the art on a
 // warm paper well, a graphite name-banner, a quiet why-line, an owner footer.
 // Simple but beautiful — one render, restraint over ornament.
-
-// Warm paper grain for the art well (same whisper as the desk surface).
-const ART_GRAIN =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.05'/%3E%3C/svg%3E\")";
 
 export type ObjectCardProps = {
   svgMarkup: string;
@@ -69,8 +68,7 @@ export function ObjectCard({
         background: 'var(--dir-raised)',
         border: '1px solid var(--dir-border)',
         borderRadius: 16,
-        boxShadow:
-          '0 12px 36px color-mix(in srgb, var(--dir-text-primary) 9%, transparent), 0 2px 8px color-mix(in srgb, var(--dir-text-primary) 6%, transparent)',
+        boxShadow: RAISED_SHADOW,
         padding: mini ? 10 : 16,
         display: 'flex',
         flexDirection: 'column',
@@ -84,7 +82,7 @@ export function ObjectCard({
     width: '100%',
     aspectRatio: '1 / 1',
     backgroundColor: 'var(--dir-bg)',
-    backgroundImage: `${ART_GRAIN}, radial-gradient(ellipse 72% 66% at 50% 44%, rgba(255,246,229,0.5) 0%, rgba(255,246,229,0) 64%)`,
+    backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
     border: '1px solid var(--dir-border)',
     borderRadius: 10,
     overflow: 'hidden',
@@ -157,16 +155,39 @@ export function ObjectCard({
         )}
       </div>
 
-      {/* The art — the doodle itself, rendered through the live style. */}
+      {/* The art — the doodle itself, rendered through the live style. When
+          the record has no drawable marks (empty/broken markup), a quiet
+          dashed-circle placeholder keeps the well from reading as a hole. */}
       <div style={artWell}>
-        <div style={{ width: '76%', height: '76%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <SvgStyleTransform wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}>
-            <div
-              style={{ width: '100%', height: '100%' }}
-              dangerouslySetInnerHTML={{ __html: svgMarkup }}
+        {marks === 0 ? (
+          <svg
+            width="48"
+            height="48"
+            viewBox="0 0 48 48"
+            aria-hidden="true"
+            style={{ opacity: 0.7 }}
+          >
+            <circle
+              cx="24"
+              cy="24"
+              r="18"
+              fill="none"
+              stroke="var(--dir-text-body-soft)"
+              strokeWidth="1.5"
+              strokeDasharray="3 6"
+              strokeLinecap="round"
             />
-          </SvgStyleTransform>
-        </div>
+          </svg>
+        ) : (
+          <div style={{ width: '76%', height: '76%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <SvgStyleTransform wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}>
+              <div
+                style={{ width: '100%', height: '100%' }}
+                dangerouslySetInnerHTML={{ __html: svgMarkup }}
+              />
+            </SvgStyleTransform>
+          </div>
+        )}
       </div>
 
       {/* Mini cards stop here — art + name is enough for the binder grid. */}
@@ -210,9 +231,12 @@ export function ObjectCard({
             )
           )}
 
-          {/* Footer — owner + quiet date, divided from the body. */}
+          {/* Footer — owner + quiet date, divided from the body. The label idiom
+              (10/600/0.08em uppercase secondary) is the shared SECTION_LABEL;
+              only the row layout + divider are footer-local. */}
           <div
             style={{
+              ...SECTION_LABEL,
               marginTop: 2,
               paddingTop: 10,
               borderTop: '1px solid var(--dir-border)',
@@ -220,15 +244,9 @@ export function ObjectCard({
               alignItems: 'baseline',
               justifyContent: 'space-between',
               gap: 8,
-              fontFamily: IS,
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              color: 'var(--dir-text-secondary)',
             }}
           >
-            <span>{owner ? `@${owner}` : 'Anonymous'}</span>
+            <span>{ownerLabel(owner)}</span>
             {createdAt && (
               <span style={{ fontWeight: 500, letterSpacing: '0.04em', color: 'var(--dir-text-body-soft)' }}>
                 {formatCardDate(createdAt)}
@@ -260,4 +278,65 @@ function formatCardDate(iso: string): string | null {
 function countMarks(svgMarkup: string): number {
   const m = svgMarkup.match(/<(path|line|polyline|circle|rect|ellipse|polygon)\b/gi);
   return m ? m.length : 0;
+}
+
+// ─── Friendly owner handle ───────────────────────────────────────────────────
+// The owner field carries a raw session UUID (lib/session.ts) — never show it.
+// Derive a deterministic warm two-word handle from it instead, in the same
+// FNV-1a + curated-pool spirit as lib/deskNames.ts (its streamHash is
+// module-private there, so a small local copy lives here). Same uuid → same
+// handle, on every client, every reload — no unseeded randomness.
+
+// Soft adjectives + small warm things (critters + desk objects), lowercase —
+// "quiet-heron", "inky-paperclip". 16×16 = 256 combos.
+const HANDLE_ADJ = [
+  'quiet', 'warm', 'little', 'sleepy', 'sunny', 'gentle', 'humble', 'wobbly',
+  'inky', 'folded', 'scuffed', 'crooked', 'doodled', 'smudged', 'loose', 'tidy',
+];
+const HANDLE_NOUN = [
+  'heron', 'wren', 'finch', 'moth', 'snail', 'otter', 'pebble', 'acorn',
+  'maple', 'clover', 'pencil', 'eraser', 'paperclip', 'crayon', 'mug', 'stamp',
+];
+
+// FNV-1a 32-bit over (value + salt) — local copy of deskNames.ts's streamHash
+// (not exported there). Distinct salts give independent streams per pool so
+// the two words of a handle don't move together.
+function handleHash(value: string, salt: number): number {
+  let h = 0x811c9dc5 ^ salt;
+  const s = value + ':' + String(salt);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Deterministic warm handle for a session uuid, e.g. "quiet-heron". */
+function ownerHandle(sessionId: string): string {
+  const adj = HANDLE_ADJ[handleHash(sessionId, 1) % HANDLE_ADJ.length];
+  const noun = HANDLE_NOUN[handleHash(sessionId, 2) % HANDLE_NOUN.length];
+  return `${adj}-${noun}`;
+}
+
+// Session ids are crypto.randomUUID() uuids — detect them so a caller that
+// already passes a friendly label (e.g. DeskPage pre-maps 'you') is never
+// re-hashed.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Footer label for the owner: "you" for the viewer's own session, a derived
+ *  warm handle for any other session uuid, the string as-is when it is already
+ *  a friendly label, "Anonymous" when absent. Never the raw UUID. */
+function ownerLabel(owner?: string | null): string {
+  if (!owner) return 'Anonymous';
+  if (owner === 'you') return 'you'; // pre-mapped by the caller (DeskPage)
+  let own = false;
+  try {
+    own = owner === getSessionId();
+  } catch {
+    // session unavailable — fall through to the handle path
+  }
+  if (own) return 'you';
+  if (UUID_RE.test(owner)) return `@${ownerHandle(owner)}`;
+  return `@${owner}`;
 }

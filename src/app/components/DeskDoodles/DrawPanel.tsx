@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { IS } from '../../lib/typography';
-import { PILL, CTA, SECTION_LABEL } from '../../lib/chromeStyles';
+import { PILL, CTA, SECTION_LABEL, RAISED_SHADOW } from '../../lib/chromeStyles';
 import { DrawSurface, strokeToPolylinePath, type Stroke } from './DrawSurface';
 import { prepareSvgUpload } from '../../lib/svgUpload';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
@@ -48,10 +48,15 @@ function strokesToObjectMarkup(strokes: Stroke[]): string {
 export function DrawPanel({
   onDone,
   onCancel,
+  rightInset = 0,
 }: {
   /** Receives the stroke-only SVG markup for the ONE object this session made. */
   onDone: (svgMarkup: string) => void;
   onCancel: () => void;
+  /** px width of an open right controls panel (the desk's). The scrim reserves
+   *  this on the right so the modal centers over the desk working area, not
+   *  behind the panel. Default 0 — /canvas (no such panel) is unaffected. */
+  rightInset?: number;
 }) {
   // Live mirror of DrawSurface's preview-stroke pool — setState is a stable
   // callback, so the mirror effect in DrawSurface doesn't re-fire on renders.
@@ -111,6 +116,9 @@ export function DrawPanel({
         alignItems: 'center',
         justifyContent: 'center',
         padding: 32,
+        // Reserve an open right controls panel's width so the modal centers over
+        // the desk area, not behind it. Default 0 (e.g. on /canvas).
+        paddingRight: 32 + rightInset,
       }}
     >
       {/* Centered panel — W1 raised surface, popover radius 16 (chromeStyles
@@ -125,8 +133,7 @@ export function DrawPanel({
           background: 'var(--dir-raised)',
           border: '1px solid var(--dir-border)',
           borderRadius: 16,
-          boxShadow:
-            '0 12px 36px color-mix(in srgb, var(--dir-text-primary) 10%, transparent), 0 2px 8px color-mix(in srgb, var(--dir-text-primary) 6%, transparent)',
+          boxShadow: RAISED_SHADOW,
           padding: 20,
           width: 'min(760px, calc(100vw - 64px))',
           maxHeight: 'calc(100vh - 64px)',
