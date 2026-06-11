@@ -33,6 +33,30 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 Commit `e6c7889` pushed to `SXM4434/desk-doodles main` 2026-06-10. 34 files (7 REPLACE + 27 ADD) drag-dropped to Figma Make with the AI-routing prompt. The desk-doodles Make project now has package.json with NO Rapier, App.tsx routing through React Router, full Smart Hachure engine + audit + canvas + playground + chrome controls.
 
+### Day 9 late-evening small-task sweep (06-10, uncommitted)
+
+Research-backed chrome consistency pass (2 scan workflows + 5-agent edit fleet; build verified tsc-clean):
+
+- **NEW `src/app/lib/chromeStyles.ts`** — shared PILL / CTA / SECTION_LABEL constants. /playground is the chrome reference; ALL pages import these now (playground's local copies deleted). Per Sebs: pill shapes everywhere, no square buttons, all pages same design.
+- **NEW `src/app/components/chrome/CollapsiblePanel.tsx`** — shared collapse system: CollapsiblePanel (260ms ease-out slide, reduced-motion fade, visibility-hidden a11y when closed) + PanelToggle (header pill, chevron flips, aria-expanded, tooltip w/ shortcut) + usePanelOpen (localStorage persistence) + useMinimizeUi (⌘\/Ctrl+\ minimize-all, Figma convention). Pattern locked from online research: fixed-but-collapsible (Figma UI3 model), NOT floating (Figma reversed floating panels Oct 2024). Auto-reopen-on-selection parked until desk canvas has selection.
+- **Wired into /canvas (left Input 280 + right Controls 360), /audit (right Controls 480), /playground (upgraded from instant unmount to animated shared system).**
+- **Pill violations fixed (10):** /canvas 2D/3D tablist + Publish + input-mode buttons · home 2 CTAs · /public CTA · playground subject-nav rows + thumbnails (8→16) · Dropdown option rows (10→999) · Slider native range → `.dd-range` pill track CSS in theme.css.
+- **3D toggle honesty gate** in /canvas DrawSurface: mode='3d' disables drawing + shows "3D mode lands Day 11" note (state preserved). Real wiring waits for Day 11 Rod/Extrude.
+- **vite.config.ts port pinned 5180→5182** (was never actually set; only worked via auto-increment past the portfolio labs).
+- **Type-guard fix** in SvgStyleTransform.tsx:1694 (pre-existing tsc error; `undefined > 0` is false in JS, guard is behavior-identical — no rendering delta).
+- Backlog verdicts: upload-image = S1 stretch (needs imagetracerjs dep, half-day, buffer Day 15) NOT a small task · 3D toggle wiring waits for Day 11 · **desk-canvas + draw-panel-popup flow has NO plan slot — must be explicitly folded into Day 10 M9 build** (also flagged in CLAUDE.md).
+
+### Supabase + fal.ai wired (06-10 late evening)
+
+- Supabase project `desk-doodles` created (East US, free tier). URL + publishable key in `.env.local` (gitignored) AND baked as client-safe fallbacks in **NEW `src/app/lib/supabase.ts`** so the file works verbatim in Make. API probe verified live (PGRST205 = auth OK, no tables yet — Day 10 SQL creates table + bucket + RLS policies).
+- fal.ai key in `.env.local` as `FAL_KEY` (no VITE_ prefix — never bundles client-side; moves to Edge Function secrets Day 13). Account has NO credits — fine until Day 13 T3; ~$5 covers dozens of TRELLIS gens if we attempt it.
+- Make-side: Sebs connects Make's Supabase integration to the SAME project at next checkpoint (don't let Make create a second project).
+- Still Sebs-side: Tripo key rotation · daily Make-beta email check.
+
+### Wobble thread CLOSED (06-10 evening)
+
+Sebs eyes-on sign-off: rose SVG + drawn-heart repros confirmed fixed by the Day 9 drawn-canvas overhaul (multi-M sub-path split + jaggedness default 0 + polygonal/curve dispatch). The 06-09 "Open thread — wobble debug" section below is historical.
+
 ### Day 9 ledger (shipped 06-10)
 
 - Drawn-canvas full overhaul committed + pushed (`e6c7889` on SXM4434/desk-doodles main)

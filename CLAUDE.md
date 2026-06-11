@@ -39,11 +39,11 @@ GitHub: `https://github.com/SXM4434/desk-doodles` (public, for Build-in-Public).
 
 # Current Workflow Status
 
-**Day 9 of 14** (deadline 2026-06-18). Days 1-4 = Hero-8-Lab foundation work · Day 5 = fork · Day 6 = chrome rebuild + pipeline bug pass · Day 7 = /canvas v1 + audit catalog + jaggedness modifier.
+**Day 10 of 14** (deadline 2026-06-18). Days 1-4 = Hero-8-Lab foundation · Day 5 = fork · Day 6 = chrome rebuild + pipeline bug pass · Day 7 = /canvas v1 + audit catalog · Day 8-9 = drawn-canvas overhaul + 681-sweep + Make checkpoint #1 + doc mirror + research synthesis v1.2 (Make smoke test ✅, Contra URL ✅).
 
-**Open thread:** wobble debug. Sebs uploaded a rose SVG → chaos; drew a heart → braided wobble. Wants full debug mode on wobble to find root cause. Repro recipe in `SESSION-HANDOFF.md`.
+**Open fronts:** M9 public canvas + Supabase (Day 10) — the desk-canvas + draw-panel-popup flow MUST be folded in here, it has no other plan slot · 3D easy-path Rod/Extrude (Day 11). Wobble thread CLOSED — Sebs eyes-on sign-off 2026-06-10.
 
-**Outstanding:** upload-image input mode, 3D mode toggle wiring, first Make upload checkpoint.
+**Outstanding small:** upload-image input = stretch S1 (buffer day, needs tracer dep — not small) · 3D toggle waits for Day 11 (honesty gate shipped) · Sebs-side: Supabase project keys, Tripo key rotation, fal.ai/TRELLIS account, daily Make-beta email check.
 
 ---
 
