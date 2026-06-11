@@ -6,7 +6,36 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 ---
 
-## Current state · 2026-06-11 PM (Day 10 — pen-tip/reset/grain/dropdown fix batch + 3D rocks fleet)
+## Current state · 2026-06-11 EVENING (Day 10 — COMMITTED+PUSHED · D-7 model LOCKED · build fleet paused on session limit)
+
+### THE LOCKED CONTROL MODEL (D-7 + amendments 1-4, full chain in docs/design/global-toggles-and-mixed-3d.md — READ THAT DOC before touching desk controls)
+
+Sebs ratified the whole thing 2026-06-11 evening after several rounds — the doc is the contract:
+- **Pen | Desk gate** (explicit pill in desk panel; default Pen/OFF).
+- **Global OFF = the MIXED desk. Records rule.** Panel changes touch NOTHING on the desk — they style the preview squiggle (REQUIRED, instant, Procreate-style), the draw popup, and the next doodle (render_config snapshot at Done). Objects keep own style AND own mode (2D + 3D side by side). Desk changes only by direct acts: drag own / Edit own / delete own / new arrivals.
+- **Global ON = the UNIFORM desk. The toggles own EVERYTHING — all of them, including mode + geometry.** Viewer-local lens, initializes from current pen values (panel never jumps), lifts cleanly on switch-back. Geometry dropdown (Auto/Rod/Extrude/Inflate/Solid) — "Auto" is just the default VALUE (shape decides: open→rod, closed→extrude), set Rod and ALL are rods. 3D style = shared Hatch interim (D-4), per-style twins after M8 (port from free-stroke style-system.ts). Both directions: 3D→SVG renders all under current 2D toggles too.
+- **Style sweep never converts (re-renders strokes); mode flip converts FROM THE RECORD via D-3 ladder** (strokes→geometry, cached; no strokes→outline-extrude, else honest paper card; never skip).
+
+### Session-limit pause + EXACT resume (2026-06-11 ~17:25 ET)
+
+Build fleet wf_72ae3af6-a35 (Pen|Desk+perf · UX fix-nows · slider dead zones · reliability): **3 of 4 build agents died on "session limit · resets 9:10pm ET"** (~3.5M agent tokens burned today). Reliability script COMPLETED. Reruns before 9:10pm die instantly — DON'T.
+**RESUME (after 9:10pm ET):** `Workflow({ scriptPath: "/Users/sebs/.claude/projects/-Users-sebs-Desktop-Projects-desk-doodles/166ddaed-f4e6-429a-a87f-63a995593063/workflows/scripts/desk-doodles-ratified-build-wf_72ae3af6-a35.js", resumeFromRunId: "wf_72ae3af6-a35" })` — completed agents return cached; failed re-run. The pen-desk prompt was UPDATED in that script (items 8-9: preview squiggle + amendments 2-4) before resume, so the re-run builds the final model.
+
+### Done this evening (all COMMITTED `558caba..94a6a99` + PUSHED to origin/main — keepalive Action is ARMED)
+
+5 commits: engine fixes (pen-tip ink survives + re-ink line-feel + Reset + dropdown) · desk social slice (pan/zoom, ObjectSurface Edit/Sandbox, cards+handles, gallery mini-desks, RPCs, 2-scale grain) · 3D foundation (rod/extrude/inflate/solid lib + R3F scene, UNWIRED, 29/29 smoke) · docs wave (D-1..D-7, smart-system FULL-scope ladder per Sebs "no cuts", demo-video plan, identity candidates, router spec, submission checklist, slider-sweep receipts) · keepalive.
+
+### Sebs ratifications tonight (beyond D-7): the 47-item decision board — all recs accepted ("gooo")
+
+Highlights: **identity = II Warm Riso Press** (06-16 pass) · mint-only card shine · VO+captions ~3:10 video · interim Make checkpoint 06-13 · drawer = passive cross-desk index, left panel, pre-demo · router = Haiku publish-then-revoke lenient · smart system FULL A-F (no MVP cuts — Sebs explicit) · foreign-drag block · newest-on-top. Full list in the 2026-06-11 conversation + per-doc decision tables.
+
+### STILL PENDING
+- **Stray wipe (Sebs approve at prompt):** delete 4 unnamed agent doodles, sessions 65f21b25/a973e2b7/05130373/f6c38f9d (20:27-20:45) via delete_my_doodle; KEEP session 52281805 (Sebs's 8) + the 4 named seeds.
+- Resume fleet at 9:10pm → then: 3D wiring (/canvas gate, PORT-FIRST from free-stroke origin/main via git show — local checkout stale) → smart Phase C → README voice pass (draft in submission-checklist §3) → og-image after 06-16 identity pass.
+
+---
+
+## Previous state · 2026-06-11 PM (Day 10 — pen-tip/reset/grain/dropdown fix batch + 3D rocks fleet)
 
 ### Pen-tip + toggles + reset + grain fix batch (06-11 PM, uncommitted; tsc + build clean; all browser-verified via playwright + screenshots)
 
