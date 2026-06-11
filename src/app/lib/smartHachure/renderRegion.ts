@@ -77,9 +77,13 @@ function renderHachureFamily(
     fillStyle: treatment.fillStyle as RoughOptions['fillStyle'],
     hachureGap: treatment.gap,
     fillWeight: treatment.weight,
-    // Hachure angle from existing modifier state would be passed via treatment;
-    // for v1 we use rough.js's default (-41° per spec).
-    hachureAngle: -41,
+    // Hachure angle from the user's hachureAngle modifier, routed via the
+    // treatment (default -41° per spec when unset), plus a tiny constant
+    // epsilon (18-scope-audit §H-6 edge-case policy: jitter the scan
+    // alignment so scan lines can't pass exactly through polygon corners —
+    // the Inkscape-documented stray-hachure bug). Deterministic constant,
+    // imperceptible at 0.07°, preserves I-7 determinism.
+    hachureAngle: treatment.angle + 0.07,
     // Disable rough.js's per-mark roughness on the hachure layer itself —
     // we want clean parallel lines clipped to a possibly-jittered outline,
     // not jittered hachure lines (artistically distracting).
@@ -109,8 +113,10 @@ function renderHachureFamily(
       ...fillOpts,
       seed: ctx.baseSeed + i * 100,
       // Offset subsequent layers' angle slightly (Agent 1 — cross-hatch at
-      // 60-75° not 90°). Layer i offsets by 22° per layer.
-      hachureAngle: -41 + 22 * i,
+      // 60-75° not 90°). Layer i offsets by 22° per layer, relative to the
+      // user's chosen treatment angle so the whole hatch family rotates with
+      // the hachureAngle slider.
+      hachureAngle: treatment.angle + 22 * i,
     };
     const layerGroup = ctx.rc.path(pathD, layerOpts);
     if (layerGroup) {

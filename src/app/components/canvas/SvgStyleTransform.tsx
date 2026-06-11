@@ -15,6 +15,7 @@ import {
   type EndpointBehaviorStep,
   type SketchingStyleStep,
   type PenTipStep,
+  type DotPatternStep,
 } from '../../state/F3RoughModifiersContext';
 import {
   roughRectPoints,
@@ -48,9 +49,9 @@ import {
 export const STYLE_PRESETS: Record<F3SvgStyle, Partial<F3ModifiersState>> = {
   // Non-rough styles set wobble: 0 (clean baseline; jitter inactive).
   // Rough-family styles set wobble: 1.0 (playground calibration baseline per I-11).
-  'clean':           { wobble: 0, roughness: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'none', fillStyle: 'hachure' },
-  'outline-only':    { wobble: 0, roughness: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0,   texture: 'none' },
-  'wireframe':       { wobble: 0, roughness: 0, bowing: 0, strokeWidth: 0.8, inkIntensity: 1.0, fillOpacity: 0, texture: 'none' },
+  'clean':           { wobble: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'none', fillStyle: 'hachure' },
+  'outline-only':    { wobble: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0,   texture: 'none' },
+  'wireframe':       { wobble: 0, bowing: 0, strokeWidth: 0.8, inkIntensity: 1.0, fillOpacity: 0, texture: 'none' },
   // 2026-06-08 default calibration bump per Sebs: each style should READ as
   // itself at the default thumbnail scale (~140px), not as near-clean. Prior
   // values made wet-ink / charcoal / newsprint / risograph almost
@@ -59,18 +60,20 @@ export const STYLE_PRESETS: Record<F3SvgStyle, Partial<F3ModifiersState>> = {
   'charcoal':        { wobble: 1.0, strokeWidth: 1.4, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'chalky',   grainIntensity: 3.0, smudgeAmount: 0, pressureVariance: 0.3 },
   'newsprint':       { wobble: 0, strokeWidth: 0.9, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'stipple', textureIntensity: 2.0, dotSize: 1.2, dotSpacing: 4, dotPattern: 'staggered' },
   'risograph':       { wobble: 0.4, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0.7, texture: 'none',     offsetDistance: 4, offsetAngle: 45, colorShift: 0.7, risoSecondaryColor: 'accent', registrationError: 0 },
-  // curveTightness 0 → 0.4 (2026-06-08): per §I-13 pair-wise interactions,
-  // curveTightness dampens wobble jitter scale + bowing offset. At default 0
+  // curveDamp 0 → 0.4 (2026-06-08): per §I-13 pair-wise interactions,
+  // curveDamp dampens wobble jitter scale + bowing offset. At default 0
   // the rough.js double-stroke + wobble jitter produced visibly splintered
   // edges on small rects (band patch, gig ticket). 0.4 smooths the rough
   // character without flattening the hand-drawn feel.
   // Jaggedness defaults set to 0 (2026-06-09 per Sebs): splinter is opt-in
   // via slider, NOT default. Prior 0.6/0.4/0.5/0.3 stamped perpendicular
   // zigzag intermediates on every shape at default state.
-  'rough-handdrawn': { wobble: 1.0, jaggedness: 0, roughness: 1.6, bowing: 1.0, strokeWidth: 1.2, curveTightness: 0.4, multiStroke: 'double', fillStyle: 'hachure', hachureGap: 4, hachureAngle: -41, fillDensity: 0.7, texture: 'paper-tooth' },
-  'sketchy':         { wobble: 0.6, jaggedness: 0, roughness: 0.8, bowing: 0.4, strokeWidth: 0.9, curveTightness: 0, multiStroke: 'single', fillStyle: 'none', hachureGap: 4, hachureAngle: -41, fillDensity: 0.5, texture: 'light', inkIntensity: 0.85 },
-  'bold-ink':        { wobble: 0.4, jaggedness: 0, roughness: 0.6, bowing: 0.2, strokeWidth: 2.8, curveTightness: 0, multiStroke: 'off', fillStyle: 'solid', fillDensity: 1.0, texture: 'none' },
-  'stipple':         { wobble: 0.8, jaggedness: 0, roughness: 1.2, bowing: 0.7, strokeWidth: 0.7, curveTightness: 0, multiStroke: 'single', fillStyle: 'dots', hachureGap: 2.5, hachureAngle: 0, fillDensity: 1.0, texture: 'stipple', dotSize: 1.0, dotSpacing: 3, dotScatter: 0.3 },
+  // wobble 1.0→0.4 + curveDamp 0.4→0.3 per Sebs 2026-06-11 ("start at these
+  // values") — calmer default line; full range still reachable on the sliders.
+  'rough-handdrawn': { wobble: 0.4, jaggedness: 0, bowing: 1.0, strokeWidth: 1.2, curveDamp: 0.3, multiStroke: 'double', fillStyle: 'hachure', hachureGap: 4, hachureAngle: -41, fillDensity: 0.7, texture: 'paper-tooth' },
+  'sketchy':         { wobble: 0.6, jaggedness: 0, bowing: 0.4, strokeWidth: 0.9, curveDamp: 0, multiStroke: 'single', fillStyle: 'none', hachureGap: 4, hachureAngle: -41, fillDensity: 0.5, texture: 'light', inkIntensity: 0.85 },
+  'bold-ink':        { wobble: 0.4, jaggedness: 0, bowing: 0.2, strokeWidth: 2.8, curveDamp: 0, multiStroke: 'off', fillStyle: 'solid', fillDensity: 1.0, texture: 'none' },
+  'stipple':         { wobble: 0.8, jaggedness: 0, bowing: 0.7, strokeWidth: 0.7, curveDamp: 0, multiStroke: 'single', fillStyle: 'dots', hachureGap: 2.5, hachureAngle: 0, fillDensity: 1.0, texture: 'stipple', dotSize: 1.0, dotSpacing: 3, dotScatter: 0.3 },
 };
 
 // Helper: apply preset to current state (used by chrome's "Reset to preset" button)
@@ -165,7 +168,7 @@ function applyLayerTransform(
   isClosed: boolean,
 ): Array<[number, number]> {
   if (layerIndex === 0) return points;
-  if (sketchingStyle === 'cross-hatch') {
+  if (sketchingStyle === 'cross-rotate') {
     return rotatePointsAround(points, cx, cy, crossHatchRotationFor(layerIndex));
   }
   if (sketchingStyle === 'parallel-pass') {
@@ -378,6 +381,10 @@ function injectJaggedness(
  *   0.45 = secondary / detail
  *   0.08 = 8% wash (the WASH constant — faint translucent overlay)
  *   0 = background, transparent, or none
+ *
+ * Literal hex / rgb(a) / hsl(a) fills (uploaded SVGs) are parsed to WCAG
+ * relative luminance → darkness = 1 - Y, per F3-shading-calibration-spec
+ * §4.2 + §7.B-14.
  */
 function fillDarknessFactor(fillColor: string | undefined): number {
   if (!fillColor || fillColor === 'none' || fillColor === 'transparent') return 0;
@@ -394,7 +401,82 @@ function fillDarknessFactor(fillColor: string | undefined): number {
   if (fillColor.includes('--dir-text-secondary')) return 0.55;
   if (fillColor.includes('--dir-detail')) return 0.4;
   if (fillColor.includes('--dir-accent')) return 0.85;
-  // Unknown opaque color — assume mid-dark.
+
+  // ── F3-shading-calibration-spec §4.2 + §7.B-14 ──────────────────────────
+  // Literal hex / rgb / rgba / hsl / hsla fills — uploaded SVGs carry these,
+  // not var() tokens; previously they all fell to the 0.75 catch-all so every
+  // region got uniform hachure density regardless of tone. Per spec: parse
+  // the color, compute WCAG relative luminance
+  //   Y = 0.2126·R + 0.7152·G + 0.0722·B   (channels sRGB-linearized:
+  //   c/12.92 below 0.04045, else ((c+0.055)/1.055)^2.4)
+  // then darkness = 1 - Y, multiplied by alpha for rgba/hsla. This lands on
+  // the SAME 0-1 scale the var() tiers above hand-map (near-black → ~1.0
+  // like --dir-text-primary; white → 0 like --dir-bg), so literal colors
+  // feed the identical downstream gap/weight math with no rescaling.
+  let rgb: [number, number, number] | null = null; // channels in 0-1
+  let alpha = 1;
+  const lit = fillColor.trim();
+  const hexMatch = lit.match(/^#([0-9a-f]{3,8})$/i);
+  if (hexMatch) {
+    const h = hexMatch[1];
+    if (h.length === 3 || h.length === 4) {
+      rgb = [
+        parseInt(h[0] + h[0], 16) / 255,
+        parseInt(h[1] + h[1], 16) / 255,
+        parseInt(h[2] + h[2], 16) / 255,
+      ];
+      if (h.length === 4) alpha = parseInt(h[3] + h[3], 16) / 255;
+    } else if (h.length === 6 || h.length === 8) {
+      rgb = [
+        parseInt(h.slice(0, 2), 16) / 255,
+        parseInt(h.slice(2, 4), 16) / 255,
+        parseInt(h.slice(4, 6), 16) / 255,
+      ];
+      if (h.length === 8) alpha = parseInt(h.slice(6, 8), 16) / 255;
+    }
+  } else {
+    const rgbMatch = lit.match(
+      /^rgba?\(\s*([\d.]+%?)\s*[, ]\s*([\d.]+%?)\s*[, ]\s*([\d.]+%?)\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$/i,
+    );
+    const hslMatch = lit.match(
+      /^hsla?\(\s*(-?[\d.]+)(?:deg)?\s*[, ]\s*([\d.]+)%\s*[, ]\s*([\d.]+)%\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$/i,
+    );
+    if (rgbMatch) {
+      const ch = (s: string) => (s.endsWith('%') ? parseFloat(s) / 100 : parseFloat(s) / 255);
+      rgb = [ch(rgbMatch[1]), ch(rgbMatch[2]), ch(rgbMatch[3])];
+      if (rgbMatch[4] !== undefined) {
+        alpha = rgbMatch[4].endsWith('%') ? parseFloat(rgbMatch[4]) / 100 : parseFloat(rgbMatch[4]);
+      }
+    } else if (hslMatch) {
+      // hsl → rgb first (spec §7.B-14), then the same luminance path below.
+      const hDeg = ((parseFloat(hslMatch[1]) % 360) + 360) % 360;
+      const sat = Math.max(0, Math.min(1, parseFloat(hslMatch[2]) / 100));
+      const lig = Math.max(0, Math.min(1, parseFloat(hslMatch[3]) / 100));
+      const chroma = (1 - Math.abs(2 * lig - 1)) * sat;
+      const hPrime = hDeg / 60;
+      const xSec = chroma * (1 - Math.abs((hPrime % 2) - 1));
+      const base = lig - chroma / 2;
+      const [r1, g1, b1] =
+        hPrime < 1 ? [chroma, xSec, 0] :
+        hPrime < 2 ? [xSec, chroma, 0] :
+        hPrime < 3 ? [0, chroma, xSec] :
+        hPrime < 4 ? [0, xSec, chroma] :
+        hPrime < 5 ? [xSec, 0, chroma] :
+                     [chroma, 0, xSec];
+      rgb = [r1 + base, g1 + base, b1 + base];
+      if (hslMatch[4] !== undefined) {
+        alpha = hslMatch[4].endsWith('%') ? parseFloat(hslMatch[4]) / 100 : parseFloat(hslMatch[4]);
+      }
+    }
+  }
+  if (rgb) {
+    const lin = (ch: number) =>
+      ch <= 0.04045 ? ch / 12.92 : Math.pow((ch + 0.055) / 1.055, 2.4);
+    const y = 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+    return Math.max(0, Math.min(1, (1 - y) * Math.max(0, Math.min(1, alpha))));
+  }
+
+  // Unknown opaque color — assume mid-dark (spec §4.2 catch-all, kept as-is).
   return 0.75;
 }
 
@@ -621,14 +703,14 @@ function applyEndpointBehavior(
  *  points along the segments' own chord directions, not curved through.
  *  Used for polygonal inputs (rectangles, triangles, diamonds) where the
  *  intended shape has clear corners.
- *  Honors bowing (perpendicular bow per segment), curveTightness (damps bow),
+ *  Honors bowing (perpendicular bow per segment), curveDamp (damps bow),
  *  endpointBehavior (applied before path generation). */
 function straightBezierPath(
   points: Array<[number, number]>,
   isClosed: boolean,
   wobbleAmplitude: number,
   bowing: number,
-  curveTightness: number,
+  curveDamp: number,
   endpointBehavior: ShapeModifiers['endpointBehavior'],
   seed: number,
 ): string {
@@ -636,7 +718,7 @@ function straightBezierPath(
   if (working.length < 2) return '';
   const r = seededRandom(seed);
   const j = () => (r() - 0.5) * 2 * wobbleAmplitude;
-  const tightnessDamp = Math.max(0.1, 1 - curveTightness * 0.45);
+  const tightnessDamp = Math.max(0.1, 1 - curveDamp * 0.45);
   const effectiveBow = bowing * tightnessDamp;
   let d = `M ${working[0][0].toFixed(2)} ${working[0][1].toFixed(2)}`;
   const N = working.length;
@@ -667,7 +749,7 @@ function catmullRomPath(
   isClosed: boolean,
   wobbleAmplitude: number,
   bowing: number,
-  curveTightness: number,
+  curveDamp: number,
   endpointBehavior: ShapeModifiers['endpointBehavior'],
   seed: number,
 ): string {
@@ -725,9 +807,9 @@ function catmullRomPath(
     return cosAng < Math.cos(CORNER_THRESHOLD);
   };
 
-  // curveTightness damps the tangent strength (higher → tighter / straighter
+  // curveDamp damps the tangent strength (higher → tighter / straighter
   // curves). bowing adds perpendicular displacement to control points.
-  const tightnessDamp = Math.max(0.1, 1 - curveTightness * 0.45);
+  const tightnessDamp = Math.max(0.1, 1 - curveDamp * 0.45);
   const tangentScale = tightnessDamp;
   const effectiveBow = bowing * tightnessDamp;
   const rBow = seededRandom(seed + 4242);
@@ -963,6 +1045,13 @@ function renderHandFeelShape(
         fillWeight: adaptedFillWeight,
         roughness: 0,
       };
+      // dotScatter → seeded dots-fill jitter (patchRoughDots.ts). Custom key
+      // rough.js's shallow option-merge (_o = Object.assign) preserves down to
+      // the patched DotFiller.dotsOnLines. Only attached for fillStyle='dots'.
+      // Deterministic: scales the seeded jitter range, not the randomizer.
+      if (m.fillStyle === 'dots') {
+        (fillOpts as { dotScatter?: number }).dotScatter = m.dotScatter;
+      }
       const hachureG = ctx.rc.path(dPath, fillOpts);
       if (hachureG) {
         hachureG.setAttribute('data-f3-hachure', 'shading');
@@ -988,7 +1077,7 @@ function renderHandFeelShape(
     // character across all layers, only the position differs.
     const useSvgTransformForLayer =
       i > 0 &&
-      (sketchingStyle === 'cross-hatch' ||
+      (sketchingStyle === 'cross-rotate' ||
         (sketchingStyle === 'parallel-pass' && isClosed));
 
     let pts = buildPoints(seed, mods);
@@ -1005,7 +1094,7 @@ function renderHandFeelShape(
     //   - single-pass: stable micro-nudge
     let layerTransform = '';
     if (i > 0) {
-      if (sketchingStyle === 'cross-hatch') {
+      if (sketchingStyle === 'cross-rotate') {
         const angle = crossHatchRotationFor(i);
         if (angle !== 0) {
           layerTransform = `rotate(${angle} ${cxCentroid.toFixed(2)} ${cyCentroid.toFixed(2)})`;
@@ -1028,7 +1117,7 @@ function renderHandFeelShape(
     }
 
     if (usePenTip) {
-      // Pen-tip mode bypasses bowing/curveTightness because perfect-freehand
+      // Pen-tip mode bypasses bowing/curveDamp because perfect-freehand
       // generates its own polygon stroke from the raw points. Bowing/curve
       // apply only to plain (polyline) mode.
       const d = penTipPath(pts, m.penTip, m.strokeWidth, seed, ctx.bboxMin);
@@ -1082,7 +1171,7 @@ function renderHandFeelShape(
         const jaggedPts = m.jaggedness > 0.05
           ? injectJaggedness(pts, m.jaggedness, seed)
           : pts;
-        d = pointsToPolylinePath(jaggedPts, isClosed, m.bowing, m.curveTightness, seed, wobbleForCurves);
+        d = pointsToPolylinePath(jaggedPts, isClosed, m.bowing, m.curveDamp, seed, wobbleForCurves);
       }
       const path = ownerDoc.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
@@ -1137,12 +1226,15 @@ function buildRoughOptionsForPath(
     // 2026-06-08 per Sebs: previously rough.js's `roughness` was driven by
     // wobble, which conflated "how far the line wanders" with "how jagged the
     // wandering reads." Now wobble drives amplitude (HAND_FEEL_BASE *
-    // wobble) and jaggedness drives rough.js's roughness param. m.roughness
-    // still reserved for Cluster 4 Surface Texture per §I-11.
+    // wobble) and jaggedness drives rough.js's roughness param. (The old dead
+    // m.roughness state field was deleted 2026-06-11 — never had a consumer.)
     roughness: m.jaggedness,
     bowing: m.bowing + endpointBowingNudge,
     strokeWidth: m.strokeWidth,
-    curveTightness: m.curveTightness,
+    // rough.js's option is named curveTightness — our field was renamed to
+    // curveDamp (spec §7.B-7) because semantically it's a bowing dampener,
+    // not rough.js's same-named curve param. Key = their API, value = ours.
+    curveTightness: m.curveDamp,
     disableMultiStroke: ms.layerCount <= 1,
     preserveVertices: preserveVerts,
     fillStyle: fillStyle as RoughOptions['fillStyle'],
@@ -1157,6 +1249,12 @@ function buildRoughOptionsForPath(
     opts.fill = mapPaletteColor(fill, m.fillPalette);
   } else {
     opts.fill = undefined;
+  }
+  // dotScatter → seeded dots-fill jitter (patchRoughDots.ts). Custom key
+  // rough.js's shallow option-merge preserves down to the patched
+  // DotFiller.dotsOnLines. Only attached when the dots filler will run.
+  if (m.fillStyle === 'dots') {
+    (opts as { dotScatter?: number }).dotScatter = m.dotScatter;
   }
   return opts;
 }
@@ -1282,7 +1380,6 @@ export function transformElement(
       const h = parseFloat(el.getAttribute('height') ?? '0');
       const bboxMin = Math.min(w, h);
       const pScale = protrudeScaleForBbox(bboxMin);
-      const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
       // GROUP-AWARE bbox-min for size clamps — same fix pattern as
       // effectiveLayerCount (commit 5b54e61) but never applied to wobble.
       // Without this, multi-child SVGs (stackedSketchbooks etc.) silently
@@ -1309,8 +1406,8 @@ export function transformElement(
         rc,
         buildPoints: (s, mods) => roughRectPoints(x, y, w, h, ROUGH, s, mods, pScale),
         // Playground-native cubic-Bezier path + bowing/curve extension so all
-        // three axes (wobble, bowing, curveTightness) compose at render time.
-        buildPath: (s, mods) => roughRectPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
+        // three axes (wobble, bowing, curveDamp) compose at render time.
+        buildPath: (s, mods) => roughRectPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveDamp, s, mods),
         pivotOverride: groupPivot,
         bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
@@ -1325,7 +1422,6 @@ export function transformElement(
       const h = r * 2;
       const bboxMin = Math.min(w, h);
       const pScale = protrudeScaleForBbox(bboxMin);
-      const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
       // SOFT per-detail scaling (placeholder for the smart-layer build) —
       // geometric mean of per-child bbox and group bbox so decorative tiny
       // children (pencil-tip polygons, sombrero band ellipses) don't get
@@ -1346,7 +1442,7 @@ export function transformElement(
         rc,
         buildPoints: (s, mods) => roughOvalPoints(x, y, w, h, ROUGH, s, mods, pScale),
         // Playground-native cubic-Bezier oval + bowing/curve extension
-        buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
+        buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveDamp, s, mods),
         pivotOverride: groupPivot,
         bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
@@ -1362,7 +1458,6 @@ export function transformElement(
       const h = ry * 2;
       const bboxMin = Math.min(w, h);
       const pScale = protrudeScaleForBbox(bboxMin);
-      const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
       // SOFT per-detail scaling (placeholder for the smart-layer build) —
       // geometric mean of per-child bbox and group bbox so decorative tiny
       // children (pencil-tip polygons, sombrero band ellipses) don't get
@@ -1383,7 +1478,7 @@ export function transformElement(
         rc,
         buildPoints: (s, mods) => roughOvalPoints(x, y, w, h, ROUGH, s, mods, pScale),
         // Playground-native cubic-Bezier oval + bowing/curve extension
-        buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveTightness, s, mods),
+        buildPath: (s, mods) => roughOvalPathExtended(x, y, w, h, ROUGH, m.bowing, m.curveDamp, s, mods),
         pivotOverride: groupPivot,
         bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
@@ -1395,7 +1490,6 @@ export function transformElement(
       const y2 = parseFloat(el.getAttribute('y2') ?? '0');
       const lineLen = Math.hypot(x2 - x1, y2 - y1);
       const pScale = protrudeScaleForBbox(lineLen);
-      const adaptedRoughness = effectiveRoughness(m.roughness, lineLen);
       // SOFT per-detail scaling (see rect case for rationale).
       const sizeClampBbox = groupBBoxMin && groupBBoxMin > lineLen
         ? Math.sqrt(lineLen * groupBBoxMin)
@@ -1410,7 +1504,7 @@ export function transformElement(
         rc,
         buildPoints: (s, mods) => roughLinePoints(x1, y1, x2, y2, ROUGH, s, mods, pScale),
         // Playground-native cubic-Bezier line + bowing/curve extension
-        buildPath: (s, mods) => roughLinePathExtended(x1, y1, x2, y2, ROUGH, m.bowing, m.curveTightness, s, mods),
+        buildPath: (s, mods) => roughLinePathExtended(x1, y1, x2, y2, ROUGH, m.bowing, m.curveDamp, s, mods),
         pivotOverride: groupPivot,
         bboxMinOverride: groupBBoxMin,
       }, m, el, ownerDoc);
@@ -1434,7 +1528,6 @@ export function transformElement(
       }
       const bboxMin = Math.min(maxX - minX, maxY - minY) || 80;
       const pScale = protrudeScaleForBbox(bboxMin);
-      const adaptedRoughness = effectiveRoughness(m.roughness, bboxMin);
       // SOFT per-detail scaling (placeholder for the smart-layer build) —
       // geometric mean of per-child bbox and group bbox so decorative tiny
       // children (pencil-tip polygons, sombrero band ellipses) don't get
@@ -1490,7 +1583,7 @@ export function transformElement(
 
       // I-12: route <path> content through the same points-based pipeline as
       // shape primitives so endpointBehavior + sketchingStyle + wobble + bowing
-      // + curveTightness all apply uniformly. Previously paths went directly to
+      // + curveDamp all apply uniformly. Previously paths went directly to
       // rough.js with `endpointBowingNudge`, which silently broke endpoint kink
       // + sketchingStyle compounds on Trophy Wall pin content (regressions B.2
       // + B.4 from 19-research-cross-axis-interconnection.md).
@@ -1546,7 +1639,16 @@ export function transformElement(
       // EPSILON 1.5 → 3.0 (2026-06-09 follow-up): heart curves at ε=1.5 still
       // produced ~30-40 anchors → braid. Bumped to 3.0 → ~15-20 anchors →
       // flowing. Audit untouched (gated by vertex-count threshold, not ε).
+      //
+      // SIMPLIFY SLIDER (2026-06-11, doc 22): RDP_EPSILON is now the CANONICAL
+      // epsilon (renderer-identity anchor). The user's Simplify slider maps to
+      // a render-time epsilon via ε(s) = 3.0 × 4^(s−1) — s = 1.0 ⇒ ε = 3.0
+      // exactly (pixel-identical to the pre-slider build). The canonical ε
+      // decides WHICH renderer fires (polygonal vs curve, doc 22 §4.5 dispatch
+      // freeze) so the slider only changes detail level WITHIN a stable
+      // renderer; it never flips renderer identity.
       const RDP_EPSILON = 3.0;
+      const epsForSimplify = 3.0 * Math.pow(4, m.simplification - 1);
       type SubPath = { points: Array<[number, number]>; isClosed: boolean };
       const hasCurves = /[CcQqSsTtAa]/.test(d);
       const subPaths: SubPath[] = [];
@@ -1621,11 +1723,30 @@ export function transformElement(
         // 5-6-point Q-bezier samples → broke audit ticket/statue/etc.
         const RDP_VERTEX_THRESHOLD = 15;
         const rdpTriggered = sub.points.length > RDP_VERTEX_THRESHOLD;
-        const simplifiedPts = rdpTriggered
-          ? rdp(sub.points, RDP_EPSILON)
-          : sub.points;
-        const cleanPoints = simplifiedPts.slice();
         const subClosed = sub.isClosed;
+
+        // SIMPLIFY SLIDER (doc 22): render at the USER epsilon, but freeze the
+        // renderer choice to the CANONICAL epsilon (§4.5). canonicalAnchorCount
+        // is the polygonal-vs-curve dispatch input — it belongs to the SOURCE
+        // shape, so sweeping the slider never flips the renderer (no identity
+        // cliff). The user epsilon only changes how many anchors RENDER.
+        let userSimplifiedPts = rdpTriggered
+          ? rdp(sub.points, epsForSimplify)
+          : sub.points;
+        // CLOSED-PATH FLOOR (§4.6): never simplify a closed sub-path below 5
+        // retained anchors (pre closure-append) — prevents the circle→triangle
+        // degeneracy at high ε. Re-run at the canonical ε if the user ε starved
+        // the loop; canonical (ε=3.0) is the densest baseline we ship today.
+        if (rdpTriggered && subClosed && userSimplifiedPts.length < 5) {
+          const canonicalPts = rdp(sub.points, RDP_EPSILON);
+          userSimplifiedPts = canonicalPts.length >= userSimplifiedPts.length
+            ? canonicalPts
+            : userSimplifiedPts;
+        }
+        const canonicalAnchorCount = rdpTriggered
+          ? rdp(sub.points, RDP_EPSILON).length
+          : sub.points.length;
+        const cleanPoints = userSimplifiedPts.slice();
 
         // Closed sub-path: APPEND first point to end for clean bezier loop
         // (matches original case 'path' line 1234 behavior). NOT overwrite —
@@ -1700,17 +1821,24 @@ export function transformElement(
                   pts = offsetLinePerpendicular(cleanPoints, mods.layerIndex);
                 }
                 const wobbleAmp = Math.max(0, ROUGH * 2);
-                // POLYGONAL INTENT DETECTION: when RDP simplified down to ≤8
-                // anchors, treat input as a polygon (rectangle / triangle /
-                // diamond / kite / etc) — straight-bezier-per-side keeps
-                // corners crisp. Smooth-curve inputs (heart, blob, spiral)
-                // have 9+ anchors → Catmull-Rom smooth interpolation.
+                // POLYGONAL INTENT DETECTION: when the input simplifies down to
+                // ≤8 anchors, treat it as a polygon (rectangle / triangle /
+                // diamond / kite / etc) — straight-bezier-per-side keeps corners
+                // crisp. Smooth-curve inputs (heart, blob, spiral) have 9+
+                // anchors → Catmull-Rom smooth interpolation.
+                //
+                // DISPATCH FREEZE (doc 22 §4.5 / S1): the renderer choice reads
+                // canonicalAnchorCount (anchors at the CANONICAL ε = 3.0), NOT
+                // pts.length (anchors at the USER ε). Source shape owns renderer
+                // identity; the Simplify slider only varies detail WITHIN the
+                // chosen renderer — it can never flip smooth↔polygonal nor the
+                // hidden wobbleAmp × 0.4 polygonal attenuation.
                 const POLY_ANCHOR_CAP = 8;
-                if (pts.length <= POLY_ANCHOR_CAP) {
+                if (canonicalAnchorCount <= POLY_ANCHOR_CAP) {
                   return straightBezierPath(
                     pts, subClosed,
                     wobbleAmp * 0.4,
-                    m.bowing, m.curveTightness,
+                    m.bowing, m.curveDamp,
                     mods.endpointBehavior,
                     s,
                   );
@@ -1718,7 +1846,7 @@ export function transformElement(
                 return catmullRomPath(
                   pts, subClosed,
                   wobbleAmp,
-                  m.bowing, m.curveTightness,
+                  m.bowing, m.curveDamp,
                   mods.endpointBehavior,
                   s,
                 );
@@ -1936,6 +2064,18 @@ function buildDynamicFilterId(style: F3SvgStyle, m: F3ModifiersState): string {
 }
 
 function applyTexture(svgEl: SVGSVGElement, _texture: TextureStep, style: F3SvgStyle, m: F3ModifiersState) {
+  // NEWSPRINT DOT SCREEN (2026-06-10): dotPattern is consumed as a real
+  // dot-layout <pattern> + luminance mask (defined in TextureFilterDefs,
+  // document-wide like the filters). The mask knocks paper-through holes
+  // into the ink in the chosen arrangement and rides ALONGSIDE the texture
+  // filter — per the SVG rendering model filters apply first, then masking,
+  // so the displaced grain gets perforated, not the other way round.
+  // Cluster 4 (Surface Texture) axes compose per 09-LOCKED-MODEL I-13.
+  if (style === 'newsprint') {
+    svgEl.setAttribute('mask', 'url(#dd-newsprint-dot-mask)');
+  } else {
+    svgEl.removeAttribute('mask');
+  }
   const dynId = buildDynamicFilterId(style, m);
   if (dynId) {
     svgEl.setAttribute('filter', `url(#${dynId})`);
@@ -2006,7 +2146,17 @@ const NEEDS_DOM_CLONE: F3SvgStyle[] = [
   'rough-handdrawn', 'sketchy', 'bold-ink', 'stipple', 'risograph', 'wet-ink', 'charcoal', 'newsprint', 'wireframe',
 ];
 
-export function SvgStyleTransform({ children }: { children: ReactNode }) {
+export function SvgStyleTransform({
+  children,
+  wrapperOverride,
+}: {
+  children: ReactNode;
+  /** Call-site layout override for the outer wrapper. Default inline-block
+   *  sizes to content (audit cells / playground pins). The /canvas upload
+   *  branch passes block + 100%×100% so a viewBox-only uploaded svg can
+   *  resolve percentage sizing and fill the frame (0×0 bug, 2026-06-11). */
+  wrapperOverride?: CSSProperties;
+}) {
   const { state: style } = useF3SvgStyle();
   const { state: m } = useF3RoughModifiers();
   const cleanRef = useRef<HTMLDivElement | null>(null);
@@ -2014,11 +2164,14 @@ export function SvgStyleTransform({ children }: { children: ReactNode }) {
 
   const needsClone = NEEDS_DOM_CLONE.includes(style);
 
-  // Smart Hachure opt-in detection (decision #3 lock 2026-06-03: URL param).
+  // Smart Hachure is now DEFAULT ON (2026-06-11) — the param is an opt-OUT:
+  // only `?smartHachure=0` disables it. Absent param = enabled. This kills the
+  // white reload-flash that the old opt-in (`=1`) forced on every fresh visit
+  // (pages used to set the param + window.location.reload to turn it on).
   // Read on mount only — toggling requires a reload, by design.
   const smartHachureEnabled = useMemo(() => {
     if (typeof window === 'undefined') return false;
-    return new URLSearchParams(window.location.search).get('smartHachure') === '1';
+    return new URLSearchParams(window.location.search).get('smartHachure') !== '0';
   }, []);
   // Only the 4 rough-family styles run through Smart Hachure. Other styles
   // (clean / outline-only / wireframe / wet-ink / charcoal / risograph /
@@ -2038,7 +2191,7 @@ export function SvgStyleTransform({ children }: { children: ReactNode }) {
     if (!clone) return;
     if (useSmartHachure) {
       // NEW PATH — Smart Hachure System (full F3ModifiersState wired through
-      // so roughness · bowing · curveTightness · strokeWidth · multiStroke ·
+      // so roughness · bowing · curveDamp · strokeWidth · multiStroke ·
       // sketchingStyle · endpointBehavior · penTip all feed the outline jitter)
       renderSmartHachure(clone, m, {
         styleChoice: style as SmartHachureStyle,
@@ -2063,6 +2216,7 @@ export function SvgStyleTransform({ children }: { children: ReactNode }) {
     // rough-family styles the stroke-width is written inline by the rough.js
     // render so this var is harmless.
     ['--f3-stroke-width' as keyof CSSProperties]: String(m.strokeWidth),
+    ...wrapperOverride,
   };
 
   const strokeAttrVal = needsClone ? 'opts-applied' : m.strokePalette;
@@ -2150,6 +2304,123 @@ const TEXTURE_RECIPES: Record<Exclude<TextureStep, 'none'>, {
   canvas:       { type: 'turbulence',   baseFrequency: '0.22',       numOctaves: '2', seed: '103', baseScale: 1.8, margin: 8  },
 };
 
+// ─── NEWSPRINT DOT SCREEN — real per-layout dot geometry ───────────────────
+//
+// 2026-06-10: dotPattern ('grid' | 'staggered' | 'random' | 'concentric')
+// was a dead control — state + chrome existed but nothing consumed it. It
+// now drives a REAL SVG <pattern> tile of dot circles, applied to the
+// newsprint render as a luminance-mask KNOCKOUT: paper shows through the
+// ink in the chosen dot arrangement (the white-dot screen visible in
+// printed solids). Knockout-over-ink was chosen over "render the image AS
+// dots" (feComposite operator="in") because it COMPOSES with the existing
+// feTurbulence stipple displacement instead of replacing it — that keeps
+// the 'staggered' default as close as possible to the pre-change newsprint
+// look (same grain, plus a subtle true halftone perforation).
+//
+// Cluster note (09-LOCKED-MODEL I-13): dotSize / dotSpacing / dotScatter /
+// dotPattern all live in Cluster 4 (Surface Texture) and compose — radius
+// from dotSize, pitch from dotSpacing, and the 'random' layout's jitter
+// amplitude rides dotScatter.
+//
+// Determinism: 'random' uses this file's seeded-noise idiom
+// (seededRandom(<fixed seed>)) — identical layout every render, no
+// Math.random(). All other layouts are closed-form.
+//
+// Mask fills below are luminance values (white = keep ink, black = punch
+// hole), NOT ink colors — W1 palette tokens deliberately don't apply here
+// (same reasoning as feedback_media_overlay_ink_doesnt_flip: these aren't
+// page-direction inks).
+
+interface DotScreenTile {
+  tileW: number;
+  tileH: number;
+  dots: { cx: number; cy: number; r: number }[];
+}
+
+function buildNewsprintDotTile(
+  pattern: DotPatternStep,
+  dotSpacing: number,
+  dotSize: number,
+  dotScatter: number,
+): DotScreenTile {
+  const s = Math.max(1, dotSpacing); // pitch (user-space px, same units the feTurbulence baseFrequency operates in)
+  // Cap radius at 0.45·pitch so dots can never fuse into full-coverage
+  // knockout (dotSize 6 at dotSpacing 1 would otherwise erase the graphic).
+  const r = Math.min(Math.max(dotSize, 0.3), s * 0.45);
+  const dots: DotScreenTile['dots'] = [];
+
+  switch (pattern) {
+    case 'grid':
+      // Aligned rows + columns — one dot per s×s cell. Machine-set register.
+      return { tileW: s, tileH: s, dots: [{ cx: s / 2, cy: s / 2, r }] };
+    case 'staggered':
+      // Classic halftone: alternate rows offset by half a pitch. The
+      // second-row dots sit ON the vertical tile edges (cx = 0 and s) — the
+      // clipped halves rejoin seamlessly when the pattern tiles, the
+      // standard polka-dot-tile trick. r ≤ 0.45s keeps rows from straddling
+      // the horizontal edges.
+      return {
+        tileW: s,
+        tileH: 2 * s,
+        dots: [
+          { cx: s / 2, cy: s / 2, r },
+          { cx: 0, cy: (3 * s) / 2, r },
+          { cx: s, cy: (3 * s) / 2, r },
+        ],
+      };
+    case 'random': {
+      // Hand-stippled: one dot per s×s sub-cell of a 4s×4s tile, jittered
+      // off-center via the seeded-noise idiom. Jitter half-range rides
+      // dotScatter (Cluster 4 composition; newsprint chrome doesn't expose
+      // the slider yet so this sits at the 0.3 default ≈ 0.55·pitch).
+      // Positions clamp fully inside the tile so circles never straddle
+      // edges — tiling stays seamless. Layout repeats every 4 pitches,
+      // acceptable at doodle scale.
+      const rand = seededRandom(6767);
+      const tile = 4 * s;
+      const amp = s * (0.35 + 0.65 * dotScatter);
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 4; col++) {
+          const cx = (col + 0.5) * s + (rand() - 0.5) * 2 * amp;
+          const cy = (row + 0.5) * s + (rand() - 0.5) * 2 * amp;
+          dots.push({
+            cx: Math.min(Math.max(cx, r), tile - r),
+            cy: Math.min(Math.max(cy, r), tile - r),
+            r,
+          });
+        }
+      }
+      return { tileW: tile, tileH: tile, dots };
+    }
+    case 'concentric':
+    default: {
+      // Dots along concentric rings: radius step = pitch, ~one dot per
+      // pitch of arc length (round(2πk)), deterministic per-ring phase
+      // rotation so dots don't align radially. Rings cap at the largest
+      // radius fully inside the 6s×6s tile, so the tiled result reads as
+      // repeating ring medallions (a real circular-screen register).
+      // `default` rides this case so a future DotPatternStep addition
+      // degrades visibly instead of returning undefined.
+      const tile = 6 * s;
+      const c = tile / 2;
+      const maxK = Math.floor((c - r) / s);
+      for (let k = 0; k <= maxK; k++) {
+        if (k === 0) {
+          dots.push({ cx: c, cy: c, r });
+          continue;
+        }
+        const count = Math.max(1, Math.round(2 * Math.PI * k));
+        const phase = k * 0.7; // fixed per-ring rotation — deterministic
+        for (let i = 0; i < count; i++) {
+          const a = phase + (i / count) * 2 * Math.PI;
+          dots.push({ cx: c + k * s * Math.cos(a), cy: c + k * s * Math.sin(a), r });
+        }
+      }
+      return { tileW: tile, tileH: tile, dots };
+    }
+  }
+}
+
 export function TextureFilterDefs() {
   const { state: style } = useF3SvgStyle();
   const { state: m } = useF3RoughModifiers();
@@ -2157,6 +2428,12 @@ export function TextureFilterDefs() {
   const activeTexture = m.texture !== 'none' ? m.texture : null;
   const recipe = activeTexture ? TEXTURE_RECIPES[activeTexture] : null;
   const margin = recipe ? recipe.margin : 8;
+
+  // Newsprint dot screen — rebuilt only when its Cluster-4 inputs change.
+  const dotScreen = useMemo(
+    () => (style === 'newsprint' ? buildNewsprintDotTile(m.dotPattern, m.dotSpacing, m.dotSize, m.dotScatter) : null),
+    [style, m.dotPattern, m.dotSpacing, m.dotSize, m.dotScatter],
+  );
 
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
@@ -2183,12 +2460,20 @@ export function TextureFilterDefs() {
             {/* baseFrequency drives the dot/grain density. For the 'stipple'
                 texture (newsprint + stipple style), let dotSpacing modulate
                 it — higher dotSpacing = lower frequency = larger / sparser
-                dots. dotSpacing default = 4; scale inverse-linearly. */}
+                dots. dotSpacing default = 4; scale inverse-linearly.
+                dotScatter (2026-06-10, Cluster 4 Surface Texture per
+                09-LOCKED-MODEL I-13 — dotSize/dotSpacing/dotScatter/dotPattern
+                compose): secondary axis here is a frequency jitter term
+                (0.85 + 0.5·scatter) — higher scatter breaks the dot rhythm
+                into finer, less even cells. Term is exactly 1.0 at the 0.3
+                default, so preset defaults render pixel-identical.
+                Deterministic: pure function of the slider value; the
+                feTurbulence seed stays the fixed recipe seed (67). */}
             <feTurbulence
               type={recipe.type}
               baseFrequency={
                 activeTexture === 'stipple'
-                  ? String((parseFloat(recipe.baseFrequency) * 4) / Math.max(1, m.dotSpacing))
+                  ? String(((parseFloat(recipe.baseFrequency) * 4) / Math.max(1, m.dotSpacing)) * (0.85 + 0.5 * m.dotScatter))
                   : recipe.baseFrequency
               }
               numOctaves={recipe.numOctaves}
@@ -2197,11 +2482,23 @@ export function TextureFilterDefs() {
             />
             {/* dotSize amplifies the displacement scale on stipple texture
                 so the user can dial the dot/grain prominence. Multiplier is
-                m.dotSize directly (default 1.0-1.2 → near baseline). */}
+                m.dotSize directly (default 1.0-1.2 → near baseline).
+                dotScatter (2026-06-10) — PRIMARY "dots placed by hand vs
+                machine" axis: multiplies displacement scale by
+                (0.4 + 2.0·scatter). At 0 marks barely displace (ordered,
+                machine-set register); at 1 they push ~2.4× (heavy hand
+                scatter). Exactly 1.0 at the 0.3 default — zero change at
+                preset defaults. Displacement-scale mapping chosen over
+                re-seeding / octave switching because it is continuous,
+                deterministic, and reads as positional randomness rather than
+                a density change. NO collision with lib/patchRoughDots.ts —
+                that patch seeds the rough.js dots FILLER (fill-mark
+                geometry); this modulates the raster texture filter layered
+                on top. Different layers, both seeded. */}
             <feDisplacementMap
               in={recipe.blur !== undefined ? 'blurred' : 'SourceGraphic'}
               in2="noise"
-              scale={recipe.baseScale * m.textureIntensity * (activeTexture === 'stipple' ? m.dotSize : 1)}
+              scale={recipe.baseScale * m.textureIntensity * (activeTexture === 'stipple' ? m.dotSize * (0.4 + 2.0 * m.dotScatter) : 1)}
             />
           </filter>
         )}
@@ -2273,6 +2570,38 @@ export function TextureFilterDefs() {
               operator="over"
             />
           </filter>
+        )}
+        {/* NEWSPRINT DOT SCREEN — consumed via mask="url(#dd-newsprint-dot-
+            mask)" set in applyTexture(). Same document-wide-defs mechanism
+            as the filters above. patternUnits/maskUnits are userSpaceOnUse
+            so dotSpacing means viewBox px — the same space dotSpacing
+            already drives in the stipple feTurbulence recipe. The mask
+            cover spans -1024..3072 user units, far beyond any doodle /
+            canvas viewBox today; bump if a giant canvas ever exceeds it.
+            85%-black dots on white = soft luminance knockout (15% ink
+            survives inside each hole) — softer than a hard punch, closer
+            to real newsprint show-through, and keeps the staggered default
+            near the pre-change look. */}
+        {dotScreen && (
+          <>
+            <pattern
+              id="dd-newsprint-dot-screen"
+              patternUnits="userSpaceOnUse"
+              width={dotScreen.tileW}
+              height={dotScreen.tileH}
+            >
+              {dotScreen.dots.map((d, i) => (
+                <circle key={i} cx={d.cx} cy={d.cy} r={d.r} fill="#000" fillOpacity={0.85} />
+              ))}
+            </pattern>
+            <mask id="dd-newsprint-dot-mask" maskUnits="userSpaceOnUse" x={-1024} y={-1024} width={4096} height={4096}>
+              {/* Luminance mask: white = keep ink, dark dots = paper-through
+                  holes. NOT ink colors — W1 tokens don't apply (see
+                  buildNewsprintDotTile header comment). */}
+              <rect x={-1024} y={-1024} width={4096} height={4096} fill="#fff" />
+              <rect x={-1024} y={-1024} width={4096} height={4096} fill="url(#dd-newsprint-dot-screen)" />
+            </mask>
+          </>
         )}
       </defs>
     </svg>

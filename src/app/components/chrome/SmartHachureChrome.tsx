@@ -15,10 +15,14 @@
 //   - Section headers as visible H labels per cluster
 //   - Sliders show label + value inline, full-width track below
 //   - Reset to preset = bottom of panel, full-width button
+//   - Cluster sections collapse/expand from the header row (persisted via
+//     usePanelOpen); the Style master dropdown stays always visible (21 §9)
 import { type CSSProperties, type ReactNode } from 'react';
 import { IS } from '../../lib/typography';
+import { PILL, SECTION_LABEL } from '../../lib/chromeStyles';
 import { Dropdown } from './Dropdown';
 import { Slider } from './Slider';
+import { usePanelOpen } from './CollapsiblePanel';
 import { useF3SvgStyle, F3_SVG_STYLES } from '../../state/F3SvgStyleContext';
 import {
   useF3RoughModifiers,
@@ -34,16 +38,6 @@ import {
 import { applyStylePreset } from '../canvas/SvgStyleTransform';
 import { SLIDER_SPECS, MODIFIER_SETS_BY_STYLE, UNIVERSAL_MODIFIERS } from './modifierSpecs';
 
-const SECTION_LABEL: CSSProperties = {
-  fontFamily: IS,
-  fontSize: 10,
-  fontWeight: 600,
-  letterSpacing: '0.1em',
-  textTransform: 'uppercase',
-  color: 'var(--dir-text-secondary)',
-  margin: 0,
-};
-
 const SECTION_NOTE: CSSProperties = {
   fontFamily: IS,
   fontSize: 10,
@@ -52,7 +46,18 @@ const SECTION_NOTE: CSSProperties = {
   fontStyle: 'italic',
 };
 
-function Section({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
+function Section({ title, note, collapseKey, defaultOpen = true, children }: {
+  title: string;
+  note?: string;
+  /** When set, the header row toggles the body (persisted via usePanelOpen).
+   *  Omit to pin the section always-open — the Style master control. */
+  collapseKey?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  // Hook is called unconditionally (rules of hooks); pinned sections ignore it.
+  const [open, toggle] = usePanelOpen(collapseKey ?? 'shc.cluster.style', defaultOpen);
+  const expanded = !collapseKey || open;
   return (
     <section
       style={{
@@ -63,11 +68,40 @@ function Section({ title, note, children }: { title: string; note?: string; chil
         borderBottom: '1px solid var(--dir-border)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-        <h3 style={SECTION_LABEL}>{title}</h3>
-        {note && <span style={SECTION_NOTE}>{note}</span>}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>
+      {collapseKey ? (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: 12,
+            width: '100%',
+            margin: 0,
+            padding: 0,
+            border: 'none',
+            background: 'transparent',
+            cursor: 'pointer',
+            textAlign: 'left',
+          }}
+        >
+          <span style={SECTION_LABEL}>{title}</span>
+          <span style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            {note && <span style={SECTION_NOTE}>{note}</span>}
+            <span aria-hidden style={SECTION_LABEL}>{open ? '▾' : '▸'}</span>
+          </span>
+        </button>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+          <h3 style={SECTION_LABEL}>{title}</h3>
+          {note && <span style={SECTION_NOTE}>{note}</span>}
+        </div>
+      )}
+      {expanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>{children}</div>
+      )}
     </section>
   );
 }
@@ -97,8 +131,9 @@ export function SmartHachureChrome() {
 
   // For convenient sub-grouping inside Multi-Stroke section
   const hasMultiStrokeBlock =
-    has('wobble') || has('roughness') || has('bowing') || has('strokeWidth') ||
-    has('curveTightness') || has('multiStroke') || has('endpointBehavior') ||
+    has('wobble') || has('jaggedness') || has('simplification') ||
+    has('bowing') || has('strokeWidth') ||
+    has('curveDamp') || has('multiStroke') || has('endpointBehavior') ||
     has('sketchingStyle') || has('penTip');
 
   const hasShadingBlock =
@@ -149,7 +184,7 @@ export function SmartHachureChrome() {
 
       {/* MULTI-STROKE — Cluster 1 per I-13 */}
       {hasMultiStrokeBlock && (
-        <Section title="Multi-stroke" note="Path / motion · cluster 1">
+        <Section title="Multi-stroke" note="Path / motion · cluster 1" collapseKey="shc.cluster.multi-stroke">
           {has('multiStroke') && (
             <Row>
               <Dropdown
@@ -211,22 +246,23 @@ export function SmartHachureChrome() {
                 value={mods.penTip}
                 sections={[{
                   heading: 'Pen-tip preset (perfect-freehand)',
-                  // 7 of 8 options below currently stub to perfect-freehand
-                  // default. Tagged "(WIP)" 2026-06-08 so the slider doesn't
-                  // lie to the user. Implementation tracked in tasks for
-                  // post-Smart-Hachure pickup.
+                  // All 8 presets are REAL — penTipPath (handFeel.ts) feeds the
+                  // outline through perfect-freehand getStroke with distinct
+                  // per-preset size/thinning/smoothing/taper/pressureJitter
+                  // (PEN_TIP_PRESETS, handFeel.ts ~477). Visually verified
+                  // distinct 2026-06-11 (playwright stroke-render comparison).
                   options: PEN_TIP_STEPS.map((s) => ({
                     value: s,
-                    label: s === 'plain' ? s : `${s} (WIP)`,
+                    label: s,
                     detail:
                       s === 'plain' ? 'Plain stroke — uniform width, no taper'
-                      : s === 'ballpoint' ? 'Planned: clean uniform, slight endpoint thinning (currently stubbed to plain)'
-                      : s === 'fineliner' ? 'Planned: thin uniform, hard caps (currently stubbed)'
-                      : s === 'pencil-hb' ? 'Planned: mild width variation, light grain (currently stubbed)'
-                      : s === 'pencil-2b' ? 'Planned: stronger variation, heavier grain (currently stubbed)'
-                      : s === 'felt-tip' ? 'Planned: thicker uniform, soft caps (currently stubbed)'
-                      : s === 'chisel' ? 'Planned: strong width variation, calligraphic (currently stubbed)'
-                      : 'Planned: heavy variable width, edge-jittered grain (currently stubbed)',
+                      : s === 'ballpoint' ? 'Clean uniform stroke, slight endpoint thinning'
+                      : s === 'fineliner' ? 'Thin uniform stroke, hard caps'
+                      : s === 'pencil-hb' ? 'Mild width variation, light grain'
+                      : s === 'pencil-2b' ? 'Stronger width variation, heavier grain'
+                      : s === 'felt-tip' ? 'Thicker uniform stroke, soft caps'
+                      : s === 'chisel' ? 'Strong width variation, calligraphic'
+                      : 'Heavy variable width, edge-jittered grain',
                   })),
                 }]}
                 onChange={(v) => setMod('penTip', v as PenTipStep)}
@@ -254,8 +290,16 @@ export function SmartHachureChrome() {
               onChange={(v) => setMod('jaggedness', v)}
             />
           )}
-          {has('roughness') && (
-            <Slider label="Roughness" value={mods.roughness} min={SLIDER_SPECS.roughness.min} max={SLIDER_SPECS.roughness.max} step={SLIDER_SPECS.roughness.step} onChange={(v) => setMod('roughness', v)} />
+          {has('simplification') && (
+            <Slider
+              label="Simplify"
+              title="Geometry fidelity on drawn/uploaded paths: low = faithful (keeps every wiggle), high = essential (smooths to clean lines). 1.0 = today's baseline."
+              value={mods.simplification}
+              min={SLIDER_SPECS.simplification.min}
+              max={SLIDER_SPECS.simplification.max}
+              step={SLIDER_SPECS.simplification.step}
+              onChange={(v) => setMod('simplification', v)}
+            />
           )}
           {has('bowing') && (
             <Slider label="Bowing" value={mods.bowing} min={SLIDER_SPECS.bowing.min} max={SLIDER_SPECS.bowing.max} step={SLIDER_SPECS.bowing.step} onChange={(v) => setMod('bowing', v)} />
@@ -263,15 +307,15 @@ export function SmartHachureChrome() {
           {has('strokeWidth') && (
             <Slider label="Stroke width" value={mods.strokeWidth} min={SLIDER_SPECS.strokeWidth.min} max={SLIDER_SPECS.strokeWidth.max} step={SLIDER_SPECS.strokeWidth.step} onChange={(v) => setMod('strokeWidth', v)} />
           )}
-          {has('curveTightness') && (
-            <Slider label="Curve" value={mods.curveTightness} min={SLIDER_SPECS.curveTightness.min} max={SLIDER_SPECS.curveTightness.max} step={SLIDER_SPECS.curveTightness.step} onChange={(v) => setMod('curveTightness', v)} />
+          {has('curveDamp') && (
+            <Slider label="Curve" title="Above ~0.8 straightens curves enough that Bowing reads as off (spec §6.7)" value={mods.curveDamp} min={SLIDER_SPECS.curveDamp.min} max={SLIDER_SPECS.curveDamp.max} step={SLIDER_SPECS.curveDamp.step} onChange={(v) => setMod('curveDamp', v)} />
           )}
         </Section>
       )}
 
       {/* SHADING — Cluster 3 per I-13 */}
       {hasShadingBlock && (
-        <Section title="Shading" note="Fill style + density · cluster 3">
+        <Section title="Shading" note="Fill style + density · cluster 3" collapseKey="shc.cluster.shading">
           {has('fillStyle') && (
             <Row>
               <Dropdown
@@ -300,7 +344,7 @@ export function SmartHachureChrome() {
 
       {/* SURFACE TEXTURE — Cluster 4 per I-13 */}
       {hasSurfaceBlock && (
-        <Section title="Surface texture" note="Substrate / grain / register · cluster 4">
+        <Section title="Surface texture" note="Substrate / grain / register · cluster 4" collapseKey="shc.cluster.surface-texture" defaultOpen={false}>
           {has('blurAmount') && <Slider label="Blur amount" value={mods.blurAmount} min={SLIDER_SPECS.blurAmount.min} max={SLIDER_SPECS.blurAmount.max} step={SLIDER_SPECS.blurAmount.step} onChange={(v) => setMod('blurAmount', v)} />}
           {has('bleed') && <Slider label="Bleed" value={mods.bleed} min={SLIDER_SPECS.bleed.min} max={SLIDER_SPECS.bleed.max} step={SLIDER_SPECS.bleed.step} onChange={(v) => setMod('bleed', v)} />}
           {has('dotSize') && <Slider label="Dot size" value={mods.dotSize} min={SLIDER_SPECS.dotSize.min} max={SLIDER_SPECS.dotSize.max} step={SLIDER_SPECS.dotSize.step} onChange={(v) => setMod('dotSize', v)} />}
@@ -345,10 +389,10 @@ export function SmartHachureChrome() {
       )}
 
       {/* COLOR / PALETTE — Cluster 5 per I-13 */}
-      <Section title="Color / palette" note="Ink + palette overrides · cluster 5">
+      <Section title="Color / palette" note="Ink + palette overrides · cluster 5" collapseKey="shc.cluster.color-palette" defaultOpen={false}>
         {has('inkIntensity') && <Slider label="Ink intensity" value={mods.inkIntensity} min={SLIDER_SPECS.inkIntensity.min} max={SLIDER_SPECS.inkIntensity.max} step={SLIDER_SPECS.inkIntensity.step} onChange={(v) => setMod('inkIntensity', v)} />}
         {has('fillOpacity') && <Slider label="Fill opacity" value={mods.fillOpacity} min={SLIDER_SPECS.fillOpacity.min} max={SLIDER_SPECS.fillOpacity.max} step={SLIDER_SPECS.fillOpacity.step} onChange={(v) => setMod('fillOpacity', v)} />}
-        {has('paletteMode') && (
+        {has('strokePalette') && (
           <>
             <Row>
               <Dropdown
@@ -411,19 +455,10 @@ export function SmartHachureChrome() {
           }}
           title={`Reset modifiers to the ${svgStyle} style preset`}
           style={{
+            ...PILL,
             width: '100%',
             padding: '10px 16px',
-            border: '1px solid var(--dir-border)',
             background: 'var(--dir-bg)',
-            color: 'var(--dir-text-primary)',
-            fontFamily: IS,
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-            cursor: 'pointer',
-            borderRadius: 999,
-            transition: 'background 0.15s',
           }}
           onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--dir-raised)')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--dir-bg)')}

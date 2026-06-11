@@ -76,6 +76,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'none',
     gap: 0,
     weight: 0,
+    angle: -41,
     layerCount: 0,
     pressureEnvelope: null,
     opacity: 0,
@@ -88,6 +89,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'hachure',
     gap: 5.0, // × hachureGap slider
     weight: 0.6, // × strokeWidth slider
+    angle: -41,
     layerCount: 1,
     pressureEnvelope: null,
     opacity: 0.7,
@@ -100,6 +102,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'hachure',
     gap: 2.5,
     weight: 0.85,
+    angle: -41,
     layerCount: 1,
     pressureEnvelope: null,
     opacity: 0.9,
@@ -114,6 +117,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'cross-hatch',
     gap: 1.75,
     weight: 1.0,
+    angle: -41,
     layerCount: 1,
     pressureEnvelope: null,
     opacity: 1.0,
@@ -128,6 +132,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'cross-hatch',
     gap: 0.9,
     weight: 1.2,
+    angle: -41,
     layerCount: 1,
     pressureEnvelope: null,
     opacity: 1.0,
@@ -139,6 +144,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'none',
     gap: 0,
     weight: 0,
+    angle: -41,
     layerCount: 0,
     pressureEnvelope: null,
     opacity: 0,
@@ -150,6 +156,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'none',
     gap: 0,
     weight: 0,
+    angle: -41,
     layerCount: 0,
     pressureEnvelope: null,
     opacity: 1.0,
@@ -161,6 +168,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'none',
     gap: 0,
     weight: 0,
+    angle: -41,
     layerCount: 0,
     pressureEnvelope: null,
     opacity: 1.0,
@@ -172,6 +180,7 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
     fillStyle: 'none',
     gap: 0,
     weight: 0,
+    angle: -41,
     layerCount: 0,
     pressureEnvelope: null,
     opacity: 1.0,
@@ -237,8 +246,22 @@ function applyModifierOverrides(
     };
   }
 
-  // Effective gap (px) = base hachureGap slider × role's gap multiplier
-  const effectiveGap = Math.max(1.5, m.hachureGap * styled.gap);
+  // Tiny shapes (area < 40 px²): coverage statistics too noisy for discrete
+  // marks — render solid at the role's tonal opacity instead (18-scope-audit
+  // edge-case table "Tiny shapes" row, Agent 2 §7).
+  const area = _classification.signalsSnapshot.area;
+  if (area > 0 && area < 40) {
+    return {
+      ...styled,
+      fillStyle: 'solid',
+      opacity: styled.opacity * m.fillOpacity * m.inkIntensity,
+    };
+  }
+
+  // Effective gap (px) = base hachureGap slider × role's gap multiplier,
+  // capped at 12 px (edge-case table "Huge shapes" row: beyond that, lines
+  // read as discrete strokes, not a darker hatched area — Agent 2 §7).
+  const effectiveGap = Math.max(1.5, Math.min(12, m.hachureGap * styled.gap));
 
   // Effective weight (px) = strokeWidth × role's weight multiplier × fillDensity scale
   let effectiveWeight = m.strokeWidth * styled.weight * Math.max(0.5, m.fillDensity);
@@ -249,10 +272,17 @@ function applyModifierOverrides(
   // Effective opacity scales by both ink intensity and fill opacity
   const effectiveOpacity = styled.opacity * m.fillOpacity * m.inkIntensity;
 
+  // User's hachureAngle modifier routes through to the fill scan-line angle.
+  // Falls back to the role-default (-41) when the modifier is unset. This is
+  // I-1-safe: we route the EXISTING angle modifier into the treatment, we do
+  // not change classification or fillStyle.
+  const effectiveAngle = Number.isFinite(m.hachureAngle) ? m.hachureAngle : styled.angle;
+
   return {
     ...styled,
     gap: effectiveGap,
     weight: effectiveWeight,
+    angle: effectiveAngle,
     opacity: effectiveOpacity,
   };
 }

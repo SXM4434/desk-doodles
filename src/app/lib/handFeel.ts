@@ -43,7 +43,7 @@ export type ShapeModifiers = {
   /** Endpoint corner treatment. */
   endpointBehavior?: 'clean' | 'protrude' | 'long-overshoot' | 'kink';
   /** Layered stroke pacing — affects multi-stroke layered renders. */
-  sketchingStyle?: 'single-pass' | 'loose-overlap' | 'parallel-pass' | 'cross-hatch';
+  sketchingStyle?: 'single-pass' | 'loose-overlap' | 'parallel-pass' | 'cross-rotate';
   /** Layer index — used by loose-overlap / parallel-pass to spread layers. */
   layerIndex?: number;
 };
@@ -54,7 +54,7 @@ const KINK_AMOUNT = 5;                // px — kink offset (random angle) for '
 const LOOSE_OVERLAP_AMOUNT = 3;       // px — endpoint nudge per layer (along segment)
 const PARALLEL_OFFSET_AMOUNT = 6;     // px — perpendicular offset per layer
                                        //       (was 2.5 — too subtle to read)
-const CROSS_HATCH_ANGLE_DEG = 6;      // ° — rotation per layer for 'cross-hatch'
+const CROSS_HATCH_ANGLE_DEG = 6;      // ° — rotation per layer for 'cross-rotate'
 
 /** Rotate a point around a center by `angleDeg` degrees. Used for cross-hatch
  *  layered renders so each successive layer is angled slightly differently

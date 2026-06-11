@@ -19,8 +19,62 @@ import type {
   Classification,
   ClassifierProvider,
   OverrideStoreApi,
+  TonalRole,
   Treatment,
 } from './types';
+
+// ─── DECISION LOG (QW-1) ──────────────────────────────────────────────────
+//
+// In-memory per-region decision trace, pushed by renderSmartHachure. This is
+// the calibration + training dataset side channel (24-research-classifier-
+// improvements §7.1 QW-1) — write-only from the render path, read by the
+// audit harness. Zero behavior change: nothing in the pipeline reads it.
+
+export type DecisionLogEntry = {
+  svgHash: string;
+  regionPath: string;
+  role: TonalRole;
+  confidence: number;
+  rawScore: number;
+  margin: number;
+  firedRules: string[];
+  classifiedBy: Classification['classifiedBy'];
+  darknessL: number;
+  area: number;
+  fillStyle: Treatment['fillStyle'];
+};
+
+// FIFO cap — a 681-pattern sweep × handful of regions stays well under this;
+// the cap only guards long-lived sessions from unbounded growth.
+const DECISION_LOG_MAX = 5000;
+const decisionLog: DecisionLogEntry[] = [];
+
+function pushDecisionLogEntry(entry: DecisionLogEntry): void {
+  decisionLog.push(entry);
+  if (decisionLog.length > DECISION_LOG_MAX) {
+    decisionLog.splice(0, decisionLog.length - DECISION_LOG_MAX);
+  }
+}
+
+/** Snapshot of the in-memory decision log (copy — safe to mutate/serialize). */
+export function getDecisionLog(): DecisionLogEntry[] {
+  return decisionLog.slice();
+}
+
+/** Reset the collector (harness calls this between runs). */
+export function clearDecisionLog(): void {
+  decisionLog.length = 0;
+}
+
+// Harness access from DevTools / playwright — same window-flag idiom as
+// `__dd_diag` in SvgStyleTransform.tsx.
+if (typeof window !== 'undefined') {
+  (
+    window as {
+      __dd_decisionLog?: { get: () => DecisionLogEntry[]; clear: () => void };
+    }
+  ).__dd_decisionLog = { get: getDecisionLog, clear: clearDecisionLog };
+}
 
 // ─── PUBLIC API ───────────────────────────────────────────────────────────
 
@@ -51,7 +105,7 @@ export type SmartHachureOpts = {
  *   2. Classify into a TonalRole
  *   3. Select a Treatment (which fillStyle + axes)
  *   4. Run legacy `transformElement` with fillStyle suppressed → jittered outlines
- *      (honors all sliders: roughness · bowing · curveTightness · strokeWidth ·
+ *      (honors all sliders: roughness · bowing · curveDamp · strokeWidth ·
  *       multiStroke · sketchingStyle · endpointBehavior · penTip)
  *   5. Generate Smart Hachure fill marks per classification
  *   6. Replace the original child with [fill marks] + [jittered outlines]
@@ -142,6 +196,14 @@ export function renderSmartHachure(
     const signals = signalsByIndex[zIdx];
     zIdx++;
 
+    // Edge-case policy (18-scope-audit): elements carrying mask/filter are
+    // PASS-THROUGH — unsafe to compose with hachure marks (mask inverts
+    // intent via luminance-as-opacity; filters like feDisplacement break
+    // mark geometry). Leave the original element untouched.
+    if (child.getAttribute('mask') !== null || child.getAttribute('filter') !== null) {
+      continue;
+    }
+
     // 2. classify
     const ctx = {
       svgHash,
@@ -162,14 +224,37 @@ export function renderSmartHachure(
     // either. Per memory: `feedback_fillstyle_slider_must_switch_classifier_pick`.
     const userPick = fullModifiers.fillStyle;
     const classifierWantsFill = baseTreatment.fillStyle !== 'none';
+    // Tiny shapes (area < 40 px²) are clamped to solid by techniqueMap
+    // (edge-case policy: coverage stats too noisy for marks) — that clamp is
+    // a perceptual constraint, NOT a grammar choice, so the user pick does
+    // not override it.
+    const tinyClamp = signals.area > 0 && signals.area < 40;
     const treatment = {
       ...baseTreatment,
       fillStyle: userPick === 'none' || !classifierWantsFill
         ? ('none' as const)
-        : userPick,
+        : tinyClamp
+          ? baseTreatment.fillStyle
+          : userPick,
     };
 
     opts.onClassification?.(regionPath, classification, treatment);
+
+    // QW-1: append the decision trace (write-only side channel; the render
+    // pipeline never reads the log).
+    pushDecisionLogEntry({
+      svgHash,
+      regionPath,
+      role: classification.role,
+      confidence: classification.confidence,
+      rawScore: classification.rawScore,
+      margin: classification.margin,
+      firedRules: classification.firedRules,
+      classifiedBy: classification.classifiedBy,
+      darknessL: signals.darknessL,
+      area: signals.area,
+      fillStyle: treatment.fillStyle,
+    });
 
     // 4. generate jittered outline via legacy transformElement (with hachure off)
     //    DEFENSIVE: legacy renderHandFeelShape can emit a base-fill <path> that
@@ -218,6 +303,16 @@ export function renderSmartHachure(
     for (const outlineEl of outlineElements) {
       outlineEl.setAttribute('data-smart-source-role', classification.role);
       outlineEl.setAttribute('data-smart-source-darkness', signals.darknessL.toFixed(2));
+    }
+
+    // Edge-case policy: marks render clipped to the source's clip-path
+    // (copy the attr so generated marks clip identically; clipPath defs
+    // survive in <defs> which the walk never touches).
+    const clipAttr = child.getAttribute('clip-path');
+    if (clipAttr !== null) {
+      for (const el of [...fillMarks, ...outlineElements]) {
+        el.setAttribute('clip-path', clipAttr);
+      }
     }
 
     // 6. replace original with [fills] + [outline]

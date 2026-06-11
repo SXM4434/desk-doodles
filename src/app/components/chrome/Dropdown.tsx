@@ -33,9 +33,6 @@ type Props = {
   renderTrigger?: (active: DropdownOption | undefined) => string;
 };
 
-const CHEVRON_SVG =
-  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%235F5B54' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'/></svg>\")";
-
 export function Dropdown({
   label,
   value,
@@ -105,16 +102,14 @@ export function Dropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         style={{
+          position: 'relative',
           fontFamily: IS,
           fontSize: 13,
           fontWeight: 500,
           color: 'var(--dir-text-primary)',
           backgroundColor: 'var(--dir-bg)',
-          backgroundImage: CHEVRON_SVG,
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'right 14px center',
           border: '1px solid var(--dir-border)',
-          borderRadius: 9999,
+          borderRadius: 999,
           padding: '10px 36px 10px 16px',
           cursor: 'pointer',
           appearance: 'none',
@@ -131,6 +126,32 @@ export function Dropdown({
         onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--dir-border)')}
       >
         {triggerText}
+        {/* Chevron in its own span: icon ink is text-secondary (the trigger
+            text itself stays text-primary). currentColor flips with direction. */}
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            right: 14,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            display: 'flex',
+            alignItems: 'center',
+            pointerEvents: 'none',
+            color: 'var(--dir-text-secondary)',
+          }}
+        >
+          <svg width="10" height="6" viewBox="0 0 10 6">
+            <path
+              d="M1 1l4 4 4-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
       </button>
       {open && (
         <div
@@ -146,7 +167,8 @@ export function Dropdown({
             backgroundColor: 'var(--dir-bg)',
             border: '1px solid var(--dir-border)',
             borderRadius: 16,
-            boxShadow: '0 12px 36px rgba(18, 17, 16, 0.10), 0 2px 8px rgba(18, 17, 16, 0.06)',
+            boxShadow:
+              '0 12px 36px color-mix(in srgb, var(--dir-text-primary) 10%, transparent), 0 2px 8px color-mix(in srgb, var(--dir-text-primary) 6%, transparent)',
             fontFamily: IS,
             padding: 6,
           }}

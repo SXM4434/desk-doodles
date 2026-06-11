@@ -49,7 +49,10 @@ type Ctx = {
 const F3SvgStyleCtx = createContext<Ctx | null>(null);
 
 export function F3SvgStyleProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<F3SvgStyle>('clean');
+  // Default = the engine's signature look — first-time visitors (and judges
+  // clicking the Make link) see Smart Hachure working without touching a
+  // single control (Q-8 decision, Sebs 2026-06-10: "do what u feel best").
+  const [state, setState] = useState<F3SvgStyle>('rough-handdrawn');
   return <F3SvgStyleCtx.Provider value={{ state, setState }}>{children}</F3SvgStyleCtx.Provider>;
 }
 

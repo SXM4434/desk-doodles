@@ -13,14 +13,16 @@ type SliderProps = {
   max: number;
   step: number;
   onChange: (v: number) => void;
-  width?: number;
+  width?: number | string;
   /** Optional units (e.g., 'px', '°', '%'). Displayed after value. */
   unit?: string;
   /** Number of decimal places to display in readout. Defaults inferred from step. */
   precision?: number;
+  /** Optional hover tooltip on the whole row (native title attr). */
+  title?: string;
 };
 
-export function Slider({ label, value, min, max, step, onChange, width = 170, unit, precision }: SliderProps) {
+export function Slider({ label, value, min, max, step, onChange, width = '100%', unit, precision, title }: SliderProps) {
   // Infer precision from step if not provided
   const inferredPrecision = precision !== undefined ? precision : (() => {
     if (step >= 1) return 0;
@@ -32,6 +34,7 @@ export function Slider({ label, value, min, max, step, onChange, width = 170, un
 
   return (
     <div
+      title={title}
       style={{
         display: 'inline-flex',
         flexDirection: 'column',

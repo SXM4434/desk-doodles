@@ -33,7 +33,15 @@ export type ExtractionContext = {
 export function extractSignals(el: SVGElement, ctx: ExtractionContext): Signals {
   const bbox = safeGetBBox(el);
   const tag = normalizeTag(el.tagName);
-  const fill = readAttr(el, 'fill');
+  // Edge-case policy "CSS-class-only fills": fall back to getComputedStyle
+  // when no fill attribute exists, so class/currentColor-driven fills are
+  // seen (18-scope-audit edge-case table). Computed pure-black is only
+  // trusted when a raw value exists (else it's the UA default, not a fill —
+  // limitation: a CSS class painting exactly black on an attr-less element
+  // is still missed; acceptable v1).
+  const fillAttr = readAttr(el, 'fill');
+  const computedFill = readComputedFill(el, fillAttr !== null);
+  const fill = fillAttr ?? computedFill;
   const stroke = readAttr(el, 'stroke');
   const strokeWidth = parseFloat(readAttr(el, 'stroke-width') ?? '1');
 
@@ -72,8 +80,14 @@ export function extractSignals(el: SVGElement, ctx: ExtractionContext): Signals 
     opacity: parseFloat(readAttr(el, 'opacity') ?? '1'),
     fillOpacity: parseFloat(readAttr(el, 'fill-opacity') ?? '1'),
 
-    // Derived perceptual
-    darknessL: computeDarkness(fill, readComputedFill(el)),
+    // Derived perceptual — url(#...) fills resolve their def first
+    // (gradient → average stop darkness; pattern → 0 = pass-through;
+    // 18-scope-audit edge-case table rows "linearGradient/radialGradient"
+    // + "<pattern> as fill").
+    darknessL:
+      fill !== null && fill.startsWith('url(')
+        ? resolveUrlFillDarkness(el, fill)
+        : computeDarkness(fill, computedFill),
   };
 }
 
@@ -256,13 +270,61 @@ function computeDarkness(fillRaw: string | null, fillComputed: string | null): n
   }
 }
 
-function readComputedFill(el: SVGElement): string | null {
+function readComputedFill(el: SVGElement, trustBlack = false): string | null {
   try {
     const computed = getComputedStyle(el).fill;
-    return computed === '' || computed === 'rgb(0, 0, 0)' ? null : computed;
+    if (computed === '') return null;
+    // rgb(0,0,0) is the UA default for unstyled fills — only trust it as a
+    // real black when a raw fill value exists (currentColor / class-driven),
+    // per edge-case policy "currentColor" row.
+    if (computed === 'rgb(0, 0, 0)' && !trustBlack) return null;
+    return computed;
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve a `url(#id)` fill to a darkness value per the edge-case policy:
+ *   - linearGradient / radialGradient → average stop darkness (quick
+ *     approximation; perfect would require rasterization)
+ *   - <pattern> → 0 (pass-through / treat as opaque — patterns author their
+ *     own density; smart layer must not over-mark)
+ *   - unresolvable → 0.75 (same catch-all as computeDarkness)
+ */
+function resolveUrlFillDarkness(el: SVGElement, fill: string): number {
+  const idMatch = fill.match(/url\(\s*['"]?#([^'")\s]+)/);
+  if (!idMatch) return 0.75;
+  const def = el.ownerSVGElement?.querySelector(`#${CSS.escape(idMatch[1])}`);
+  if (!def) return 0.75;
+  const defTag = def.tagName.toLowerCase();
+  if (defTag === 'pattern') return 0;
+  if (defTag === 'lineargradient' || defTag === 'radialgradient') {
+    const stops = Array.from(def.querySelectorAll('stop'));
+    if (stops.length === 0) return 0.75;
+    let sum = 0;
+    let n = 0;
+    for (const stop of stops) {
+      const c =
+        stop.getAttribute('stop-color') ??
+        getComputedStyle(stop).stopColor ??
+        null;
+      if (!c) continue;
+      const opacity = parseFloat(stop.getAttribute('stop-opacity') ?? '1');
+      try {
+        const parsed = parse(c);
+        if (!parsed) continue;
+        const oklab = toOklab(parsed);
+        if (!oklab || typeof oklab.l !== 'number') continue;
+        sum += (1 - Math.max(0, Math.min(1, oklab.l))) * opacity;
+        n += 1;
+      } catch {
+        /* skip unparseable stop */
+      }
+    }
+    return n === 0 ? 0.75 : sum / n;
+  }
+  return 0.75;
 }
 
 // ─── WHOLE-SVG TRAVERSAL ──────────────────────────────────────────────────
@@ -310,6 +372,9 @@ function walkInto(
 const SKIP_TAGS = new Set([
   'defs', 'style', 'title', 'desc', 'metadata',
   'clippath', 'mask', 'filter', 'lineargradient', 'radialgradient', 'pattern',
+  // <symbol> is inert except via <use> (edge-case policy table) — walking it
+  // would generate marks for invisible content.
+  'symbol',
 ]);
 
 /**

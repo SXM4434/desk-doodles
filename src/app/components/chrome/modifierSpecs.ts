@@ -12,10 +12,13 @@ export const SLIDER_SPECS = {
   // > 1.4 enters Excalidraw signature zone (slider styling shows warn).
   wobble:            { min: 0,    max: 2.0, step: 0.05 },
   jaggedness:        { min: 0,    max: 2.0, step: 0.05 },
-  roughness:         { min: 0,    max: 1.6, step: 0.02 },
+  // Simplify — post-stroke fidelity slider (doc 22 §4.2/§4.3). s ∈ [0,2],
+  // mapped to RDP ε via ε(s) = 3.0 × 4^(s−1) in SvgStyleTransform; s = 1.0
+  // ≡ ε = 3.0 (pixel-identical to today). Same 41-tick shape as wobble.
+  simplification:    { min: 0,    max: 2.0, step: 0.05 },
   bowing:            { min: 0,    max: 2.5, step: 0.05 },
-  strokeWidth:       { min: 0.3,  max: 3.0, step: 0.05 },
-  curveTightness:    { min: 0,    max: 1.5, step: 0.02 },
+  strokeWidth:       { min: 0.5,  max: 3.0, step: 0.05 },
+  curveDamp:    { min: 0,    max: 1.5, step: 0.02 },
   hachureGap:        { min: 1,    max: 12,  step: 0.25 },
   hachureAngle:      { min: -90,  max: 90,  step: 1    },
   fillDensity:       { min: 0,    max: 1.2, step: 0.02 },
@@ -33,29 +36,51 @@ export const SLIDER_SPECS = {
   offsetAngle:       { min: -180, max: 180, step: 1    },
   colorShift:        { min: 0,    max: 1,   step: 0.02 },
   registrationError: { min: 0,    max: 1.5, step: 0.05 },
-  textureIntensity:  { min: 0,    max: 2.5, step: 0.05 },
+  textureIntensity:  { min: 0,    max: 3,   step: 0.05 },
 } as const;
 
-export const UNIVERSAL_MODIFIERS = ['inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'] as const;
+export const UNIVERSAL_MODIFIERS = ['inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'] as const;
 
 // Per-style declared modifier set — chrome only renders the modifiers the
 // active style uses.
 export const MODIFIER_SETS_BY_STYLE: Record<F3SvgStyle, readonly string[]> = {
-  'clean':           ['inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'outline-only':    ['strokeWidth', 'inkIntensity', 'paletteMode', 'texture', 'textureIntensity'],
-  'wireframe':       ['strokeWidth', 'inkIntensity', 'paletteMode', 'texture', 'textureIntensity'],
-  'wet-ink':         ['blurAmount', 'bleed', 'inkIntensity', 'fillOpacity', 'paletteMode', 'textureIntensity'],
-  'charcoal':        ['grainIntensity', 'smudgeAmount', 'pressureVariance', 'inkIntensity', 'fillOpacity', 'paletteMode', 'textureIntensity'],
+  'clean':           ['inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  'outline-only':    ['strokeWidth', 'inkIntensity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  'wireframe':       ['strokeWidth', 'inkIntensity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  'wet-ink':         ['blurAmount', 'bleed', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'textureIntensity'],
+  'charcoal':        ['grainIntensity', 'smudgeAmount', 'pressureVariance', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'textureIntensity'],
   // 2026-06-09: dotSize + dotSpacing now wired in TextureFilterDefs stipple
   // path (dotSize multiplies displacement scale, dotSpacing inverse-scales
   // baseFrequency). Newsprint exposes both so user can dial dot prominence.
-  'newsprint':       ['dotSize', 'dotSpacing', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'risograph':       ['offsetDistance', 'offsetAngle', 'colorShift', 'risoSecondaryColor', 'registrationError', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'rough-handdrawn': ['wobble', 'jaggedness', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'hachureAngle', 'fillDensity', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'sketchy':         ['wobble', 'jaggedness', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
+  // 2026-06-10: dotPattern made REAL — drives the newsprint dot-screen
+  // <pattern> layout (grid / staggered / random / concentric) built in
+  // SvgStyleTransform's buildNewsprintDotTile + applied as a luminance mask
+  // in applyTexture. Cluster 4 (Surface Texture) per 09-LOCKED-MODEL I-13 —
+  // composes with dotSize (radius) / dotSpacing (pitch) / dotScatter
+  // ('random' jitter amplitude).
+  'newsprint':       ['dotSize', 'dotSpacing', 'dotPattern', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  'risograph':       ['offsetDistance', 'offsetAngle', 'colorShift', 'risoSecondaryColor', 'registrationError', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  // 2026-06-11: the dead `roughness` modifier field was DELETED entirely
+  // (no chrome row, no consumer — rough.js's roughness is driven by
+  // jaggedness). If a Cluster 4 Surface-Texture roughness knob is ever wired
+  // (09-LOCKED-MODEL I-11), re-add a fresh field + SLIDER_SPEC + rows then.
+  // simplification (Simplify) added 2026-06-11 (doc 22) — Cluster 0 geometry
+  // resampling on drawn/uploaded paths; relevant wherever the path pipeline
+  // runs (rough-handdrawn, sketchy, bold-ink, stipple).
+  'rough-handdrawn': ['wobble', 'jaggedness', 'simplification', 'bowing', 'strokeWidth', 'curveDamp', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'hachureAngle', 'fillDensity', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  'sketchy':         ['wobble', 'jaggedness', 'simplification', 'bowing', 'strokeWidth', 'curveDamp', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
   // bold-ink intentionally omits multiStroke — the style's identity IS
   // "no layered jitter" (preset locks multiStroke='off'). Showing the
   // dropdown would lie to the user (Bug D from audit 2026-06-08).
-  'bold-ink':        ['wobble', 'strokeWidth', 'bowing', 'curveTightness', 'fillStyle', 'fillDensity', 'endpointBehavior', 'penTip', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
-  'stipple':         ['wobble', 'jaggedness', 'roughness', 'bowing', 'strokeWidth', 'curveTightness', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'fillDensity', 'inkIntensity', 'fillOpacity', 'paletteMode', 'texture', 'textureIntensity'],
+  'bold-ink':        ['wobble', 'simplification', 'strokeWidth', 'bowing', 'curveDamp', 'fillStyle', 'fillDensity', 'endpointBehavior', 'penTip', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  // 2026-06-10: dotScatter made REAL — modulates the stipple texture recipe
+  // in TextureFilterDefs (displacement scale ×(0.4 + 2.0·scatter), primary
+  // axis; frequency jitter ×(0.85 + 0.5·scatter), secondary). 0 = machine-
+  // set order, 1 = heavy hand scatter; both terms are exactly 1.0 at the
+  // 0.3 default so defaults don't shift. Cluster 4 (Surface Texture) per
+  // 09-LOCKED-MODEL I-13 — composes with dotSize/dotSpacing/dotPattern.
+  // Distinct layer from the seeded rough.js dots FILLER (patchRoughDots.ts),
+  // which dotScatter ALSO wires (2026-06-11: scales the seeded dots-fill
+  // jitter range; visible where the dots fill runs with roughness > 0).
+  'stipple':         ['wobble', 'jaggedness', 'simplification', 'bowing', 'strokeWidth', 'curveDamp', 'multiStroke', 'endpointBehavior', 'sketchingStyle', 'penTip', 'fillStyle', 'hachureGap', 'fillDensity', 'dotScatter', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
 };

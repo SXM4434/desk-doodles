@@ -40,6 +40,8 @@ export function classify(
     return {
       role: override.role,
       confidence: 1.0,
+      rawScore: 1, // manual tag = full-confidence trace (QW-2)
+      margin: 1,
       firedRules: [`manual-override (${override.setBy})`],
       classifiedBy: 'manual-override',
       signalsSnapshot: signals,
@@ -58,6 +60,8 @@ export function classify(
   return {
     role: 'paper',
     confidence: 0,
+    rawScore: 0, // nothing fired confidently — zero trace (QW-2)
+    margin: 0,
     firedRules: ['fallback:no-provider-confident'],
     classifiedBy: 'rules',
     signalsSnapshot: signals,
@@ -228,6 +232,16 @@ const RULE_tiny_decorative: Rule = {
 
 // Cluster F — TOP-LEVEL TONAL (when nothing else fires)
 // Elements at the root that carry darkness but aren't enclosing siblings.
+//
+// Confidence 0.55 → 0.7 (2026-06-11): 0.55 sat below the 0.7 provider
+// threshold, so EVERY standalone root-level filled shape silently fell back
+// to paper — zero shading (the recall hole, 24-research finding #1;
+// reproduced by the gradient-sampler fixture). Golden-diff receipts:
+// 140 regions across 67/197 audit shapes flip paper→dense-tonal, ALL with
+// source darkness 1.00 (pure-black details that had been rendering as empty
+// outlines — silent under-shading, not curated intent). Visual A/B
+// 2026-06-11 confirmed: only true-black regions gained marks (trophy cup,
+// print blocks); light regions unchanged — "sparing" preserved per I-2.
 
 const RULE_root_tonal_sparse: Rule = {
   id: 'root-tonal-sparse',
@@ -236,7 +250,7 @@ const RULE_root_tonal_sparse: Rule = {
     if (s.containedInZIndex !== null) return null; // not root
     if (s.enclosesSiblingCount > 0) return null; // not a frame
     if (s.darknessL < 0.05 || s.darknessL > 0.3) return null;
-    return { role: 'sparse-tonal', confidence: 0.55 };
+    return { role: 'sparse-tonal', confidence: 0.7 };
   },
 };
 
@@ -247,7 +261,7 @@ const RULE_root_tonal_mid: Rule = {
     if (s.containedInZIndex !== null) return null;
     if (s.enclosesSiblingCount > 0) return null;
     if (s.darknessL < 0.3 || s.darknessL > 0.55) return null;
-    return { role: 'mid-tonal', confidence: 0.55 };
+    return { role: 'mid-tonal', confidence: 0.7 };
   },
 };
 
@@ -258,7 +272,7 @@ const RULE_root_tonal_dense: Rule = {
     if (s.containedInZIndex !== null) return null;
     if (s.enclosesSiblingCount > 0) return null;
     if (s.darknessL < 0.55) return null;
-    return { role: 'dense-tonal', confidence: 0.55 };
+    return { role: 'dense-tonal', confidence: 0.7 };
   },
 };
 
@@ -325,24 +339,33 @@ export const ruleEngineProvider: ClassifierProvider = {
       scores[firing.role] = (scores[firing.role] ?? 0) + firing.confidence;
     }
 
-    // Pick winning role
+    // Pick winning role — also track the runner-up sum so the trace can
+    // expose how contested the decision was (QW-2: rawScore + margin).
     let bestRole: TonalRole = 'paper';
     let bestScore = 0;
+    let secondBestScore = 0;
     for (const [role, score] of Object.entries(scores) as [TonalRole, number][]) {
       if (score > bestScore) {
+        secondBestScore = bestScore;
         bestRole = role;
         bestScore = score;
+      } else if (score > secondBestScore) {
+        secondBestScore = score;
       }
     }
 
     if (firings.length === 0) return null; // no opinion — delegate to next provider
 
-    // Cap confidence at 1.0 — sums can exceed if multiple rules agree
+    // Cap confidence at 1.0 — sums can exceed if multiple rules agree.
+    // rawScore keeps the UNCAPPED sum so 1.0-cap ties stay distinguishable
+    // in the decision log (QW-2; decisions unchanged).
     const confidence = Math.min(1, bestScore);
 
     return {
       role: bestRole,
       confidence,
+      rawScore: bestScore,
+      margin: bestScore - secondBestScore,
       firedRules: firings,
       classifiedBy: 'rules',
       signalsSnapshot: signals,

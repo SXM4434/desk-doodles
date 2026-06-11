@@ -40,15 +40,15 @@ export type EndpointBehaviorStep = 'clean' | 'protrude' | 'long-overshoot' | 'ki
 export const ENDPOINT_BEHAVIOR_STEPS: EndpointBehaviorStep[] = ['clean', 'protrude', 'long-overshoot', 'kink'];
 
 // Multi-stroke layer pacing (ported from playground C3HandFeel.sketchingStyle).
-export type SketchingStyleStep = 'single-pass' | 'loose-overlap' | 'parallel-pass' | 'cross-hatch';
-export const SKETCHING_STYLE_STEPS: SketchingStyleStep[] = ['single-pass', 'loose-overlap', 'parallel-pass', 'cross-hatch'];
+export type SketchingStyleStep = 'single-pass' | 'loose-overlap' | 'parallel-pass' | 'cross-rotate';
+export const SKETCHING_STYLE_STEPS: SketchingStyleStep[] = ['single-pass', 'loose-overlap', 'parallel-pass', 'cross-rotate'];
 
 // Pen-tip preset (ported from playground PEN_TIP_PRESETS).
 // 'plain' = no pen-tip variation (default rough.js stroke).
 // Others use perfect-freehand for variable-width / textured strokes.
-// Implementation note: penTip != 'plain' replaces rough.js's stroke render with
-// perfect-freehand polygon paths. Substantial render path change — for now
-// non-plain values may be approximated until full perfect-freehand integration.
+// Implementation: penTip != 'plain' replaces rough.js's stroke render with
+// perfect-freehand polygon paths (penTipPath, handFeel.ts). All 8 presets are
+// REAL and render visually distinct (verified 2026-06-11).
 export type PenTipStep =
   | 'plain' | 'ballpoint' | 'fineliner' | 'pencil-hb' | 'pencil-2b' | 'felt-tip' | 'chisel' | 'charcoal';
 export const PEN_TIP_STEPS: PenTipStep[] = ['plain', 'ballpoint', 'fineliner', 'pencil-hb', 'pencil-2b', 'felt-tip', 'chisel', 'charcoal'];
@@ -73,11 +73,16 @@ export type F3ModifiersState = {
    *  jaggedness = how jagged the wandering reads. Threaded into rough.js's
    *  `roughness` parameter (was driven by wobble). */
   jaggedness: number;       // 0 - 2
-  roughness: number;        // 0 - 12
+  /** Simplify — post-stroke geometry fidelity (Fidelity-class control, doc 22).
+   *  Re-added 2026-06-11 after the Day 9 sweep removed it as a dead stub.
+   *  Modulates the RDP epsilon on drawn/uploaded paths: maps s → ε via
+   *  ε(s) = 3.0 × 4^(s−1), so s = 1.0 ≡ ε = 3.0 (today's pixel-identical
+   *  behavior). s = 0 → faithful (ε 0.75, keeps every wiggle); s = 2 →
+   *  essential (ε 12, smooths to clean lines). Display label "Simplify". */
+  simplification: number;   // 0 - 2
   bowing: number;           // 0 - 5
   strokeWidth: number;      // 0.1 - 10
-  curveTightness: number;   // 0 - 2
-  simplification: number;   // 0 - 1   (rough.js: only affects path-based input)
+  curveDamp: number;   // 0 - 2
   hachureGap: number;       // 0.5 - 30
   hachureAngle: number;     // -90 - 90
   fillDensity: number;      // 0 - 3
@@ -108,8 +113,6 @@ export type F3ModifiersState = {
   // Discrete modifiers
   multiStroke: MultiStrokeStep;
   fillStyle: FillStyleStep;
-  /** @deprecated kept for back-compat; new code uses strokePalette + fillPalette */
-  paletteMode: PaletteModeStep;
   /** Stroke (outline) color override. 'source' = use SVG source color. */
   strokePalette: PaletteModeStep;
   /** Fill color override (affects fills + hachure-as-fill strokes). */
@@ -125,13 +128,12 @@ export type F3ModifiersState = {
 // Defaults match the rough-handdrawn preset baseline (other styles override
 // when active — but state persists across style switches).
 const DEFAULT: F3ModifiersState = {
-  wobble: 1.0,              // Playground calibration baseline (I-11)
+  wobble: 0.4,              // Start value per Sebs 2026-06-11 (calibration ratios I-11 unaffected)
   jaggedness: 0,            // Splinter is opt-in via slider, NOT default (2026-06-09 per Sebs)
-  roughness: 1.6,
+  simplification: 1.0,      // ε(1.0) = 3.0 — pixel-identical to pre-slider behavior (doc 22 §4.8)
   bowing: 1.0,
   strokeWidth: 1.2,
-  curveTightness: 0,
-  simplification: 0,
+  curveDamp: 0.3,           // Start value per Sebs 2026-06-11
   hachureGap: 4,
   hachureAngle: -41,
   fillDensity: 0.7,
@@ -155,7 +157,6 @@ const DEFAULT: F3ModifiersState = {
 
   multiStroke: 'double',
   fillStyle: 'hachure',
-  paletteMode: 'source',
   strokePalette: 'source',
   fillPalette: 'source',
   texture: 'none',

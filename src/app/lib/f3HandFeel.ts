@@ -73,7 +73,7 @@ const LOOSE_OVERLAP_LOCAL = 2;  // playground was 3
 // Our rebuild also exposes Bowing + CurveTightness sliders which playground
 // doesn't have. We extend playground's logic to also add:
 //   - bowing: perpendicular offset on both control points (deliberate bend)
-//   - curveTightness: dampens both wobble's jitter AND bowing's offset
+//   - curveDamp: dampens both wobble's jitter AND bowing's offset
 //
 // These extended variants are exported and used by SvgStyleTransform's
 // buildPath callback, so wobble + bowing + curve ALL work together via one
@@ -90,14 +90,14 @@ export function roughRectPathExtended(
   x: number, y: number, w: number, h: number,
   rough: number,
   bowing: number,
-  curveTightness: number,
+  curveDamp: number,
   seed: number,
   mods: ShapeModifiers = {},
 ): string {
   const r = seededRandom(seed);
   // CurveTightness dampens BOTH wobble's jitter scale AND bowing's offset.
-  // At curveTightness=0 → full effect. At curveTightness=1 → ~half. At 2 → ~0.
-  const tightnessDamp = Math.max(0.05, 1 - curveTightness * 0.45);
+  // At curveDamp=0 → full effect. At curveDamp=1 → ~half. At 2 → ~0.
+  const tightnessDamp = Math.max(0.05, 1 - curveDamp * 0.45);
   const dampedRough = rough * tightnessDamp;
   const j = () => jitter(r, dampedRough);
   const protrude = protrudeForLocal(mods.endpointBehavior);
@@ -169,12 +169,12 @@ export function roughOvalPathExtended(
   x: number, y: number, w: number, h: number,
   rough: number,
   bowing: number,
-  curveTightness: number,
+  curveDamp: number,
   seed: number,
   mods: ShapeModifiers = {},
 ): string {
   const r = seededRandom(seed);
-  const tightnessDamp = Math.max(0.05, 1 - curveTightness * 0.45);
+  const tightnessDamp = Math.max(0.05, 1 - curveDamp * 0.45);
   const dampedRough = rough * tightnessDamp;
   const j = () => jitter(r, dampedRough);
   const f = (n: number) => n.toFixed(2);
@@ -263,12 +263,12 @@ export function roughLinePathExtended(
   x1: number, y1: number, x2: number, y2: number,
   rough: number,
   bowing: number,
-  curveTightness: number,
+  curveDamp: number,
   seed: number,
   mods: ShapeModifiers = {},
 ): string {
   const r = seededRandom(seed);
-  const tightnessDamp = Math.max(0.05, 1 - curveTightness * 0.45);
+  const tightnessDamp = Math.max(0.05, 1 - curveDamp * 0.45);
   const dampedRough = rough * tightnessDamp;
   const j = () => jitter(r, dampedRough);
   const f = (n: number) => n.toFixed(2);
@@ -547,15 +547,15 @@ export function roughPolygonPoints(
 /**
  * Render a polyline of [x, y] points as an SVG path string.
  *
- * When `bowing` and `curveTightness` are 0, emits straight L segments (fast path).
+ * When `bowing` and `curveDamp` are 0, emits straight L segments (fast path).
  *
  * When `bowing > 0`, each segment between consecutive points becomes a quadratic
  * Bezier (Q) curve with a control point at the segment midpoint offset
  * perpendicular to the segment direction. Offset magnitude = `bowing × segLen × 0.08`
  * with seeded sign so the curve direction is deterministic but varied.
  *
- * `curveTightness > 0` DAMPENS the offset (tighter curves = less bowing visible).
- * At curveTightness = 1, offset is halved. At curveTightness = 2, offset is ~0.
+ * `curveDamp > 0` DAMPENS the offset (tighter curves = less bowing visible).
+ * At curveDamp = 1, offset is halved. At curveDamp = 2, offset is ~0.
  *
  * This makes the Bowing + Curve sliders affect the polyline output of hand-feel
  * primitives, not just rough.js path elements.
@@ -564,7 +564,7 @@ export function pointsToPolylinePath(
   points: Array<[number, number]>,
   closed: boolean,
   bowing: number = 0,
-  curveTightness: number = 0,
+  curveDamp: number = 0,
   seed: number = 0,
   /** Per I-11: wobble's contribution to control-point jitter. Mirrors playground
    *  roughOvalPath/roughRectPath where C command control points are also jittered
@@ -579,7 +579,7 @@ export function pointsToPolylinePath(
   const f = (n: number) => n.toFixed(2);
 
   // Fast path: no curve modifiers, emit straight L segments.
-  if (bowing <= 0.01 && curveTightness <= 0.01 && wobble <= 0.01) {
+  if (bowing <= 0.01 && curveDamp <= 0.01 && wobble <= 0.01) {
     let d = `M ${f(points[0][0])} ${f(points[0][1])}`;
     for (let i = 1; i < points.length; i++) {
       d += ` L ${f(points[i][0])} ${f(points[i][1])}`;
@@ -594,7 +594,7 @@ export function pointsToPolylinePath(
   // jittered control point per Q-bezier — playground's "line bends entirely" character
   // comes from this. Bowing adds extra perpendicular displacement to control points.
   const r = seededRandom(seed || 1);
-  const tightnessDamp = Math.max(0.1, 1 - curveTightness * 0.45);
+  const tightnessDamp = Math.max(0.1, 1 - curveDamp * 0.45);
   const effectiveBow = bowing * tightnessDamp;
   // Wobble control-point jitter amp. Playground uses `j() * 1.4` where j returns
   // ±ROUGH (= HAND_FEEL_BASE.rect * wobble = 2.4 * wobble). So playground's scale

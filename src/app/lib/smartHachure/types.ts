@@ -76,6 +76,8 @@ export type Signals = {
 export type Classification = {
   role: TonalRole;
   confidence: number;                          // [0, 1] — how sure the classifier is
+  rawScore: number;                            // uncapped winning role sum (QW-2 trace; manual=1, fallback=0)
+  margin: number;                              // best − second-best raw sums (QW-2 trace; manual=1, fallback=0)
   firedRules: string[];                        // rule IDs that contributed (for inspection)
   classifiedBy: 'rules' | 'cached-llm' | 'decision-tree' | 'manual-override';
   signalsSnapshot: Signals;                    // frozen at classification time, for cache + training data
@@ -101,6 +103,7 @@ export type Treatment = {
     | 'none';
   gap: number;                                 // px — primary density axis
   weight: number;                              // px — secondary density axis
+  angle: number;                               // degrees — hachure scan-line angle (user's hachureAngle modifier; default -41)
   layerCount: number;                          // 1–4 — number of overlapping passes
   pressureEnvelope: number[] | null;           // per-vertex pressure for perfect-freehand, null = uniform
   opacity: number;                             // [0, 1] — ink opacity
