@@ -1691,7 +1691,12 @@ export function transformElement(
           buildPath: rdpTriggered
             ? (s, mods) => {
                 let pts = cleanPoints;
-                if (!subClosed && mods.sketchingStyle === 'parallel-pass' && mods.layerIndex > 0) {
+                if (
+                  !subClosed &&
+                  mods.sketchingStyle === 'parallel-pass' &&
+                  mods.layerIndex !== undefined &&
+                  mods.layerIndex > 0
+                ) {
                   pts = offsetLinePerpendicular(cleanPoints, mods.layerIndex);
                 }
                 const wobbleAmp = Math.max(0, ROUGH * 2);
