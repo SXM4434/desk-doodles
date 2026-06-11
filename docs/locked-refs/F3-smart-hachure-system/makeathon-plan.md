@@ -1,8 +1,110 @@
 # Desk Doodles — Makeathon Plan
 
-**Status:** v1 lock 2026-06-04. Deadline 2026-06-19 (15 days). Submission: Figma Make makeathon.
+**Status:** v1 lock 2026-06-04. **RE-BASELINED 2026-06-11** (see governing section below). Deadline 2026-06-18 11:59 PM PDT. Submission: Figma Make makeathon.
 
-This doc is the executable plan. Locked decisions live here. Open questions are flagged with `?`.
+> **⚠️ LOCAL MAKEATHON COPY — RE-BASELINED.** This is the local Desk-Doodles working copy (`docs/locked-refs/...`), re-baselined 2026-06-11 against the as-built state. The portfolio source-of-truth copy is NOT updated by this pass — **portfolio re-mirror is post-makeathon** (after 2026-06-18). Edit here during the build; reconcile back to portfolio later.
+
+This doc is the executable plan. Locked decisions live here. Open questions are flagged with `?`. **The RE-BASELINE 2026-06-11 section immediately below is the GOVERNING current plan** — the original §1–§9 are preserved as locked history (constraints, risk register, architecture decisions all still hold), but where the day grid in §4/§8.3 conflicts with the re-baseline, the re-baseline wins.
+
+---
+
+## RE-BASELINE 2026-06-11 (GOVERNING — read this first)
+
+**Today:** 2026-06-11. **Deadline:** 2026-06-18 11:59 PM PDT. **Runway:** ~7 days.
+
+This section supersedes the original day grid (§4) and the stale critical-dates block (§8.3, which still falsely claimed 06-11 = "end of Phase 3 / 3D done" — **3D has zero code**). The constraints (§1), the split (§6), the risk register (§5), and §8.6 Smart Rendering System framing all still hold and are not re-litigated here.
+
+### A. What is DONE (as-built, verified)
+
+The foundation + the 2D engine + the desk social spine are real and live. Specifically:
+
+- **The desk flow is the real product and it persists.** `/desk` is fully wired to Supabase — loads the shared feed on mount, every Done auto-publishes (optimistic add + row-id attach), drag-end persists position (session-scoped), other sessions' doodles arrive live via realtime, header shows ●Live/○Connecting/○Offline status. `/desk` is the primary CTA from home + `/public`. Round-trip VERIFIED against the live DB (insert/update/select/delete). Pan/zoom in scope (~25%–400%). Add-doodle popup (`DrawPanel`) has the full input trio (Draw · Upload SVG · Upload image-stub).
+- **Smart Hachure engine + `/audit`.** The 6-axis shading sub-system runs across 197 catalog shapes; `/audit` is both the regression surface and the smart-layer training dataset (`project_smart_layer_foundation_via_audit`). Golden baseline **v2 BLESSED** (`audit-runs/golden-labels.v2.json`) is the regression anchor.
+- **Gap-sweep critical fixes landed** (06-11): demo-blocking nav fixed (judges reach `/desk`), `index.html` retitled "Desk Doodles" + OG/Twitter meta, **stored-XSS hole closed** (`sanitizeSvgMarkup` DOMPurify on read), `dompurify@^3` added (Make-safe pure-JS).
+- **Classifier recall-hole FIXED with receipts** — root-tonal rules 0.55→0.70; golden-diff shows 140 flips across 67 shapes, ALL source-darkness 1.00 (pure-black details that were silently rendering as empty outlines now get hachure); visual A/B confirms light regions unchanged. Sebs blessed → v2 golden.
+- **Dots determinism shipped** — runtime rough.js prototype patch (`lib/patchRoughDots.ts`, Make-safe), seeded jitter. dotScatter (stipple) + dotPattern (newsprint) made real.
+- **Knowledge base + research docs** — `docs/knowledge/` (00-INDEX + 10 pages) complete; `21-research-3d-pipeline-and-style-translation.md` v1.2 (822 lines, 55 citations, all 17 asks); simplification (22), Suzanne brief (23), classifier (24) research docs on disk; **`docs/design/object-model-and-desk-architecture.md`** (the multi-desk social architecture this re-baseline sequences against).
+- **Supabase wired** — project `desk-doodles` live; `supabase.ts` client with Make-safe baked fallbacks; `schema.sql` pasted ("Success"); fal.ai key staged in `.env.local` (no credits yet — fine until 3D-hard).
+- **Chrome/system scaffold** — `lib/chromeStyles.ts` (PILL/CTA/SECTION_LABEL) + shared `CollapsiblePanel` + per-cluster collapse in `SmartHachureChrome`; pill-everywhere conformance done. (This is the WORKING SCAFFOLD only — see decision §C-2.)
+
+### B. What REMAINS (the ~7-day build)
+
+Three big things, all in scope per the §C-1 decision (build all three, not one spine):
+
+1. **The multi-desk social system** — grow the object from blob → rich record, then the views: object surface (Sandbox-first), object card + naming-as-label, multi-desk caps/gallery/names, optional identity handle, desk craft surface. Per the build order in `docs/design/object-model-and-desk-architecture.md`.
+2. **The 3D round-trip (the wedge)** — M6/M7/M8. Easy path first (Free Stroke Rod/Extrude + bi-directional flip + SVG-style→3D port), then the character-preserving hard path (vision-LLM router → Tripo / TRELLIS-via-fal). "The user's hand survives the round-trip" — the unoccupied competitive pole.
+3. **The demo video (M13)** — biggest single scoring factor for the $50k Grand. Not started.
+
+Plus two infra gates that don't exist yet:
+
+- **Heartbeat M10** — Supabase auto-pause guard (5-day cron Edge Function). Doesn't exist → live-demo-dead risk at judging if forgotten (R4).
+- **Own design + motion language** (M11) — the Day 12-13 pass where Desk Doodles diverges from the portfolio scaffold into its own voice (§C-2).
+
+### C. Decisions LOCKED 2026-06-11 (Sebs)
+
+1. **Build ALL THREE great things, not one spine.** Earlier framing asked "demo spine = wedge (hand→3D) vs social desk." **Resolved: do both + the video.** The wedge 3D round-trip, the social desk system, AND the demo video are all in scope. Sequence them (§D), don't pick one.
+2. **Desk Doodles earns its OWN design + motion language at the Day 12-13 pass** — NOT a portfolio reskin (`project_desk_doodles_own_design_language`). The portfolio tokens (W1/W1-D, ISe ladder, locked spacing, pill chrome) are the WORKING SCAFFOLD used to move fast during the build. The M11 pass is where Desk Doodles diverges into its own color personality / type voice / motion character / card-desk-drawer craft — rooted in Sebs's taste so it still reads as him, but a distinct voice. This **supersedes** the CLAUDE.md / §2.x "don't invent a new design system mid-makeathon" line (that was a speed constraint = don't stop mid-build to systematize, NOT a mandate to ship portfolio-flat).
+3. **Keep session-UUID identity for the demo.** Identity stays the client-minted localStorage UUID (`session.ts`) through submission. The anon-auth swap (`signInAnonymously()` → real RLS + free real-account upgrade later) is **post-makeathon** — it carries a migration either way, and the demo doesn't need it. (The design doc's "swap now" recommendation is acknowledged but deferred by this decision.)
+4. **Object cap = 50 per public desk.** The research-backed Lighthouse-headroom default (50 × 20–80 DOM nodes stays under the ~800-node warn line). Drives the auto-spawn-at-cap → desk N+1 transaction.
+5. **Sandbox before Edit.** The object surface ships **Sandbox mode first** (re-renders someone else's markup through viewer config, writes nothing — lowest risk, exactly the S12 mechanism). Edit-after-place comes second and needs source-stroke retention (a real slice — strokes are currently discarded at Done), which is **post-makeathon** unless time remains.
+
+### D. Day-by-day — 06-11 through 06-18 (THE current grid)
+
+One coherent sequence. Build-full default per `feedback_build_full_dont_self_stop_at_mvp` — the per-day list is the floor; push into the next block if a day finishes early. Sebs calls time.
+
+**Day 06-11 (today) — Record + Sandbox + commit + heartbeat scaffold**
+- **Grow the record** (design doc build-order #1): add the config snapshot (style + modifier values) + `name` / `why` columns to the object; keep blob rendering working. This is the data shape S12/S13 + every view below already require.
+- **Object surface, Sandbox mode FIRST** (#2, decision §C-5): evolve `DrawPanel` into the one-surface-three-modes shell; wire `DeskPage.activeSurface: {mode, objectId?} | null` single-slot state so nesting is structurally impossible. Sandbox re-renders others' markup through viewer config, ✕ Discard writes nothing.
+- **COMMIT the overdue tree** (2+ days uncommitted: chrome+panels, conformance batch, dots determinism, knowledge base, research docs, /desk flow + DrawPanel + uploads, golden v1/v2, supabase wiring). Commit gate is Sebs's go.
+- **Heartbeat M10 stub** if time — Supabase Edge Function skeleton (wire the cron Day 17).
+
+**Day 06-12 — Object views: inspect + quick-actions + card + naming**
+- **Per-object Inspect + lightweight quick-actions** (#3): open / delete / remix as a trivially-dismissible selection chip (NOT a pinned floating toolbar — the Miro anti-pattern). Desk object delete UI (✕) — `deleteDoodle` exists, UI missing.
+- **Object card view + naming-as-label** (#4): TCG-tall card, render as art, graphite name-banner (the name IS the ML label), capped why-line, handle/anon footer. A view of the record — presentation only.
+
+**Day 06-13 — Multi-desk + 3D easy path begins**
+- **Multi-desk** (#5): write **schema-v2** (additive `desks` table + `doodles.desk_id` FK + cap 50 + auto-spawn RPC with partial-unique `is_open` index), `listDoodlesForDesk` / `listDesks` / `getOpenDesk`, gallery grid + recents strip, `preview_svg` thumbnail cached at desk-close, deterministic fun names (xmur3→mulberry32 from the Sebs-themed pools).
+- **3D easy path STARTS (M6):** port Free Stroke engine lib (`geometry-engines.ts`, `stroke-processing.ts`, `solid-mask.ts`, `solid-vector.ts` from `SXM4434/free-stroke`), drop Next.js imports, wire Rod (TubeGeometry) + Extrude (ExtrudeGeometry). cannon-es, not Rapier.
+
+**Day 06-14 — 3D round-trip core (M7/M8)**
+- **Bi-directional SVG ↔ 3D flip (M7)** with cached intermediate (content-hash → reuse cached GLB; OPFS for GLB, IndexedDB for metadata per the pipeline research).
+- **SVG-style → 3D port (M8, the headline):** rough-handdrawn → EdgesGeometry → silhouette → screen-space hachure post-process (`@react-three/postprocessing`); Clean / Outline / Wireframe easy variants. Visual sign-off — style must carry over so the flip feels coherent.
+
+**Day 06-15 — 3D hard path (the wedge) + identity + desk craft**
+- **Character-preserving hard path:** vision-LLM router (Claude/GPT-4o/Gemini analyze → route engine) → Tripo / TRELLIS-via-fal Edge Function. Ship with a CACHED example as fallback (external API failure can't kill the demo moment). **Gated on Sebs API prereqs (§E).**
+- **Optional identity Layer 1** (#6): deterministic generated handle from the session UUID (Keep / Reroll / Type-your-own) — additive, skippable, never a gate. Session-UUID stays (§C-3).
+- **Desk craft surface** (#6): feTurbulence paper-grain (NOT wood/cork), Comeau layered hue-tinted shadows so objects sit not float.
+
+**Day 06-16 — Own design + motion language (M11) + buffer absorb**
+- **The divergence pass (§C-2):** harvest the accumulated vocabulary (chromeStyles, 260ms panel motion) → Desk Doodles' own color/type/motion/craft language. Held to the no-cheap-polish craft bar. **The flow is the craft work** (per the design doc) — how the morphing panel transitions, how identity feels invitational, how creating feels like minting a collectible, how the desk feels like a place.
+- Absorb any slip from 06-11..06-15 here.
+
+**Day 06-17 — Demo video shoot/edit + final Make checkpoint + heartbeat live**
+- **Demo video (M13):** script + shot list (drafted start-of-day), shoot, edit the 5-min main + 30-sec social cut. Must show: the work, the idea, **the problem** (*"designers sketch at their desks constantly — no shared space makes that creative habit social and visible"*), the workflow, the wedge (hand survives the round-trip). Figma Weave for motion assets / Figma Agent for logo + intro visuals + UI polish (Innovative-Workflow multi-tool positioning).
+- **Make upload checkpoint (final):** push full app state; test on PUBLISHED URL not just preview.
+- **Heartbeat M10 cron wired + fired** — prevents 7-day Supabase auto-pause across judging (R4).
+
+**Day 06-18 — SUBMISSION ONLY (hard deadline 11:59 PM PDT)**
+- **NO build work.** All code locked end of 06-17.
+- Confirm `*.figma.site` URL works on the PUBLISHED surface · heartbeat ping fired · upload demo videos · share Make file to Figma Community · social post `#ConfigMakeathon` (+ `@figma` on this final post only, per `feedback_selective_brand_tagging`) · submit on Contra.
+
+> **Video timing note:** the task brief floated "script Day 12, shoot/edit Day 12-13." With all three big things in scope, the video is anchored to **06-17** (after the build is feature-complete) so it can show the finished wedge + social desk rather than a half-built app. Script can be drafted incrementally from 06-12 onward; the shoot/edit block is 06-17. If 3D-hard slips, the video shoots against the easy-path round-trip + the social desk — still a complete story.
+
+### E. Sebs-side prerequisites (OPEN — dated to-do, some are GATING)
+
+| Item | Why it gates | Need-by |
+|---|---|---|
+| **Paste `harden-v1.sql`** | LIVE SECURITY HOLE until pasted — current anon policies let any visitor DELETE/UPDATE the whole feed via the public key; also tightens INSERT svg cap 1MB→64KB. On clipboard, written, NOT pasted. | **NOW (06-11)** |
+| **Paste schema-v2 (multi-desk)** | Multi-desk system (Day 06-13) can't ship without the `desks` table + `desk_id` FK + spawn RPC. schema-v2.sql does not exist yet — write it Day 06-13, then Sebs pastes. | 06-13 |
+| **Tripo API key rotation** | 3D-hard path (Day 06-15) calls Tripo; key has been pending rotation since an early session. | before 06-15 |
+| **fal.ai credits** | TRELLIS-via-fal is the dual-API in the hard path; account currently has $0 credits (~$5 covers dozens of gens). | before 06-15 |
+| **Make local-codebase beta email** | Daily check; if granted, switches to continuous sync and kills the manual-upload friction. | daily |
+
+### F. What this re-baseline does NOT change
+
+- §1 constraints, §1.5 prize targeting (still: Grand conditional · Runner-Up / Innovative-Workflow / Build-in-Public / Community-Favorite strong · Building-with-Purpose don't-target), §4.5 git workflow, §5 risk register, §6 build-split, §7 D-decisions, §8.6 Smart Rendering System framing — all still hold.
+- The Smart Hachure locked contract (`09-LOCKED-MODEL.md` I-1..I-14) is untouched and sacred.
+- Build-in-Public stays a designated-day workstream (§8.5), not a daily tax.
 
 ---
 
@@ -14,7 +116,7 @@ This doc is the executable plan. Locked decisions live here. Open questions are 
 - Winners announced June 23 at Config.
 - Effective build budget = ~12 working days (no buffer day — submission Day 14 includes all upload + paperwork + social shares).
 
-### 1.2. Figma Make hard constraints (per `18-figma-make-research.md`)
+### 1.2. Figma Make hard constraints (per `20-research-figma-make-capabilities.md`)
 - **No monorepo / workspace support.** Make installs from public npm. `workspace:*` deps don't resolve. `pnpm-workspace.yaml` does nothing. **Desk Doodles is a single self-contained Vite app — every dependency lives inside its `package.json`, every file lives inside its `src/`.**
 - **No bulk file upload.** Manual paste-back per file, OR attach up to 10 files per prompt (each ≤1 MB). Each upload is friction.
 - **Make → GitHub is one-way push.** GitHub → Make is manual. Push from Make overwrites whatever's in GitHub.
@@ -494,23 +596,25 @@ ConFigMakeathon on Contra. Solo allowed. Not FigBuild. **Resolved.** Sebs to sti
 - Smoke test Rapier WASM in Make
 - Sebs: request beta + verify team rule + rotate Tripo
 
-### 8.3. Critical dates (REVISED 2026-06-06 — earlier draft had off-by-one)
-- 2026-06-04: plan locked
-- 2026-06-05: Phase 0 closeout + Rapier smoke test verdict
-- 2026-06-06 (today, real): Day 5 fork begins
-- 2026-06-08: end of Phase 1 (fork + app shell done) — Make checkpoint #1
-- 2026-06-11: end of Phase 3 (3D mode + SVG-style-to-3D port done)
-- 2026-06-13: end of Phase 4 (physics + polish + demo video start) — Make checkpoint #2
-- 2026-06-15: Day 14 (SUBMISSION-ONLY day, all build work locked end of 2026-06-14)
-- 2026-06-16 to 2026-06-17: buffer days (Build-in-Public publish push if clean, breakage recovery otherwise)
-- **2026-06-18 11:59 PM PDT: HARD DEADLINE** — final submission filed
+### 8.3. Critical dates (RE-BASELINED 2026-06-11 — supersedes the stale 06-06 grid)
+
+> The old grid below the line claimed "2026-06-11 = end of Phase 3 / 3D done." **That is FALSE — 3D has zero code as of 06-11.** The real as-built state and the corrected day grid are in the **RE-BASELINE 2026-06-11** section at the top of this doc. This block is kept only to mark the off-by-one drift the gap sweep caught.
+
+**Corrected dates (governing — see §D of the re-baseline for the per-day build):**
+- 2026-06-11 (today): desk flow live + persists · Smart Hachure + audit · gap-sweep critical fixes · classifier recall-hole fix · dots determinism · knowledge base · research docs · supabase wired. **3D = not started.** Record + Sandbox + commit begin today.
+- 2026-06-12: object views (inspect / quick-actions / card / naming)
+- 2026-06-13: multi-desk (schema-v2) + 3D easy path starts (Free Stroke Rod/Extrude)
+- 2026-06-14: 3D round-trip core (bi-directional flip + SVG-style→3D port)
+- 2026-06-15: 3D hard path (vision-LLM router → Tripo/TRELLIS) + identity + desk craft
+- 2026-06-16: own design + motion language (M11) + buffer absorb
+- 2026-06-17: demo video shoot/edit + final Make checkpoint + heartbeat live
+- **2026-06-18 11:59 PM PDT: HARD DEADLINE** — SUBMISSION ONLY, no build work
 - 2026-06-23: winners announced at Config
-- 2026-06-05: Day 1 setup + de-risk
-- 2026-06-09: end of Phase 1 (SVG mode shipped to Make checkpoint #1)
-- 2026-06-12: end of Phase 2 (3D mode + Supabase integrated)
-- 2026-06-15: end of Phase 3 (intelligence layer + polish; Make checkpoint #2)
-- 2026-06-18: end of Phase 4 (stretch + buffer; final upload)
-- 2026-06-19: submission day
+
+**— stale 06-06 grid (off-by-one, DO NOT follow; kept as drift evidence only) —**
+- ~~2026-06-11: end of Phase 3 (3D mode + SVG-style-to-3D port done)~~ FALSE — 3D had zero code on 06-11
+- ~~2026-06-13: end of Phase 4 (physics + polish + demo video start) — Make checkpoint #2~~
+- ~~2026-06-15: Day 14 (SUBMISSION-ONLY day)~~ — actual submission day is 2026-06-18
 
 ---
 
@@ -646,7 +750,7 @@ Each is ~30-60 min of polish — the raw material exists.
 - Foundation contract: `09-LOCKED-MODEL.md` (will receive I-11..I-14 update per playground decoding)
 - Scope audit: `18-scope-audit.md`
 - Playground interconnection: `19-research-cross-axis-interconnection.md` (to be written from agent #2 output)
-- Figma Make capabilities: `18-figma-make-research.md` (to be written from agent #1 output — note conflicts with `18-scope-audit.md`; renumber to 20)
+- Figma Make capabilities: `20-research-figma-make-capabilities.md`
 - Free Stroke source: `SXM4434/free-stroke` GitHub (private)
 - Free Stroke video: `~/Desktop/style/Screen Recording 2026-06-04 at 2.00.46 PM.mov`
 - Memory anchor: `project_desk_doodles_makeathon.md`

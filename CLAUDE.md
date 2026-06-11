@@ -55,7 +55,7 @@ GitHub: `https://github.com/SXM4434/desk-doodles` (public, for Build-in-Public).
 - **Backend:** Supabase (for cached conversions + public canvas)
 - **Drawing primitive:** perfect-freehand
 - **SVG AST:** svgson (available for future structural work)
-- **Design system:** portfolio language (W1/W1-D + ISe ladder + locked spacing) — don't invent new design system mid-makeathon
+- **Design system:** portfolio tokens (W1/W1-D + ISe ladder + locked spacing) are the WORKING SCAFFOLD only — Desk Doodles earns its OWN design + motion language at the Day 12-13 system pass (per project_desk_doodles_own_design_language). Don't stop mid-build to systematize; don't ship a portfolio reskin either.
 
 This stack is locked. Don't add Rapier (test repeatedly broke in Make). Don't add other physics libs. Smart Hachure stays inside SVG mode.
 

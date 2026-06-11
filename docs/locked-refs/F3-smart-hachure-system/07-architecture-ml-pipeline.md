@@ -1,3 +1,5 @@
+> **SUPERSEDED (task #38, 2026-06-10):** The classifier.ts / techniqueMap.ts pipeline designs below are superseded by 09-LOCKED-MODEL.md — its §7 kill-list and I-1..I-14 invariants override this doc. Read 09 FIRST. EXCEPTION — still live: the "Per-shape breakage catalog" audit-as-dataset section (the `/audit` catalog remains the foundational dataset for the manual-toggle smart layer). Everything else is research history only.
+
 # 07 — ML Pipeline Architecture (inference-only, no training)
 
 **Date:** 2026-06-03

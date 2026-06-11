@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 200">
+  <!-- Gradient darkness sampler — eyeball the 2026-06-10 average-stop-darkness
+       fix. Upload via /canvas → Upload SVG → Rough hand-drawn. Expected hatch
+       density should ORDER like the labels: pale &lt; mid &lt; dark, radial ≈ mid.
+       Before the fix all six rendered identical (uniform 0.75 catch-all). -->
+  <defs>
+    <linearGradient id="gPale" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#cccccc"/>
+    </linearGradient>
+    <linearGradient id="gMid" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+    <linearGradient id="gDark" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#222222"/><stop offset="100%" stop-color="#000033"/>
+    </linearGradient>
+    <linearGradient id="gWarm" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#884400"/><stop offset="100%" stop-color="#ffcc88"/>
+    </linearGradient>
+    <radialGradient id="gRadial">
+      <stop offset="0%" stop-color="#111111"/><stop offset="100%" stop-color="#eeeeee"/>
+    </radialGradient>
+    <linearGradient id="gFadeOut" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#000000" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- expect: nearly NO marks (~0.1 darkness) -->
+  <rect x="15"  y="30" width="120" height="70" fill="url(#gPale)" stroke="#111111"/>
+  <!-- expect: medium hatch (~0.5) -->
+  <rect x="165" y="30" width="120" height="70" fill="url(#gMid)" stroke="#111111"/>
+  <!-- expect: dense hatch (~0.9) -->
+  <rect x="315" y="30" width="120" height="70" fill="url(#gDark)" stroke="#111111"/>
+
+  <!-- expect: light-medium (~0.4, warm tones average mid-light) -->
+  <rect x="15"  y="115" width="120" height="70" fill="url(#gWarm)" stroke="#111111"/>
+  <!-- expect: medium (~0.5, radial resolves same as linear) -->
+  <rect x="165" y="115" width="120" height="70" fill="url(#gRadial)" stroke="#111111"/>
+  <!-- expect: medium-ish (~0.55 — black stops, but opacity-weighted down) -->
+  <rect x="315" y="115" width="120" height="70" fill="url(#gFadeOut)" stroke="#111111"/>
+</svg>

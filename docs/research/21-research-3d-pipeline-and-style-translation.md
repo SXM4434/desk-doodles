@@ -592,6 +592,18 @@ NPR-on-3D post-process applies the user's Style choice (§6)
 
 **SVG note:** **No API accepts SVG natively.** Rasterize first (`html2canvas` or `canvas.toBlob` at 1024 px). One line of code, but call it out.
 
+### Landscape addendum — Suzanne + the three-poles map (added 2026-06-10, post-v1.2)
+
+Discovered after the v1.2 survey: **Suzanne** (suzanne3d.studio, Suzanne 3D Inc., v1.0 2026-05-15) — AI browser 3D studio outputting **editable parametric CAD** (OpenSCAD/STEP/3MF + chat-based parametric refinement), 3D-printing-centric, $15/mo Pro, sketch-to-3D at 2 credits. Full cited brief: `23-brief-suzanne3d.md`. Key facts for this pipeline:
+
+- **API is enterprise-only, no public docs** → NOT usable for the makeathon. Day 13 picks above are unchanged.
+- **Post-makeathon router candidate:** Suzanne is a *parametric route* the vision-LLM router could add — functional doodles (a phone stand, a hook, a box) → clean printable CAD via Suzanne; expressive doodles → mesh-gen (Tripo/TRELLIS) + SVG-port styling. Needs API access via the founder relationship (Sebs is connected on LinkedIn; outreach thread active 2026-06-10).
+- **The three-poles map** (sharpens §13's wedge): every player optimizes one fidelity target —
+  1. **Fidelity-to-intent** — Suzanne ("what did you mean? here's clean editable CAD"; explicitly asks users for sanitized, closed linework)
+  2. **Fidelity-to-mesh** — Tripo / Meshy / Rodin / TRELLIS (accurate generic 3D; stylization is texture-stage only, per §5c [G1]-[G7])
+  3. **Fidelity-to-the-hand** — UNOCCUPIED. Desk Doodles' pole. Demo-video contrast line: "other tools want your drawing sanitized; Desk Doodles wants your hand."
+- Related practitioner data point: the founder's YC-hackathon project Atlas (github.com/SamanthaJeanneb/YC-Conversational-Hackathon) ships **Hunyuan 3.1 primary + Tripo3D fallback** for object generation — independent confirmation of our provider shortlist; her ordering rationale is an open question for the chat.
+
 ### Vision LLM router — the novel territory
 
 Agent 2 found **no documented production case study** of using a vision LLM as a pre-step to route to a 3D generator. The closest published work is research-stage:

@@ -1,3 +1,5 @@
+> **SUPERSEDED (task #38, 2026-06-10):** The classifier.ts / techniqueMap.ts designs below are superseded by 09-LOCKED-MODEL.md — its §7 kill-list and I-1..I-14 invariants override this doc. Read 09 FIRST. Kept as research history only.
+
 # 06 — Smart Hachure System: Technical Core Architecture
 
 **Date:** 2026-06-03

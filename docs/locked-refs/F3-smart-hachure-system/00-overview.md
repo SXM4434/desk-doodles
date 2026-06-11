@@ -1,3 +1,5 @@
+> **SUPERSEDED (task #38, 2026-06-10):** The 7-9 tonal-role taxonomy + rule-based classifier recommended below was KILLED by the locked contract. Read 09-LOCKED-MODEL.md FIRST — its §7 kill-list and I-1..I-14 invariants override everything here. This doc is kept as research history only.
+
 # Smart Hachure System — research + architecture
 
 ## Status

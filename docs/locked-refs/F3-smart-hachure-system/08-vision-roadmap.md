@@ -1,3 +1,5 @@
+> **Note:** roadmap predates the locked contract (09) and the makeathon plan — directional only.
+
 # 08 — Vision Roadmap (exploration space, not specs)
 
 **Date:** 2026-06-03

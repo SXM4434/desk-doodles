@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@react-three/cannon": "^6.6.0",
@@ -14,6 +15,7 @@
     "@supabase/supabase-js": "^2.107.0",
     "cannon-es": "^0.20.0",
     "culori": "^4.0.2",
+    "dompurify": "^3.4.9",
     "framer-motion": "^11.0.0",
     "perfect-freehand": "^1.2.3",
     "polygon-clipping": "^0.15.7",
@@ -27,6 +29,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
     "@types/culori": "^4.0.1",
+    "@types/dompurify": "^3.0.5",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@types/three": "^0.169.0",

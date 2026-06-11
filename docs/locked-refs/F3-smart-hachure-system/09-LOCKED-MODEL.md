@@ -385,3 +385,9 @@ If I notice myself drafting any of these, STOP. Restate the contract section bei
 - [ ] Sebs has approved the §9 anti-drift discipline
 
 Until the final three boxes are checked, no code is touched.
+
+---
+
+## 11. Post-lock rulings
+
+**R-1 · kink endpoint KEPT (2026-06-10, Sebs).** D-makeathon-6 had recommended dropping `kink` as a fake toggle (it rendered identically to `protrude` in both apps at the time). Code verification 2026-06-10 found the Day 9 drawn-canvas overhaul made it genuinely distinct: `applyEndpointBehavior` (SvgStyleTransform.tsx ~581-619) gives kink a random-angle push at EVERY anchor while protrude remains a structured endpoint extension — different geometry classes in all live render paths. Sebs confirmed KEEP. The Endpoint dropdown ships all four values (clean / protrude / long-overshoot / kink) as real options; D-makeathon-6's drop recommendation is closed-superseded.
