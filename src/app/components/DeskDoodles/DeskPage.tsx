@@ -41,6 +41,7 @@ import {
   useMinimizeUi,
   usePanelOpen,
 } from '../chrome/CollapsiblePanel';
+import { PanelBoundary } from '../chrome/PanelBoundary';
 import { DrawPanel } from './DrawPanel';
 import { DrawerPanel } from './DrawerPanel';
 import {
@@ -205,6 +206,13 @@ type DeskObject = {
    *  so by the time an object is on the desk this is never null in practice
    *  (the null branch survives as a render-path safety only). */
   renderConfig?: ObjectRenderConfig | null;
+  /** Raw render_config fingerprint (JSON of the row's jsonb, Rock B): lets
+   *  the realtime UPDATE handler keep the existing parsed `renderConfig`
+   *  REFERENCE when the config didn't actually change — a remote drag is a
+   *  position-only update, and re-parsing would hand DeskObjectArt a fresh
+   *  object that busts its memo and re-runs the whole rough.js pipeline for
+   *  a 2px move. Undefined on optimistic adds (first echo re-parses once). */
+  configRaw?: string;
   /** PUBLISH HONESTY (UX-audit fix 3): undefined = saved (or first attempt
    *  in flight — quiet, the common case resolves in well under a second);
    *  'retrying' = a publish attempt failed and a backoff retry is scheduled;
@@ -581,6 +589,8 @@ function rowToObject(r: DoodleRow): DeskObject {
     // rows pin to the frozen DEFAULT snapshot (UX-audit fix 1) so the Pen
     // scope touches nothing placed; the Desk lens still sweeps them.
     renderConfig: parseRenderConfig(r.render_config) ?? LEGACY_FREEZE_CONFIG,
+    // Fingerprint for the realtime UPDATE handler's no-change fast path.
+    configRaw: JSON.stringify(r.render_config ?? null),
   };
 }
 
@@ -785,6 +795,68 @@ export function DeskPage() {
 
   const isViewingOpenDesk = desk == null || desk.id === openDeskId;
 
+  // ── REALTIME DELETE + UPDATE (Rock B 2026-06-12) ─────────────────────────
+  // Subscriptions were INSERT-only, so another viewer's deletes and moves
+  // stayed stale until reload. These two handlers close that gap; both are
+  // dep-free (refs only) so the subscription effects never re-arm over them.
+
+  // A row vanished server-side → drop it from the desk. Desk-scoping is the
+  // id match itself (only the viewed desk's rows are in state — see the
+  // bindFeedHandlers note in publish.ts: DELETE events can't be desk-filtered
+  // server-side because the old record carries only the PK). Applies to OWN
+  // rows too (delete from another tab / the drawer surface): the optimistic
+  // paths already removed theirs, so a second pass is a no-op. A delete is
+  // final — it lands even mid-drag (unlike updates, there is no hand to
+  // fight: the row is gone). If the deleted row was your own, the drawer
+  // index refetches so the one-record rule holds everywhere.
+  const handleRemoteDelete = useCallback(
+    (oldId: string) => {
+      const victim = objectsRef.current.find((o) => o.dbId === oldId);
+      if (!victim) return;
+      setObjects((prev) => prev.filter((o) => o.dbId !== oldId));
+      if (victim.ownerSession === getSessionId()) bumpDrawer();
+    },
+    [bumpDrawer],
+  );
+
+  // A row changed server-side → apply it in place: position (x/y/rotation),
+  // meta (name/why), restyle (render_config) and re-draw (svg) all arrive as
+  // the full new row. EXCEPTION — never fight the hand: if the local user is
+  // actively dragging THIS object, skip the event entirely (their pointer
+  // owns the truth; their own drag-end persist wins the record anyway).
+  // Own-session echoes are NOT skipped on purpose: a second tab of the same
+  // session is a real viewer, and a same-values echo is a cheap no-op (the
+  // configRaw fingerprint keeps the parsed config reference — and therefore
+  // the memoized art — stable when only position moved).
+  const handleRemoteUpdate = useCallback((row: DoodleRow) => {
+    if (draggingIdRef.current) {
+      const dragged = objectsRef.current.find((o) => o.id === draggingIdRef.current);
+      if (dragged && dragged.dbId === row.id) return; // don't fight the hand
+    }
+    setObjects((prev) =>
+      prev.map((o) => {
+        if (o.dbId !== row.id) return o;
+        const rawCfg = JSON.stringify(row.render_config ?? null);
+        const cfgChanged = rawCfg !== o.configRaw;
+        return {
+          ...o,
+          x: row.x,
+          y: row.y,
+          rotation: row.rotation,
+          name: row.name ?? null,
+          why: row.why ?? null,
+          // sanitize on read — same XSS boundary as rowToObject. The result
+          // is a string, so an unchanged svg compares === in the art memo.
+          svgMarkup: sanitizeSvgMarkup(row.svg),
+          renderConfig: cfgChanged
+            ? (parseRenderConfig(row.render_config) ?? LEGACY_FREEZE_CONFIG)
+            : o.renderConfig,
+          configRaw: rawCfg,
+        };
+      }),
+    );
+  }, []);
+
   // Load one desk's doodles + (re)attach a desk-scoped realtime subscription.
   // Used on mount, when ?desk switches the view, and when a publish spawns a
   // fresh desk. Replaces the previous desk subscription so realtime stays
@@ -813,15 +885,20 @@ export function DeskPage() {
         if (token === loadTokenRef.current) setFeedStatus('offline');
       });
 
-    const unsubscribe = subscribeDoodlesForDesk(target.id, (row) => {
-      // Own inserts are already on the desk optimistically — skip them.
-      if (row.session_id === getSessionId()) return;
-      setObjects((prev) =>
-        prev.some((o) => o.dbId === row.id) ? prev : [...prev, rowToObject(row)],
-      );
+    const unsubscribe = subscribeDoodlesForDesk(target.id, {
+      onInsert: (row) => {
+        // Own inserts are already on the desk optimistically — skip them.
+        if (row.session_id === getSessionId()) return;
+        setObjects((prev) =>
+          prev.some((o) => o.dbId === row.id) ? prev : [...prev, rowToObject(row)],
+        );
+      },
+      // Rock B: deletes/moves/restyles propagate live (were reload-only).
+      onUpdate: handleRemoteUpdate,
+      onDelete: handleRemoteDelete,
     });
     deskSubRef.current = unsubscribe;
-  }, []);
+  }, [handleRemoteUpdate, handleRemoteDelete]);
 
   // ── Mount: resolve which desk to view, else fall back to the flat feed ────
   useEffect(() => {
@@ -858,11 +935,16 @@ export function DeskPage() {
           .catch(() => {
             if (!cancelled) setFeedStatus('offline');
           });
-        flatUnsub = subscribeDoodles((row) => {
-          if (row.session_id === getSessionId()) return;
-          setObjects((prev) =>
-            prev.some((o) => o.dbId === row.id) ? prev : [...prev, rowToObject(row)],
-          );
+        flatUnsub = subscribeDoodles({
+          onInsert: (row) => {
+            if (row.session_id === getSessionId()) return;
+            setObjects((prev) =>
+              prev.some((o) => o.dbId === row.id) ? prev : [...prev, rowToObject(row)],
+            );
+          },
+          // Rock B: same live delete/move propagation on the flat fallback.
+          onUpdate: handleRemoteUpdate,
+          onDelete: handleRemoteDelete,
         });
         return;
       }
@@ -906,7 +988,9 @@ export function DeskPage() {
     // reloadNonce: connectivity restore / auto-retry / Retry pill — re-runs the
     // whole resolve (fresh loads + fresh realtime subscriptions) so recovering
     // from offline actually reconnects instead of just relabeling the chip.
-  }, [loadDeskView, deskParam, reloadNonce]);
+    // The two remote handlers are stable callbacks (ref-based) — listed for
+    // lint truth, they never actually re-arm this effect.
+  }, [loadDeskView, deskParam, reloadNonce, handleRemoteUpdate, handleRemoteDelete]);
 
   // Surface a transient "a fresh desk opened" note (auto-clears).
   const announceFreshDesk = useCallback((name: string) => {
@@ -916,6 +1000,12 @@ export function DeskPage() {
   }, []);
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  // Live mirror for the realtime UPDATE handler (Rock B): a remote echo of
+  // our own in-flight drag (or a foreign update racing the local hand) must
+  // never yank the object out from under the cursor — the handler checks
+  // this ref at event time. Render-time mirror, same pattern as objectsRef.
+  const draggingIdRef = useRef<string | null>(null);
+  draggingIdRef.current = draggingId;
   // Every object press (own OR foreign) — pointer-up needs the pressed object
   // to tell click (open surface) from drag, and `mine` decides whether the
   // press may drag at all. draggingId stays own-objects-only.
@@ -1840,16 +1930,20 @@ export function DeskPage() {
             overflowY: 'auto',
           }}
         >
-          <DrawerPanel
-            open={drawerOpen}
-            refreshKey={drawerNonce}
-            viewedDeskId={desk?.id ?? null}
-            onPlace={placeFromDrawer}
-            onOpenDoodle={(row) => {
-              setActiveSurface(null); // one surface at a time
-              setDrawerRow(row);
-            }}
-          />
+          {/* PanelBoundary (Rock B): a drawer crash shows the quiet fallback
+              inside the panel — the desk canvas survives untouched. */}
+          <PanelBoundary label="drawer">
+            <DrawerPanel
+              open={drawerOpen}
+              refreshKey={drawerNonce}
+              viewedDeskId={desk?.id ?? null}
+              onPlace={placeFromDrawer}
+              onOpenDoodle={(row) => {
+                setActiveSurface(null); // one surface at a time
+                setDrawerRow(row);
+              }}
+            />
+          </PanelBoundary>
         </CollapsiblePanel>
 
         {/* THE DESK — full leftover viewport, objects scattered + draggable */}
@@ -2054,8 +2148,12 @@ export function DeskPage() {
             overflowY: 'auto',
           }}
         >
-          <PenPreview deskLens={deskLens} />
-          <SmartHachureChrome />
+          {/* PanelBoundary (Rock B): a pen-panel crash (preview squiggle or
+              chrome controls) fences here — the desk canvas survives. */}
+          <PanelBoundary label="pen-panel">
+            <PenPreview deskLens={deskLens} />
+            <SmartHachureChrome />
+          </PanelBoundary>
         </CollapsiblePanel>
       </div>
 
@@ -2063,12 +2161,17 @@ export function DeskPage() {
           rightInset/leftInset center it over the VISIBLE desk when the
           controls panel and/or drawer are open (UX-audit fix 4). */}
       {drawOpen && (
-        <DrawPanel
-          onDone={addObject}
-          onCancel={() => setDrawOpen(false)}
-          rightInset={rightOpen ? 360 : 0}
-          leftInset={drawerOpen ? 300 : 0}
-        />
+        // PanelBoundary (Rock B): a draw-popup crash unmounts the popup's own
+        // overlay with it — the popup-variant fallback places itself centered
+        // (Retry remounts a fresh draw session; Close returns to the desk).
+        <PanelBoundary label="draw-popup" variant="popup" onDismiss={() => setDrawOpen(false)}>
+          <DrawPanel
+            onDone={addObject}
+            onCancel={() => setDrawOpen(false)}
+            rightInset={rightOpen ? 360 : 0}
+            leftInset={drawerOpen ? 300 : 0}
+          />
+        </PanelBoundary>
       )}
 
       {/* The one object surface — click an object to inspect it. Edit (yours)
@@ -2079,6 +2182,11 @@ export function DeskPage() {
           const obj = objects.find((o) => o.id === activeSurface.objectId);
           if (!obj) return null;
           return (
+            <PanelBoundary
+              label="object-surface"
+              variant="popup"
+              onDismiss={() => setActiveSurface(null)}
+            >
             <ObjectSurface
               mode={activeSurface.mode}
               object={{
@@ -2098,10 +2206,17 @@ export function DeskPage() {
                   ? (svgMarkup, config) => {
                       // Re-draw saved: the desk object updates in place (svg +
                       // re-pinned config); persistence already ran in the surface.
+                      // configRaw tracks the new config so the realtime echo of
+                      // this very save is a reference-stable no-op (Rock B).
                       setObjects((prev) =>
                         prev.map((o) =>
                           o.id === obj.id
-                            ? { ...o, svgMarkup, renderConfig: parseRenderConfig(config) }
+                            ? {
+                                ...o,
+                                svgMarkup,
+                                renderConfig: parseRenderConfig(config),
+                                configRaw: JSON.stringify(config ?? null),
+                              }
                             : o,
                         ),
                       );
@@ -2113,10 +2228,15 @@ export function DeskPage() {
                   ? (config) => {
                       // Re-pin the desk object to the saved config immediately
                       // (no reload needed); persistence already ran in the surface.
+                      // configRaw tracks the save for echo stability (Rock B).
                       setObjects((prev) =>
                         prev.map((o) =>
                           o.id === obj.id
-                            ? { ...o, renderConfig: parseRenderConfig(config) }
+                            ? {
+                                ...o,
+                                renderConfig: parseRenderConfig(config),
+                                configRaw: JSON.stringify(config ?? null),
+                              }
                             : o,
                         ),
                       );
@@ -2141,12 +2261,19 @@ export function DeskPage() {
               rightInset={rightOpen ? 360 : 0}
               leftInset={drawerOpen ? 300 : 0}
             />
+            </PanelBoundary>
           );
         })()}
 
       {/* Drawer-card detailed view — full Edit surface for ANY of your rows,
           including ones on other desks. Saves/deletes refresh the drawer. */}
       {drawerRow && (
+        // PanelBoundary (Rock B): same popup fence for the drawer-card surface.
+        <PanelBoundary
+          label="drawer-surface"
+          variant="popup"
+          onDismiss={() => setDrawerRow(null)}
+        >
         <ObjectSurface
           mode="edit"
           object={{
@@ -2180,7 +2307,11 @@ export function DeskPage() {
             setObjects((prev) =>
               prev.map((o) =>
                 o.dbId === drawerRow.id
-                  ? { ...o, renderConfig: parseRenderConfig(config) }
+                  ? {
+                      ...o,
+                      renderConfig: parseRenderConfig(config),
+                      configRaw: JSON.stringify(config ?? null),
+                    }
                   : o,
               ),
             );
@@ -2190,7 +2321,12 @@ export function DeskPage() {
             setObjects((prev) =>
               prev.map((o) =>
                 o.dbId === drawerRow.id
-                  ? { ...o, svgMarkup, renderConfig: parseRenderConfig(config) }
+                  ? {
+                      ...o,
+                      svgMarkup,
+                      renderConfig: parseRenderConfig(config),
+                      configRaw: JSON.stringify(config ?? null),
+                    }
                   : o,
               ),
             );
@@ -2199,6 +2335,7 @@ export function DeskPage() {
           rightInset={rightOpen ? 360 : 0}
           leftInset={drawerOpen ? 300 : 0}
         />
+        </PanelBoundary>
       )}
     </div>
   );

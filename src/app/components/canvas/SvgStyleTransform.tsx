@@ -51,6 +51,12 @@ export const STYLE_PRESETS: Record<F3SvgStyle, Partial<F3ModifiersState>> = {
   // Rough-family styles set wobble: 1.0 (playground calibration baseline per I-11).
   'clean':           { wobble: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'none', fillStyle: 'hachure' },
   'outline-only':    { wobble: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0,   texture: 'none' },
+  // 'wireframe' is RETIRED (Rock B 2026-06-12, Sebs ratified — the SVG
+  // bounding-box stub rendered garbage on real art; real wireframe rides the
+  // 3D work post-makeathon). The id stays in the F3SvgStyle union so legacy
+  // persisted configs + per-style tables keep typechecking, which keeps this
+  // Record total — the entry is unreachable (no dropdown option, parsers
+  // reject the id), kept as the union's required key only.
   'wireframe':       { wobble: 0, bowing: 0, strokeWidth: 0.8, inkIntensity: 1.0, fillOpacity: 0, texture: 'none' },
   // 2026-06-08 default calibration bump per Sebs: each style should READ as
   // itself at the default thumbnail scale (~140px), not as near-clean. Prior
@@ -2178,47 +2184,17 @@ function cloneSvg(srcContainer: HTMLDivElement | null, dstContainer: HTMLDivElem
   return clone;
 }
 
-// ─── WIREFRAME — bounding-box per renderable child ─────────────────────────
-//
-// Per F3-toggle-architecture.md line 401 cross-path table: wireframe SVG render
-// = "Bounding-box / simplified outline only, no fills." 3D counterpart = Three.js
-// WireframeGeometry (renders all mesh triangle edges). The SVG analog adopted
-// here: replace each top-level child with its axis-aligned bounding rect, so a
-// compound shape (rect + circle + path) reads as a stack of boxes — the
-// engineering-drawing register the doc calls for.
-//
-// Distinct from outline-only (which preserves shape geometry, just strips fills).
-function applyWireframeTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
-  const children = Array.from(svgEl.children) as SVGElement[];
-  children.forEach((el) => {
-    const tag = el.tagName.toLowerCase();
-    // Preserve structural / non-renderable nodes + text (text stays legible).
-    if (tag === 'defs' || tag === 'style' || tag === 'title' || tag === 'desc' || tag === 'text') return;
-    let bbox: DOMRect | null = null;
-    try {
-      bbox = (el as unknown as SVGGraphicsElement).getBBox();
-    } catch {
-      return;
-    }
-    if (!bbox || bbox.width === 0 || bbox.height === 0) return;
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', String(bbox.x));
-    rect.setAttribute('y', String(bbox.y));
-    rect.setAttribute('width', String(bbox.width));
-    rect.setAttribute('height', String(bbox.height));
-    rect.setAttribute('fill', 'none');
-    const sourceStroke = el.getAttribute('stroke');
-    rect.setAttribute('stroke', sourceStroke && sourceStroke !== 'none' ? sourceStroke : 'var(--dir-text-primary)');
-    rect.setAttribute('stroke-width', String(m.strokeWidth));
-    rect.setAttribute('data-f3-wireframe', 'bbox');
-    el.replaceWith(rect);
-  });
-}
+// (applyWireframeTransform REMOVED — Rock B 2026-06-12, Sebs ratified. The
+// SVG "wireframe" stub replaced every child with its axis-aligned bounding
+// rect, which rendered bounding-box garbage on real drawn art. The option is
+// gone from F3_SVG_STYLES (no dropdown pick, parsers reject persisted ids →
+// legacy rows fall back to rough-handdrawn). Real wireframe = Three.js
+// WireframeGeometry on the 3D path, post-makeathon.)
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────
 
 const NEEDS_DOM_CLONE: F3SvgStyle[] = [
-  'rough-handdrawn', 'sketchy', 'bold-ink', 'stipple', 'risograph', 'wet-ink', 'charcoal', 'newsprint', 'wireframe',
+  'rough-handdrawn', 'sketchy', 'bold-ink', 'stipple', 'risograph', 'wet-ink', 'charcoal', 'newsprint',
 ];
 
 export function SvgStyleTransform({
@@ -2249,37 +2225,68 @@ export function SvgStyleTransform({
     return new URLSearchParams(window.location.search).get('smartHachure') !== '0';
   }, []);
   // Only the 4 rough-family styles run through Smart Hachure. Other styles
-  // (clean / outline-only / wireframe / wet-ink / charcoal / risograph /
-  // newsprint) keep their existing render path.
+  // (clean / outline-only / wet-ink / charcoal / risograph / newsprint)
+  // keep their existing render path.
   const useSmartHachure =
     smartHachureEnabled &&
     (style === 'rough-handdrawn' || style === 'sketchy' || style === 'bold-ink' || style === 'stipple');
 
+  // DEGRADE-TO-RAW warn-once latch (Rock B): the first transform throw per
+  // component instance logs one console.warn; later throws degrade silently
+  // (same honest fallback, no log spam from a desk full of poisoned objects).
+  const degradeWarnedRef = useRef(false);
+
   useEffect(() => {
-    if (!needsClone) {
-      if (fxRef.current) fxRef.current.innerHTML = '';
-      const cleanSvg = cleanRef.current?.querySelector('svg');
-      if (cleanSvg instanceof SVGSVGElement) applyTexture(cleanSvg, m.texture, style, m);
-      return;
+    // Canonical visibility every run — a prior DEGRADE-TO-RAW (catch below)
+    // flips these directly on the DOM, and React's style diffing won't put
+    // them back (it diffs against the previous vnode, not the live DOM). So
+    // every fresh transform attempt starts from the canonical layout.
+    if (cleanRef.current) cleanRef.current.style.display = needsClone ? 'none' : 'block';
+    if (fxRef.current) fxRef.current.style.display = needsClone ? 'block' : 'none';
+    try {
+      if (!needsClone) {
+        if (fxRef.current) fxRef.current.innerHTML = '';
+        const cleanSvg = cleanRef.current?.querySelector('svg');
+        if (cleanSvg instanceof SVGSVGElement) applyTexture(cleanSvg, m.texture, style, m);
+        return;
+      }
+      const clone = cloneSvg(cleanRef.current, fxRef.current);
+      if (!clone) return;
+      if (useSmartHachure) {
+        // NEW PATH — Smart Hachure System (full F3ModifiersState wired through
+        // so roughness · bowing · curveDamp · strokeWidth · multiStroke ·
+        // sketchingStyle · endpointBehavior · penTip all feed the outline jitter)
+        renderSmartHachure(clone, m, {
+          styleChoice: style as SmartHachureStyle,
+          inkColor: 'var(--dir-text-primary)',
+        });
+      } else if (isRoughFamilyStyle(style)) {
+        applyRoughTransform(clone, m);
+      } else if (style === 'risograph') {
+        applyRisographTransform(clone, m);
+      }
+      applyTexture(clone, m.texture, style, m);
+    } catch (err) {
+      // ── DEGRADE-TO-RAW (Rock B resilience) ─────────────────────────────
+      // The style engine threw mid-pass. Blanking the art (or letting the
+      // throw bubble to an error boundary and take the whole subtree) hides
+      // the user's work; the honest fallback is the SOURCE markup, unstyled:
+      // drop the half-transformed clone and show the raw children instead.
+      // The next state change re-runs this effect from the canonical layout
+      // above — degrade never sticks past the next successful pass.
+      if (fxRef.current) {
+        fxRef.current.innerHTML = '';
+        fxRef.current.style.display = 'none';
+      }
+      if (cleanRef.current) cleanRef.current.style.display = 'block';
+      if (!degradeWarnedRef.current) {
+        degradeWarnedRef.current = true;
+        console.warn(
+          '[SvgStyleTransform] style engine threw — rendering source markup unstyled:',
+          err,
+        );
+      }
     }
-    const clone = cloneSvg(cleanRef.current, fxRef.current);
-    if (!clone) return;
-    if (useSmartHachure) {
-      // NEW PATH — Smart Hachure System (full F3ModifiersState wired through
-      // so roughness · bowing · curveDamp · strokeWidth · multiStroke ·
-      // sketchingStyle · endpointBehavior · penTip all feed the outline jitter)
-      renderSmartHachure(clone, m, {
-        styleChoice: style as SmartHachureStyle,
-        inkColor: 'var(--dir-text-primary)',
-      });
-    } else if (isRoughFamilyStyle(style)) {
-      applyRoughTransform(clone, m);
-    } else if (style === 'risograph') {
-      applyRisographTransform(clone, m);
-    } else if (style === 'wireframe') {
-      applyWireframeTransform(clone, m);
-    }
-    applyTexture(clone, m.texture, style, m);
   }, [style, m, children, needsClone, useSmartHachure]);
 
   const wrapperStyle: CSSProperties = {
@@ -2287,9 +2294,9 @@ export function SvgStyleTransform({
     position: 'relative',
     opacity: m.inkIntensity < 1.0 ? m.inkIntensity : undefined,
     ['--f3-fill-opacity' as keyof CSSProperties]: String(m.fillOpacity),
-    // Consumed by outline-only + wireframe CSS rules (§7.B-1, §7.B-6). For
-    // rough-family styles the stroke-width is written inline by the rough.js
-    // render so this var is harmless.
+    // Consumed by the outline-only CSS rule (§7.B-1). For rough-family
+    // styles the stroke-width is written inline by the rough.js render so
+    // this var is harmless.
     ['--f3-stroke-width' as keyof CSSProperties]: String(m.strokeWidth),
     ...wrapperOverride,
   };
@@ -2310,12 +2317,6 @@ export function SvgStyleTransform({
         }
         [data-svg-style="outline-only"] svg [stroke-width] {
           stroke-width: var(--f3-stroke-width, 1) !important;
-        }
-        [data-svg-style="wireframe"] svg [fill]:not(text) {
-          fill: transparent !important;
-        }
-        [data-svg-style="wireframe"] svg [stroke-width] {
-          stroke-width: var(--f3-stroke-width, 0.8) !important;
         }
         [data-f3-stroke] svg [fill]:not(text):not([fill="transparent"]):not([fill="none"]) {
           fill-opacity: var(--f3-fill-opacity, 1) !important;

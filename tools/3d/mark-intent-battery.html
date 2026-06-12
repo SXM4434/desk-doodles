@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- Mark-intent 10-fixture battery harness — repo-side tool only, NOT part of
+     the Make drag-drop set and NOT wired into the app. Served by the dev
+     server at http://localhost:5182/tools/3d/mark-intent-battery.html. Driven
+     headless by tools/3d/mark-intent-battery.mjs via the window.__battery API:
+     each fixture runs through the REAL convertStrokePool (Phase D2 conversion
+     semantics, mode 'auto') and renders the resulting units. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Mark-intent battery harness</title>
+    <style>
+      :root { --dir-bg: #fdfcf9; --dir-text-primary: #3b362e; --dir-border: #d8d2c6; }
+      body { margin: 0; font: 12px/1.4 monospace; background: #fdfcf9; color: #3b362e; }
+      #capture { width: 420px; }
+      #label {
+        height: 22px; line-height: 22px; padding: 0 6px; font-size: 13px;
+        font-weight: 700; background: #efe9dd; color: #3b362e;
+        white-space: nowrap; overflow: hidden;
+      }
+      #scene { width: 420px; height: 420px; border: 1px solid #d8d2c6; box-sizing: border-box; }
+      #scene canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="capture">
+      <div id="label">—</div>
+      <div id="scene"></div>
+    </div>
+    <script type="module" src="/tools/3d/mark-intent-battery-harness.ts"></script>
+  </body>
+</html>

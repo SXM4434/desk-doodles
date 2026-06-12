@@ -1070,6 +1070,71 @@ export function containmentDepths(loops: Array<Array<[number, number]>>): number
   });
 }
 
+/** The pool-raster region core (conversion-semantics addendum §1.2 — promoted
+ *  from "Solid's internal trick" to THE drawn-register region extractor):
+ *  grid spec → scanline fill + capsule stamp → marching squares → area filter
+ *  → containment-depth parity. Shared VERBATIM by buildSolidGeometry (its
+ *  original front half, byte-identical) and extractPoolRegions (the exported
+ *  conversion-time extractor). Returns null when no loop survives the noise
+ *  floor. Deterministic throughout. */
+interface PoolRasterResult {
+  rawLoops: Array<Array<[number, number]>>;
+  depths: number[];
+  originX: number;
+  originY: number;
+  cell: number;
+}
+
+function rasterizePoolLoops(
+  pool: THREE.Vector3[][],
+  inkRadius: number,
+  resolution: number,
+  closedFlags?: boolean[],
+): PoolRasterResult | null {
+  // ── Grid spec: pool bbox + margin so the border stays empty ──
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const s of pool) {
+    for (const p of s) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const spanX = Math.max(maxX - minX, 1e-6);
+  const spanY = Math.max(maxY - minY, 1e-6);
+  const cell = Math.max(spanX, spanY) / resolution;
+  const margin = inkRadius + 2 * cell;
+  const originX = minX - margin;
+  const originY = minY - margin;
+  const w = Math.ceil((spanX + 2 * margin) / cell) + 1;
+  const h = Math.ceil((spanY + 2 * margin) / cell) + 1;
+  const grid = new Uint8Array(w * h);
+
+  // ── Rasterize: closed interiors (scanline) + ink bodies (stamp) ──
+  for (let i = 0; i < pool.length; i++) {
+    const closed = closedFlags?.[i] ?? isClosedWorldLoop(pool[i]);
+    if (closed) scanlineFillPolygon(grid, w, h, originX, originY, cell, pool[i]);
+    stampInkBody(grid, w, h, originX, originY, cell, pool[i], inkRadius);
+  }
+
+  // ── Contours → classify ──
+  const rawLoops = marchingSquaresLoops(grid, w, h).filter(
+    (l) => loopArea(l) >= SOLID_MIN_LOOP_AREA,
+  );
+  if (rawLoops.length === 0) return null;
+
+  // Containment depth: even = outer contour, odd = hole of its innermost
+  // even-depth container. Loop points never coincide across loops (each
+  // boundary midpoint has degree exactly 2), so the ray-cast is safe.
+  const depths = containmentDepths(rawLoops);
+
+  return { rawLoops, depths, originX, originY, cell };
+}
+
 /** Solid: rasterize ALL strokes into one binary grid (closed interiors
  *  scanline-filled + ink bodies stamped), extract contours via marching
  *  squares, classify outer/hole by containment depth, RDP-simplify, extrude.
@@ -1198,6 +1263,133 @@ export function buildPoolSolidGeometry(
     closedFlags,
     rodRadius: opts.rodRadius,
   });
+}
+
+// ─── Region extraction (conversion-semantics addendum §1.2-1.3) ──────────────
+// The pool raster as THE drawn-register region extractor for ALL modes:
+// Extrude inherits donut holes from the same parity tree, Rod/Inflate get
+// closure + containment facts, Solid keeps its path verbatim. Runs at
+// conversion time; deterministic, so any cache (render_config summary) is an
+// optimization, never a truth source — recompute always agrees (A-4).
+
+/** Bump when the extraction algorithm changes — cache rows keyed on an older
+ *  version recompute (the golden-gate pattern applied to caches, addendum
+ *  §2.2). */
+export const REGION_EXTRACTOR_VERSION = 1;
+
+export interface ExtractedRegion {
+  /** Closed outline in WORLD coords (y-up) — RDP-simplified + Chaikin-rounded,
+   *  the same treatment Solid contours get. */
+  outline: Array<[number, number]>;
+  /** Containment depth (even = outer mass, odd = hole). */
+  depth: number;
+  role: 'outer' | 'hole';
+  /** For holes: index (into regions) of the innermost containing outer —
+   *  the solid this hole subtracts from. Null for outers / orphan holes. */
+  parentIndex: number | null;
+  /** Loop area in world units² (from the raw contour, pre-simplify). */
+  areaWorld: number;
+}
+
+export interface RegionExtraction {
+  extractorVersion: number;
+  regions: ExtractedRegion[];
+}
+
+/** Extract the enclosed-region graph of a WORLD-space stroke pool via the
+ *  Solid raster machinery. Near-misses fuse and T-junction gaps ≤ ink radius
+ *  auto-close — the ink radius IS the tolerance (addendum §1.2 table). */
+export function extractPoolRegions(
+  worldStrokes: THREE.Vector3[][],
+  opts: {
+    inkRadius?: number;
+    resolution?: number;
+    closedFlags?: boolean[];
+  } = {},
+): RegionExtraction {
+  const inkRadius = opts.inkRadius ?? SOLID_INK_RADIUS;
+  const resolution = Math.min(opts.resolution ?? SOLID_GRID_RESOLUTION, SOLID_MAX_GRID_RESOLUTION);
+  const pool = worldStrokes.map(dedupeConsecutive).filter((s) => s.length > 0);
+  if (pool.length === 0) return { extractorVersion: REGION_EXTRACTOR_VERSION, regions: [] };
+
+  const raster = rasterizePoolLoops(pool, inkRadius, resolution, opts.closedFlags);
+  if (!raster) return { extractorVersion: REGION_EXTRACTOR_VERSION, regions: [] };
+  const { rawLoops, depths, originX, originY, cell } = raster;
+
+  // Same simplify treatment as the Solid contours (RDP in cell units + one
+  // Chaikin pass), mapped to world coords.
+  const simplifyToWorld = (loop: Array<[number, number]>): Array<[number, number]> => {
+    const open = [...loop, loop[0]] as Array<[number, number]>;
+    const simple = rdpPoints(open, SOLID_RDP_EPSILON_CELLS);
+    simple.pop();
+    const rounded = simple.length >= 3 ? chaikinClosed(simple) : simple;
+    return rounded.map(([x, y]) => [originX + x * cell, originY + y * cell]);
+  };
+
+  const regions: ExtractedRegion[] = rawLoops.map((loop, i) => ({
+    outline: simplifyToWorld(loop),
+    depth: depths[i],
+    role: depths[i] % 2 === 0 ? ('outer' as const) : ('hole' as const),
+    parentIndex: null,
+    areaWorld: loopArea(loop) * cell * cell,
+  }));
+
+  // Hole → innermost containing outer (smallest-area container at depth − 1),
+  // the same assignment rule buildSolidGeometry uses.
+  for (let i = 0; i < rawLoops.length; i++) {
+    if (depths[i] % 2 !== 1) continue;
+    const [x, y] = rawLoops[i][0];
+    let best = -1;
+    let bestArea = Infinity;
+    for (let j = 0; j < rawLoops.length; j++) {
+      if (j === i || depths[j] !== depths[i] - 1) continue;
+      if (pointInLoop(x, y, rawLoops[j])) {
+        const a = loopArea(rawLoops[j]);
+        if (a < bestArea) {
+          bestArea = a;
+          best = j;
+        }
+      }
+    }
+    if (best >= 0) regions[i].parentIndex = best;
+  }
+
+  return { extractorVersion: REGION_EXTRACTOR_VERSION, regions };
+}
+
+export interface StrokePoolRegionExtraction extends RegionExtraction {
+  /** Per input stroke (post-RDP), the 3-state closure — the compact summary
+   *  shape the addendum §1.3 render_config cache stores alongside the tree. */
+  closureStates: ClosureState[];
+}
+
+/** ViewBox-space convenience mirroring buildPoolSolidGeometry's front half:
+ *  rdp simplify → closure states → normalize (pool-centered) → extract.
+ *  This is the cacheable conversion-time entry (addendum §1.3 — computed at
+ *  Done, persisted, recompute-on-mismatch). */
+export function extractStrokePoolRegions(
+  strokes: StrokeInputPoint[][],
+  opts: {
+    viewBox?: ViewBoxSize;
+    center?: { x: number; y: number };
+    epsilon?: number;
+    inkRadius?: number;
+    resolution?: number;
+  } = {},
+): StrokePoolRegionExtraction {
+  const viewBox = opts.viewBox ?? DEFAULT_VIEWBOX;
+  const simplified = strokes
+    .filter((s) => s.length > 0)
+    .map((s) => rdpPoints(s, opts.epsilon ?? RDP_EPSILON));
+  const closureStates = simplified.map((s) => closureStateOf(s));
+  const center = opts.center ?? poolCenter(simplified, viewBox);
+  const world = simplified.map((s) => normalizeStrokePoints(s, viewBox, WORLD_SCALE, center));
+  const extraction = extractPoolRegions(world, {
+    inkRadius: opts.inkRadius,
+    resolution: opts.resolution,
+    closedFlags: closureStates.map((c) => c !== 'open'),
+  });
+  return { ...extraction, closureStates };
 }
 
 // ─── Top-level convenience ───────────────────────────────────────────────────

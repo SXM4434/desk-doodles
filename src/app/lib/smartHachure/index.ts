@@ -10,7 +10,7 @@
 import rough from 'roughjs';
 import { extractAllSignals, extractSignals, getRenderableChildren } from './signals';
 import { classify, ruleEngineProvider } from './classifier';
-import { selectTreatment, type SmartHachureStyle } from './techniqueMap';
+import { selectTreatment, STYLE_OWNS_FILL_GRAMMAR, type SmartHachureStyle } from './techniqueMap';
 import { renderRegion } from './renderRegion';
 import { createOverrideStore, hashSvg } from './overrideStore';
 import { transformElement } from '../../components/canvas/SvgStyleTransform';
@@ -196,6 +196,16 @@ export function renderSmartHachure(
   const svgHash = hashSvg(svgRoot);
   const rc = rough.svg(svgRoot);
   const ownerDoc = svgRoot.ownerDocument!;
+  // G-10: resolve the surface tag ONCE per render pass (the svg's ancestry
+  // doesn't change mid-pass).
+  const surface = resolveDecisionSurface(svgRoot, opts.surface);
+  // I-3 bias-within-band: the hachureGap slider rides the darkness-solved
+  // gap as a ratio against its default (DEFAULT_MODIFIERS.hachureGap = 4 —
+  // same anchor constant techniqueMap's remap uses). Slider at 4 → 1.0.
+  const gapBias =
+    Number.isFinite(fullModifiers.hachureGap) && fullModifiers.hachureGap > 0
+      ? fullModifiers.hachureGap / 4
+      : 1;
 
   // Take a snapshot of original children BEFORE we mutate the tree — every
   // subsequent operation references this fixed list. The DOM walker would
@@ -295,7 +305,12 @@ export function renderSmartHachure(
     // Don't lift gap / weight / layerCount / opacity here — classifier's
     // tonal-density per-role choice stays intact. Don't recurse <g> here
     // either. Per memory: `feedback_fillstyle_slider_must_switch_classifier_pick`.
-    const userPick = fullModifiers.fillStyle;
+    // Phase B: styles whose chrome has no fillStyle control own their own
+    // grammar — the stored modifier there is stale default state, not a
+    // user pick (STYLE_OWNS_FILL_GRAMMAR, techniqueMap).
+    const userPick = STYLE_OWNS_FILL_GRAMMAR.has(opts.styleChoice)
+      ? baseTreatment.fillStyle
+      : fullModifiers.fillStyle;
     const classifierWantsFill = baseTreatment.fillStyle !== 'none';
     // Tiny shapes (area < 40 px²) are clamped to solid by techniqueMap
     // (edge-case policy: coverage stats too noisy for marks) — that clamp is
@@ -327,6 +342,7 @@ export function renderSmartHachure(
       darknessL: signals.darknessL,
       area: signals.area,
       fillStyle: treatment.fillStyle,
+      surface,
     });
 
     // 4. generate jittered outline via legacy transformElement (with hachure off)
@@ -364,18 +380,20 @@ export function renderSmartHachure(
             rc,
             baseSeed: seed + 7919, // separate seed so fill seed doesn't collide with outline
             inkColor: opts.inkColor,
+            // Phase A recalibration: the region's source darkness drives the
+            // coverage solve (darknessToCoverage + 8-band quantization).
+            sourceDarkness: signals.darknessL,
+            gapBias,
           });
 
-    // DIAGNOSTIC — stamp role + confidence + treatment + darkness on the
-    // produced elements so we can inspect classification from DevTools alone.
-    // (Without this, a "no hachure" output is indistinguishable from "hachure
-    // is rendering but invisible" — the data-attrs let us tell them apart.)
+    // DIAGNOSTIC — stamp role + confidence provenance on the produced
+    // elements so classification is inspectable from DevTools alone.
+    // (Density receipts — data-smart-gap/weight/layers/band/coverage — are
+    // stamped inside renderRegion, where the rendered numbers are resolved.)
     for (const fillEl of fillMarks) {
       fillEl.setAttribute('data-smart-role', classification.role);
       fillEl.setAttribute('data-smart-confidence', classification.confidence.toFixed(2));
       fillEl.setAttribute('data-smart-fill-style', treatment.fillStyle);
-      fillEl.setAttribute('data-smart-gap', String(treatment.gap.toFixed(2)));
-      fillEl.setAttribute('data-smart-weight', String(treatment.weight.toFixed(2)));
     }
     for (const outlineEl of outlineElements) {
       outlineEl.setAttribute('data-smart-source-role', classification.role);
@@ -418,7 +436,7 @@ function hashStringToSeed(s: string): number {
 
 export { createOverrideStore, hashSvg } from './overrideStore';
 export { ruleEngineProvider, classify } from './classifier';
-export { selectTreatment, getBaseTreatmentForRole } from './techniqueMap';
+export { selectTreatment, getBaseTreatmentForRole, STYLE_OWNS_FILL_GRAMMAR } from './techniqueMap';
 export { extractAllSignals, extractSignals, getRenderableChildren } from './signals';
 export type {
   Classification,

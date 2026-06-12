@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "blessed": "2026-06-12 — ROCK 2 CONVERSION D2 v1 (mark-intent-boundary-spec §6 battery; expected treatments per the RED-TEAM AMENDMENT + addendum A-2: treated-as-closed → solid family + chip)",
+  "matcherFields": "treatment · intent · geometry · closure · treatedAsClosed · ambiguous · bandEquals · bandMin · holesCutMin — all optional; `count` = exact number of units that must match. `totalUnits` = exact unit count. `maxRodUnits` = ceiling on geometry:'rod' units (the no-tubes / no-spheres assertions).",
+  "fixtures": {
+    "extra-donut": {
+      "totalUnits": 2,
+      "maxRodUnits": 0,
+      "matchers": [
+        { "treatment": "solid", "intent": "structure", "geometry": "extrude", "holesCutMin": 1, "count": 1 },
+        { "treatment": "hole", "geometry": "none", "count": 1 }
+      ]
+    },
+    "arrow": {
+      "totalUnits": 1,
+      "maxRodUnits": 0,
+      "matchers": [
+        {
+          "treatment": "solid",
+          "intent": "structure",
+          "geometry": "extrude",
+          "closure": "treated-as-closed",
+          "treatedAsClosed": true,
+          "count": 1
+        }
+      ]
+    },
+    "cat-face": {
+      "totalUnits": 5,
+      "maxRodUnits": 0,
+      "matchers": [
+        { "treatment": "solid", "intent": "structure", "geometry": "extrude", "count": 3 },
+        { "treatment": "solid", "intent": "fill-intent", "geometry": "solid", "bandEquals": 7, "count": 2 }
+      ]
+    },
+    "two-arc-circle": {
+      "totalUnits": 1,
+      "maxRodUnits": 0,
+      "matchers": [
+        {
+          "treatment": "solid",
+          "intent": "structure",
+          "geometry": "extrude",
+          "closure": "closed",
+          "treatedAsClosed": false,
+          "count": 1
+        }
+      ]
+    },
+    "spiral-fill": {
+      "totalUnits": 1,
+      "maxRodUnits": 0,
+      "matchers": [
+        { "treatment": "solid", "intent": "fill-intent", "geometry": "solid", "bandEquals": 7, "count": 1 }
+      ]
+    },
+    "hatching-in-outline": {
+      "totalUnits": 2,
+      "maxRodUnits": 0,
+      "matchers": [
+        { "treatment": "solid", "intent": "structure", "geometry": "extrude", "count": 1 },
+        {
+          "treatment": "surface-hatch",
+          "intent": "shading-gesture",
+          "geometry": "none",
+          "bandMin": 1,
+          "count": 1
+        }
+      ]
+    },
+    "lightning": {
+      "totalUnits": 1,
+      "matchers": [
+        { "treatment": "line-rod", "intent": "structure", "geometry": "rod", "closure": "open", "count": 1 }
+      ]
+    },
+    "cursive-signature": {
+      "totalUnits": 1,
+      "matchers": [
+        { "treatment": "line-rod", "intent": "structure", "geometry": "rod", "closure": "open", "count": 1 }
+      ]
+    },
+    "wavy-in-region": {
+      "totalUnits": 2,
+      "maxRodUnits": 1,
+      "matchers": [
+        { "treatment": "solid", "intent": "structure", "geometry": "extrude", "count": 1 },
+        { "treatment": "line-rod", "intent": "structure", "geometry": "rod", "count": 1 }
+      ]
+    },
+    "full-canvas-scribble": {
+      "totalUnits": 1,
+      "maxRodUnits": 0,
+      "matchers": [
+        { "treatment": "solid", "intent": "fill-intent", "geometry": "solid", "bandEquals": 7, "count": 1 }
+      ]
+    },
+    "dots-stipple-and-bead": {
+      "totalUnits": 3,
+      "maxRodUnits": 1,
+      "matchers": [
+        { "treatment": "solid", "intent": "structure", "geometry": "extrude", "count": 1 },
+        { "treatment": "surface-hatch", "intent": "shading-gesture", "geometry": "none", "count": 1 },
+        { "treatment": "line-rod", "intent": "structure", "geometry": "rod", "count": 1 }
+      ]
+    }
+  }
+}

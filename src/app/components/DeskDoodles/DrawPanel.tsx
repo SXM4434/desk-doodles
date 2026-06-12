@@ -6,12 +6,18 @@ import {
   DrawSurface,
   strokesToObjectMarkup,
   capStrokes,
+  capToneFills,
   prepareBackdrop,
   composeBackdropAndStrokes,
+  ToneShadeCluster,
+  SHADE_TOOL_DEFAULT,
+  type ShadeToolState,
+  type ToneFill,
   type BackdropFrame,
   type Stroke,
   type StrokePoint,
 } from './DrawSurface';
+import { COVERAGE_BANDS } from '../../lib/smart/coverage';
 import { prepareSvgUpload } from '../../lib/svgUpload';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { Dropdown } from '../chrome/Dropdown';
@@ -34,6 +40,7 @@ import { SurfaceControls } from './ObjectSurface';
 import {
   smartPickFromMarkup,
   logSmartPickUndo,
+  logSmartPickOverridden,
   type SmartPick,
   type SmartPickResult,
 } from '../../lib/smart/smartPick';
@@ -73,11 +80,23 @@ function getFocusables(root: HTMLElement): HTMLElement[] {
 // Pill grammar per chromeStyles (CHIP-adjacent badge, sentence-case because
 // the receipt is a sentence, not a label); accent DOT (not an accent tint —
 // no accent-ink backgrounds per system rules) marks it as a system act.
-function SmartPickChip({ pick, onUndo }: { pick: SmartPick; onUndo: () => void }) {
+// `fading` = the pick was overridden (manual pen move / input removed) — the
+// chip quietly fades out and stops accepting clicks; the undo it carried is
+// gone WITH the claim (undo only exists while the pick is the active truth).
+function SmartPickChip({
+  pick,
+  onUndo,
+  fading = false,
+}: {
+  pick: SmartPick;
+  onUndo: () => void;
+  fading?: boolean;
+}) {
   return (
     <div
       role="status"
       data-smart-pick-chip
+      data-fading={fading ? '1' : undefined}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -87,6 +106,9 @@ function SmartPickChip({ pick, onUndo }: { pick: SmartPick; onUndo: () => void }
         background: 'var(--dir-bg)',
         padding: '6px 12px',
         minWidth: 0,
+        opacity: fading ? 0 : 1,
+        transition: 'opacity 0.22s ease',
+        pointerEvents: fading ? 'none' : 'auto',
       }}
     >
       <span
@@ -193,10 +215,21 @@ export function DrawPanel({
 }: {
   /** Receives the markup for the ONE object this session made, plus the
    *  naming-stage meta: source strokes (the record keeps the hand — wedge
-   *  contract), name + why. All optional — uploads carry no strokes. */
+   *  contract), name + why. All optional — uploads carry no strokes.
+   *  `sourceConfig` rides DeskPage's existing verbatim-config channel ("any
+   *  future extras ride through untouched"): when present, the host stores it
+   *  BYTE-FOR-BYTE as the row's render_config instead of snapshotting the
+   *  pen. The tone-fill Done uses it to carry render_config.toneFills
+   *  (addendum ch.2.1) — the panel builds the identical pen snapshot (same
+   *  shared contexts, D-7 one pen) plus the tone record. */
   onDone: (
     svgMarkup: string,
-    meta?: { strokes?: StrokePoint[][]; name?: string | null; why?: string | null },
+    meta?: {
+      strokes?: StrokePoint[][];
+      name?: string | null;
+      why?: string | null;
+      sourceConfig?: Record<string, unknown> | null;
+    },
   ) => void;
   onCancel: () => void;
   /** px width of an open right controls panel (the desk's). The scrim reserves
@@ -211,12 +244,51 @@ export function DrawPanel({
   // Live mirror of DrawSurface's preview-stroke pool — setState is a stable
   // callback, so the mirror effect in DrawSurface doesn't re-fire on renders.
   const [strokes, setStrokes] = useState<Stroke[]>([]);
+  // Live mirror of the TONE-PATCH pool (the shade register's output) — same
+  // stable-setState contract. Staged into render_config.toneFills at Done.
+  const [tone, setTone] = useState<ToneFill[]>([]);
+  // INK | SHADE — which tool the pointer wields while sketching (round 7).
+  // Ink = strokes (the existing draw). Shade = the tone-fill brush: discrete
+  // band-grey soft regions under the ink. A register, not a render mode —
+  // Sketch|Style stays the canvas's render axis; Style pauses both tools.
+  const [penRegister, setPenRegister] = useState<'ink' | 'shade'>('ink');
+  const [shadeTool, setShadeTool] = useState<ShadeToolState>(SHADE_TOOL_DEFAULT);
   // Input mode — same trio as the /canvas dock. Upload-svg hands the
   // sanitized markup straight to the desk's add boundary (normalizeSvgSize
   // sizes it there); upload-image is an honest stub until autotrace (S1).
   const [input, setInput] = useState<PanelInput>('draw');
   const [upload, setUpload] = useState<{ name: string; markup: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // UPLOAD-REMOVAL STRANDING fix (smasher round 7): Remove with strokes/tone
+  // present keeps the work and auto-switches the input register to Draw (the
+  // strokes ARE a draw session — Done must work on them alone). This note is
+  // the honest one-liner saying so; it takes over the caption slot (zero
+  // layout shift) and clears itself after a few seconds.
+  const [removeNote, setRemoveNote] = useState(false);
+  const removeNoteTimer = useRef<number | null>(null);
+  const showRemoveNote = () => {
+    setRemoveNote(true);
+    if (removeNoteTimer.current) window.clearTimeout(removeNoteTimer.current);
+    removeNoteTimer.current = window.setTimeout(() => {
+      setRemoveNote(false);
+      removeNoteTimer.current = null;
+    }, 5000);
+  };
+  // The note clears EARLY when the user moves on themselves (switches input,
+  // stages a new file) — it must never describe a state that's gone.
+  const clearRemoveNote = () => {
+    if (removeNoteTimer.current) {
+      window.clearTimeout(removeNoteTimer.current);
+      removeNoteTimer.current = null;
+    }
+    setRemoveNote(false);
+  };
+  useEffect(
+    () => () => {
+      if (removeNoteTimer.current) window.clearTimeout(removeNoteTimer.current);
+    },
+    [],
+  );
   const fileRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -252,11 +324,46 @@ export function DrawPanel({
     result: SmartPickResult; // result.pick is non-null when stored here
     prior: { svgStyle: F3SvgStyle; mods: F3ModifiersState };
   } | null>(null);
+  // CHIP HONESTY (smasher round 7): true while the chip fades out after the
+  // pick was OVERRIDDEN — the user manually moved a style/control (their
+  // choice is now the truth; a chip still claiming "smart picked X" would be
+  // a lie, and its undo would discard the manual choice), or the picked
+  // input was removed. Quiet fade → unmount; logged as 'overridden'.
+  const [smartPickFading, setSmartPickFading] = useState(false);
+  const smartPickFadeTimer = useRef<number | null>(null);
   // Once-per-session latch for the drawn path: Back-and-Done again is NOT a
   // new ingest — the pen must not re-move (SD-3 once-at-ingest).
   const drawPickEvaluatedRef = useRef(false);
+  useEffect(
+    () => () => {
+      if (smartPickFadeTimer.current) window.clearTimeout(smartPickFadeTimer.current);
+    },
+    [],
+  );
+
+  /** The pick stopped being the active truth without an undo — fade the chip
+   *  out and log the override. Idempotent (no chip / already fading = no-op),
+   *  so every manual-change path can call it unconditionally. */
+  function dismissSmartPick() {
+    if (!smartPick || smartPickFading) return;
+    logSmartPickOverridden(smartPick.result);
+    setSmartPickFading(true);
+    if (smartPickFadeTimer.current) window.clearTimeout(smartPickFadeTimer.current);
+    smartPickFadeTimer.current = window.setTimeout(() => {
+      setSmartPick(null);
+      setSmartPickFading(false);
+      smartPickFadeTimer.current = null;
+    }, 260);
+  }
 
   function applySmartPick(result: SmartPickResult) {
+    // A new ingest supersedes any in-flight fade — settle it immediately so
+    // the fresh chip never inherits a half-faded state.
+    if (smartPickFadeTimer.current) {
+      window.clearTimeout(smartPickFadeTimer.current);
+      smartPickFadeTimer.current = null;
+    }
+    setSmartPickFading(false);
     const pick = result.pick;
     if (!pick) {
       // Abstained — clear any stale chip from a previous ingest so the
@@ -286,7 +393,9 @@ export function DrawPanel({
   }
 
   function undoSmartPick() {
-    if (!smartPick) return;
+    // Undo only exists while the pick is UNTOUCHED — once a manual change
+    // started the fade, reverting would discard that manual choice.
+    if (!smartPick || smartPickFading) return;
     // Restore the EXACT prior pen (style + every modifier) — the snapshot
     // taken right before the pick applied. Logged as a rejection receipt.
     setSvgStyle(smartPick.prior.svgStyle);
@@ -372,12 +481,22 @@ export function DrawPanel({
   }, []);
 
   const canDone =
-    input === 'draw' ? strokes.length > 0 : input === 'upload-svg' ? upload !== null : false;
+    input === 'draw'
+      ? strokes.length > 0 || tone.length > 0
+      : input === 'upload-svg'
+        ? upload !== null
+        : false;
 
   // ── NAMING STAGE (the minting moment — Sebs, round 4) ────────────────────
   // Done no longer publishes: it stages the doodle and asks for its card info.
   // Back returns to drawing with strokes intact; Place publishes with meta.
-  const [staged, setStaged] = useState<{ markup: string; strokes?: StrokePoint[][] } | null>(null);
+  const [staged, setStaged] = useState<{
+    markup: string;
+    strokes?: StrokePoint[][];
+    /** Size-guarded tone record (addendum ch.2.1) — publishes as
+     *  render_config.toneFills via the sourceConfig channel at Place. */
+    toneFills?: ToneFill[];
+  } | null>(null);
   // DRAW | STYLE canvas mode (Sebs 2026-06-12): Draw = raw ink, keep
   // sketching, pen-up commits nothing. Style = sketching pauses, the drawing
   // renders styled and the pen controls restyle it live. Flip freely.
@@ -404,7 +523,8 @@ export function DrawPanel({
         setShrunk(false);
         return;
       }
-      if (strokes.length > 0) {
+      if (strokes.length > 0 || tone.length > 0) {
+        // Tone patches are unsaved work exactly like strokes — same guard.
         if (escapeArmedRef.current) onCancel();
         else armEscape();
         return;
@@ -413,7 +533,7 @@ export function DrawPanel({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [staged, strokes.length, onCancel, armEscape]);
+  }, [staged, strokes.length, tone.length, onCancel, armEscape]);
 
   // The minting preview's art, sized once per staging (230px long axis inside
   // the 280px well) — memoized so name/why keystrokes don't re-run DOMParser.
@@ -425,8 +545,13 @@ export function DrawPanel({
   function handleDone() {
     setCapNote(null);
     setShrunk(false);
-    if (input === 'draw' && strokes.length > 0) {
-      const markup = strokesToObjectMarkup(strokes);
+    if (input === 'draw' && (strokes.length > 0 || tone.length > 0)) {
+      // Tone patches ride the markup UNDER the ink (flat band-greys the
+      // style pipeline converts to marks at band density) AND the staged
+      // record as toneFills — svg stays regenerable from the record (ch.2.1).
+      // A tone-only doodle is legal: the patch's own mask IS its region
+      // (addendum ch.2.4 — no "close a shape first" rule).
+      const markup = strokesToObjectMarkup(strokes, tone);
       // SMART PICK — drawn ingest: first Done (entering the naming stage) is
       // THE ingest moment for a drawn doodle. Latched per panel session so
       // Back-and-Done never re-fires (SD-3). Picks only when the gesture
@@ -436,19 +561,29 @@ export function DrawPanel({
         const evaluated = smartPickFromMarkup(markup, 'draw');
         if (evaluated) applySmartPick(evaluated);
       }
-      setStaged({ markup, strokes: capStrokes(strokes) });
+      setStaged({
+        markup,
+        strokes: strokes.length > 0 ? capStrokes(strokes) : undefined,
+        toneFills: tone.length > 0 ? capToneFills(tone) : undefined,
+      });
     } else if (input === 'upload-svg' && upload) {
-      if (backdropFrame && strokes.length > 0) {
-        // DRAW-OVER MERGE (ROUND 6): backdrop + strokes become ONE object in
-        // one shared coordinate space — the same composed markup the Style
-        // layer previews live. The added strokes are NOT put in the record
-        // yet: ObjectSurface's Re-draw Done rebuilds the svg from strokes
-        // ALONE (strokesToObjectMarkup), which would silently DESTROY the
-        // upload half of a merged object. Until Re-draw is backdrop-aware
-        // (queued, ObjectSurface rock), merged objects take the honest
-        // "drawn before re-editing existed" path instead of a data-loss one.
+      if (backdropFrame && (strokes.length > 0 || tone.length > 0)) {
+        // DRAW-OVER MERGE (ROUND 6): backdrop + strokes (+ tone patches,
+        // inverse-mapped the same way) become ONE object in one shared
+        // coordinate space — the same composed markup the Style layer
+        // previews live. The added strokes are NOT put in the record yet:
+        // ObjectSurface's Re-draw Done rebuilds the svg from strokes ALONE
+        // (strokesToObjectMarkup), which would silently DESTROY the upload
+        // half of a merged object. Until Re-draw is backdrop-aware (queued,
+        // ObjectSurface rock), merged objects take the honest "drawn before
+        // re-editing existed" path instead of a data-loss one — toneFills
+        // stay out of the merged record for the same reason (they'd survive,
+        // but a strokeless record hides Re-draw anyway; consistency wins).
         setStaged({
-          markup: composeBackdropAndStrokes(backdropFrame, strokes, { tight: true }),
+          markup: composeBackdropAndStrokes(backdropFrame, strokes, {
+            tight: true,
+            toneFills: tone,
+          }),
         });
       } else {
         setStaged({ markup: upload.markup });
@@ -467,6 +602,25 @@ export function DrawPanel({
       setCapNote({ kb: Math.ceil(finalLength / 1024) });
       return;
     }
+    if (staged.toneFills && staged.toneFills.length > 0) {
+      // TONE IN THE RECORD: route the full config through the host's verbatim
+      // sourceConfig channel — DeskPage stores it byte-for-byte as the row's
+      // render_config (its parser passes extras through untouched on every
+      // hop, same contract that carries strokes). The pen half is the
+      // IDENTICAL snapshot DeskPage would take itself: svgStyle + mods are
+      // the same shared contexts (D-7, one pen) read at the same moment.
+      onDone(staged.markup, {
+        name: stageName.trim() || null,
+        why: stageWhy.trim() || null,
+        sourceConfig: {
+          svgStyle,
+          modifiers: mods,
+          ...(staged.strokes && staged.strokes.length > 0 ? { strokes: staged.strokes } : {}),
+          toneFills: staged.toneFills,
+        },
+      });
+      return;
+    }
     onDone(staged.markup, {
       strokes: staged.strokes,
       name: stageName.trim() || null,
@@ -483,8 +637,8 @@ export function DrawPanel({
     if (strokes.length === 0) return;
     const build = (sts: Stroke[]) =>
       input === 'upload-svg' && backdropFrame
-        ? composeBackdropAndStrokes(backdropFrame, sts, { tight: true })
-        : strokesToObjectMarkup(sts);
+        ? composeBackdropAndStrokes(backdropFrame, sts, { tight: true, toneFills: tone })
+        : strokesToObjectMarkup(sts, tone);
     let pts = strokes;
     for (let pass = 0; pass < 10; pass++) {
       const next = pts.map((st) =>
@@ -502,6 +656,9 @@ export function DrawPanel({
           // The record's gesture follows the shrink (it IS the new source).
           // Merged draw-over objects record no strokes (see handleDone note).
           strokes: input === 'draw' ? capStrokes(pts) : undefined,
+          // Tone patches keep full resolution — the shrink lever smooths
+          // stroke detail; the tone record is small by construction.
+          toneFills: input === 'draw' && tone.length > 0 ? capToneFills(tone) : undefined,
         });
         setCapNote(null);
         setShrunk(true);
@@ -520,6 +677,7 @@ export function DrawPanel({
     if (result.ok) {
       setUpload({ name: result.name, markup: result.markup });
       setUploadError(null);
+      clearRemoveNote();
       // SMART PICK — upload ingest: every picked file is one ingest, and
       // staging (the preview appearing) is the moment. Runs the signal
       // extractor over the sanitized markup; confident → pen set through
@@ -532,6 +690,24 @@ export function DrawPanel({
     }
   }
 
+  // The register row's one-line caption. The remove-note takes the slot over
+  // briefly when it fires (honest one-liner, zero layout shift), then the
+  // compose-state line returns. Computed once so the visible (possibly
+  // ellipsized) text and its title tooltip always match.
+  const captionText = removeNote
+    ? 'upload removed — your strokes stay'
+    : composeMode === 'draw'
+      ? penRegister === 'shade'
+        ? shadeTool.erase
+          ? 'lifting tone — touch a patch to erase it'
+          : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
+        : input === 'upload-svg' && backdropFrame
+          ? 'raw ink over your upload — keep sketching'
+          : 'raw ink — keep sketching'
+      : input === 'upload-svg' && backdropFrame
+        ? 'styled — the pen renders your upload live'
+        : 'styled — play with the pen, flip back to keep drawing';
+
   return (
     // Overlay scrim — click outside the panel closes ONLY when nothing is
     // drawn. With strokes present (or in the naming stage) the click is
@@ -540,7 +716,7 @@ export function DrawPanel({
     <div
       onClick={() => {
         if (staged) return; // staging = work definitely present — no-op
-        if (strokes.length > 0) {
+        if (strokes.length > 0 || tone.length > 0) {
           armEscape();
           return;
         }
@@ -616,9 +792,18 @@ export function DrawPanel({
           <h2 style={{ ...SECTION_LABEL }}>Add a doodle</h2>
           <span style={{ ...SECTION_LABEL, color: 'var(--dir-text-body-soft)' }}>
             {input === 'draw'
-              ? strokes.length === 0
+              ? strokes.length === 0 && tone.length === 0
                 ? 'Each Done adds one object'
-                : `${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`
+                : [
+                    strokes.length > 0
+                      ? `${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`
+                      : null,
+                    tone.length > 0
+                      ? `${tone.length} tone patch${tone.length === 1 ? '' : 'es'}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
               : input === 'upload-svg'
                 ? upload
                   ? `${upload.name}${
@@ -643,7 +828,10 @@ export function DrawPanel({
           ).map(([key, label]) => (
             <button
               key={key}
-              onClick={() => setInput(key)}
+              onClick={() => {
+                setInput(key);
+                clearRemoveNote();
+              }}
               // Intentional PILL override — sentence-case 13/400 (dock idiom).
               style={{
                 ...PILL,
@@ -692,8 +880,24 @@ export function DrawPanel({
             {/* Sketch | Style — the canvas's own mode pills (the Pen|Desk
                 grammar, one level down). UPLOAD PARITY (ROUND 6): the same
                 pills work on uploads — Style renders the upload through the
-                pen live. Hidden only behind the image stub. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                pen live. Hidden only behind the image stub. ROUND 7 adds the
+                INK | SHADE register pair beside it: which tool the pointer
+                wields while sketching (Style pauses both). */}
+            {/* ROW LAYOUT (smasher round 7 caption-crush fix): pills never
+                shrink; the caption is the row's ONE flexible item — single
+                line, ellipsized, full text on hover via title. flexWrap only
+                ever moves the upload cluster to a second line at narrow
+                widths (the caption's flex-basis 0 keeps it on line one). */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                rowGap: 6,
+                marginBottom: 8,
+                flexWrap: 'wrap',
+              }}
+            >
               {(['draw', 'style'] as const).map((m) => (
                 <button
                   key={m}
@@ -702,6 +906,7 @@ export function DrawPanel({
                   style={{
                     ...PILL,
                     padding: '6px 14px',
+                    flexShrink: 0,
                     background: composeMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
                     color: composeMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
                   }}
@@ -710,21 +915,51 @@ export function DrawPanel({
                 </button>
               ))}
               <span
+                aria-hidden
+                style={{ width: 1, alignSelf: 'stretch', background: 'var(--dir-border)', flexShrink: 0 }}
+              />
+              {(['ink', 'shade'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setPenRegister(r)}
+                  aria-pressed={penRegister === r}
+                  disabled={composeMode === 'style'}
+                  title={
+                    composeMode === 'style'
+                      ? 'Flip back to Sketch to keep working'
+                      : r === 'ink'
+                        ? 'Draw ink strokes'
+                        : 'Brush flat tone bands under your ink'
+                  }
+                  style={{
+                    ...PILL,
+                    padding: '6px 14px',
+                    flexShrink: 0,
+                    opacity: composeMode === 'style' ? 0.45 : 1,
+                    cursor: composeMode === 'style' ? 'default' : 'pointer',
+                    background: penRegister === r ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+                    color: penRegister === r ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+                  }}
+                >
+                  {r === 'ink' ? 'Ink' : 'Shade'}
+                </button>
+              ))}
+              <span
+                role={removeNote ? 'status' : undefined}
+                title={captionText}
                 style={{
                   fontFamily: IS,
                   fontSize: 10,
                   fontStyle: 'italic',
-                  color: 'var(--dir-text-body-soft)',
+                  color: removeNote ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)',
+                  flex: '1 1 0%',
                   minWidth: 0,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
                 }}
               >
-                {composeMode === 'draw'
-                  ? input === 'upload-svg' && backdropFrame
-                    ? 'raw ink over your upload — keep sketching'
-                    : 'raw ink — keep sketching'
-                  : input === 'upload-svg' && backdropFrame
-                    ? 'styled — the pen renders your upload live'
-                    : 'styled — play with the pen, flip back to keep drawing'}
+                {captionText}
               </span>
               {input === 'upload-svg' && upload && (
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -736,8 +971,20 @@ export function DrawPanel({
                   </button>
                   <button
                     onClick={() => {
+                      // UPLOAD-REMOVAL STRANDING fix: strokes/tone drawn over
+                      // the file are KEPT (DrawSurface never unmounts) — the
+                      // input register auto-switches to Draw so Done works on
+                      // them alone, with the honest one-line note. The chip's
+                      // pick described the removed file — no longer the
+                      // active truth; quiet fade, logged as overridden.
+                      const keepWork = strokes.length > 0 || tone.length > 0;
                       setUpload(null);
                       setUploadError(null);
+                      dismissSmartPick();
+                      if (keepWork) {
+                        setInput('draw');
+                        showRemoveNote();
+                      }
                     }}
                     title="Remove the file — your strokes stay"
                     style={{
@@ -753,6 +1000,20 @@ export function DrawPanel({
               )}
             </div>
 
+            {/* SHADE TOOL CLUSTER — visible only while the shade register is
+                in hand: the full 8-band ladder (7 paint swatches + Erase =
+                band 0/paper) + brush size. Lives with the canvas (tool
+                chrome), not in the pen column (mark styling). */}
+            {composeMode === 'draw' && penRegister === 'shade' && (
+              <div
+                data-shade-cluster
+                style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, minWidth: 0 }}
+              >
+                <span style={{ ...SECTION_LABEL, flexShrink: 0 }}>Tone</span>
+                <ToneShadeCluster value={shadeTool} onChange={setShadeTool} />
+              </div>
+            )}
+
             {/* THE PANE — DrawSurface stays mounted across ALL input modes
                 (switching input never destroys a sketch); upload states sit
                 OVER it as opaque covers (the gate idiom). With a file picked,
@@ -767,6 +1028,13 @@ export function DrawPanel({
                 styled={composeMode === 'style'}
                 backdrop={input === 'upload-svg' ? backdropFrame : undefined}
                 onStrokesChange={setStrokes}
+                shade={{
+                  active: composeMode === 'draw' && penRegister === 'shade',
+                  band: shadeTool.band,
+                  radius: shadeTool.radius,
+                  erase: shadeTool.erase,
+                }}
+                onToneFillsChange={setTone}
               />
 
               {/* Upload picker — no file yet. */}
@@ -883,7 +1151,11 @@ export function DrawPanel({
                 "why did the controls just move" question is answered before
                 it's asked. Undo restores the exact prior pen. */}
             {smartPick?.result.pick && (
-              <SmartPickChip pick={smartPick.result.pick} onUndo={undoSmartPick} />
+              <SmartPickChip
+                pick={smartPick.result.pick}
+                onUndo={undoSmartPick}
+                fading={smartPickFading}
+              />
             )}
 
             {/* FULL per-style control set (feedback_never_trim_control_sets —
@@ -896,6 +1168,9 @@ export function DrawPanel({
                 svgStyle={svgStyle}
                 mods={mods}
                 onStyle={(nextStyle) => {
+                  // Manual style change = the pick (if any) is no longer the
+                  // active truth — chip fades, override logged (chip honesty).
+                  dismissSmartPick();
                   setSvgStyle(nextStyle);
                   // Auto-snap modifiers to the new style's preset — EXACTLY the
                   // desk chrome's onChange, so the pen behaves identically no
@@ -906,8 +1181,15 @@ export function DrawPanel({
                     setMod(k, (next as any)[k]);
                   });
                 }}
-                onMod={setMod}
+                onMod={(key, value) => {
+                  // Same honesty rule for every slider/dropdown move. The
+                  // pick's own writes go through setMod DIRECTLY (applySmartPick),
+                  // so this only ever fires on real user gestures.
+                  dismissSmartPick();
+                  setMod(key, value);
+                }}
                 onReset={() => {
+                  dismissSmartPick();
                   const next = applyStylePreset(DEFAULT_MODIFIERS, svgStyle);
                   (Object.keys(next) as (keyof typeof next)[]).forEach((k) => {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1033,7 +1315,11 @@ export function DrawPanel({
                 so the chip must be visible HERE for that ingest. */}
             {smartPick?.result.pick && (
               <div style={{ display: 'flex', justifyContent: 'center' }}>
-                <SmartPickChip pick={smartPick.result.pick} onUndo={undoSmartPick} />
+                <SmartPickChip
+                  pick={smartPick.result.pick}
+                  onUndo={undoSmartPick}
+                  fading={smartPickFading}
+                />
               </div>
             )}
             <div style={{ maxWidth: 460, width: '100%', alignSelf: 'center', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1120,7 +1406,7 @@ export function DrawPanel({
               canDone
                 ? 'Add this doodle to the desk'
                 : input === 'draw'
-                  ? 'Draw something first'
+                  ? 'Draw or shade something first'
                   : input === 'upload-svg'
                     ? 'Pick a file first'
                     : 'Image upload is coming — draw it or upload an SVG'

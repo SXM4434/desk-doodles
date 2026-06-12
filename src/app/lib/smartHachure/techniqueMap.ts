@@ -13,9 +13,46 @@ import type { Classification, Treatment, TonalRole } from './types';
 
 // ─── PUBLIC ENTRY POINT ───────────────────────────────────────────────────
 
-/** User's style choice (from F3SvgStyle context). Smart Hachure only runs for
- *  rough-family styles; other styles bypass entirely. */
-export type SmartHachureStyle = 'rough-handdrawn' | 'sketchy' | 'bold-ink' | 'stipple';
+/** User's style choice (from F3SvgStyle context).
+ *
+ *  Phase B (smart-system-build-plan · makeathon-plan §8.6 workstream B): ALL
+ *  8 shading-capable styles route through the technique map — and therefore
+ *  through the shared coverage math in renderRegion — not just the 4
+ *  rough-family styles. The 4 additions (wet-ink · charcoal · risograph ·
+ *  newsprint) keep their style-specific FX layers (filters/dot-screens) in
+ *  SvgStyleTransform; what THIS map owns is their tonal-fill grammar +
+ *  weight/opacity character, so source darkness drives density identically
+ *  across every style (one math, every register).
+ *
+ *  NOTE: the SvgStyleTransform smartHachure gate currently admits only the 4
+ *  rough-family styles — lifting it is a 1-line host edit documented in the
+ *  rock followups (host file owned by another rock). This map is total over
+ *  all 8 either way. */
+export type SmartHachureStyle =
+  | 'rough-handdrawn'
+  | 'sketchy'
+  | 'bold-ink'
+  | 'stipple'
+  | 'wet-ink'
+  | 'charcoal'
+  | 'risograph'
+  | 'newsprint';
+
+/** Styles whose chrome exposes NO fillStyle control (modifierSpecs
+ *  MODIFIER_SETS_BY_STYLE rows for wet-ink / charcoal / risograph /
+ *  newsprint / sketchy omit 'fillStyle'). For these, the stored
+ *  `fillStyle` modifier is stale default state, NOT a user pick — the
+ *  style's own grammar modulation owns the mark family, and the narrow
+ *  user-pick override in index.ts must not apply
+ *  (feedback_fillstyle_slider_must_switch_classifier_pick is about the
+ *  user's ACTUAL pick; honoring un-pickable state would be drift). */
+export const STYLE_OWNS_FILL_GRAMMAR: ReadonlySet<SmartHachureStyle> = new Set<SmartHachureStyle>([
+  'sketchy',
+  'wet-ink',
+  'charcoal',
+  'risograph',
+  'newsprint',
+]);
 
 /** Minimal subset of F3 modifier state that the technique selector needs.
  *  Decoupled from the full F3ModifiersState type so this module stays portable. */
@@ -194,6 +231,21 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
 // sketchy         = no fills on tonal regions (only structural marks), lower weight
 // bold-ink        = solid fills replace cross-hatch for dense roles, heavier weight
 // stipple         = dots instead of hachure for all tonal roles
+//
+// Phase B additions (each anchored in the style's locked semantic from
+// F3-shading-calibration-spec §2 + its FX layer in SvgStyleTransform; the
+// multipliers are Phase B calibration constants — same standing as K_ZIGZAG
+// in coverage.ts, tunable without touching the renderer):
+// wet-ink         = loaded-brush register: hachure grammar kept, heavier wet
+//                   line (×1.3); the blur/bleed halo is the FX layer's job
+// charcoal        = dry-media register: soft wide marks (×1.5) at reduced
+//                   opacity (×0.85) — grain/smudge FX ride on top
+// risograph       = flat print-ink register: dense roles flood to solid
+//                   (riso prints spot-color masses, not fine cross-hatch),
+//                   lighter roles keep hachure at a slightly fuller line
+// newsprint       = halftone register: dots grammar for ALL tonal roles
+//                   (the dot-screen mask in SvgStyleTransform is paper
+//                   texture; THESE dots are the region's tone)
 
 function applyStyleModulation(base: Treatment, style: SmartHachureStyle): Treatment {
   // Only modify if the role HAS a tonal treatment to modulate
@@ -216,6 +268,25 @@ function applyStyleModulation(base: Treatment, style: SmartHachureStyle): Treatm
 
     case 'stipple':
       // stipple = dots instead of hachure, with biasMode adapting
+      return { ...base, fillStyle: 'dots', biasMode: 'gap-dominant' };
+
+    case 'wet-ink':
+      // wet-ink = loaded brush: same grammar, fatter line carries the tone
+      return { ...base, weight: base.weight * 1.3 };
+
+    case 'charcoal':
+      // charcoal = dry media: wide soft marks, slightly lifted off full black
+      return { ...base, weight: base.weight * 1.5, opacity: base.opacity * 0.85 };
+
+    case 'risograph':
+      // risograph = flat ink: dense roles print as solid spot-color masses
+      if (base.fillStyle === 'cross-hatch') {
+        return { ...base, fillStyle: 'solid', weight: base.weight * 1.1 };
+      }
+      return { ...base, weight: base.weight * 1.1 };
+
+    case 'newsprint':
+      // newsprint = halftone: tone is a dot screen, never line hatch
       return { ...base, fillStyle: 'dots', biasMode: 'gap-dominant' };
   }
 }

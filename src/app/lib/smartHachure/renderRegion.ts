@@ -237,16 +237,38 @@ function resolveDensity(
       fillStyle === 'cross-hatch'
         ? Math.max(1, treatment.layerCount)
         : Math.max(1, bandDef.tamLayers || 1);
+
+    // 1. Weight-anchored solve (user's strokeWidth/fillDensity own weight).
     const solved = coverageToParams(targetCoverage, fillStyle, {
       weight: treatment.weight,
       layers,
     });
+    let gap = solved.gap;
+    let weight = solved.weight;
+
+    // 2. If the POLICY bounds bind the solved gap, the tone target re-solves
+    //    along the OTHER axis at the bound (coverage.ts gap-anchored mode) —
+    //    21-research §4's function shape returns weight as an output, and
+    //    saturating tone silently would break I-2 harder than nudging weight.
+    //    Matters most for dots: coverage ∝ (w/g)², so the 1.5 px floor alone
+    //    would crush dark stipple bands to ~0.2 coverage at thin pen weights.
+    if (gap < POLICY_GAP_FLOOR || gap > POLICY_GAP_CAP) {
+      gap = Math.max(POLICY_GAP_FLOOR, Math.min(POLICY_GAP_CAP, gap));
+      weight = coverageToParams(targetCoverage, fillStyle, { gap, layers }).weight;
+    }
+
+    // 3. User hachureGap bias rides ON TOP of the policy-fitted solve (never
+    //    weight-compensated — compensating would cancel the slider). Clamped
+    //    to the same bounds.
     const gapBias =
       ctx.gapBias !== undefined && Number.isFinite(ctx.gapBias) && ctx.gapBias > 0
         ? ctx.gapBias
         : 1;
-    const gap = Math.max(POLICY_GAP_FLOOR, Math.min(POLICY_GAP_CAP, solved.gap * gapBias));
-    const weight = Math.min(solved.weight, gap * POLICY_WEIGHT_RATIO);
+    gap = Math.max(POLICY_GAP_FLOOR, Math.min(POLICY_GAP_CAP, gap * gapBias));
+
+    // 4. Lines never merge to solid (Agent 5) — final ratio cap.
+    weight = Math.min(weight, gap * POLICY_WEIGHT_RATIO);
+
     return { gap, weight, layers, band, coverage: targetCoverage };
   }
 

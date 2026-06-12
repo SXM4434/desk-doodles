@@ -487,26 +487,82 @@ export async function findDoodleBySvg(
 }
 
 /**
- * M9: subscribe to new doodles landing on the shared feed (live canvas).
+ * Realtime feed handlers (Rock B 2026-06-12 — subscriptions were INSERT-only,
+ * so another viewer's deletes/moves stayed stale until reload).
  *
- * Listens for postgres_changes INSERT events on public.doodles (the table is
- * added to the realtime publication by supabase/schema.sql). Graceful no-op
- * when realtime is unavailable: channel setup failures are swallowed and the
- * callback simply never fires — the feed still works via listDoodles on
- * load/refresh. Returns an unsubscribe function (call it on unmount).
+ * - onInsert: a new row landed (full row in payload.new).
+ * - onUpdate: a row changed — moves (x/y/rotation), meta (name/why), restyles
+ *   (render_config) and re-draws (svg) all arrive here with the FULL new row.
+ * - onDelete: a row was removed. Supabase postgres_changes DELETE events
+ *   carry only the old row's PRIMARY KEY (payload.old = { id }) unless the
+ *   table has REPLICA IDENTITY FULL — so the handler gets just the id, and
+ *   desk-scoping must happen CLIENT-SIDE (see the filter note below).
  */
-export function subscribeDoodles(onInsert: (row: DoodleRow) => void): () => void {
+export interface DoodleFeedHandlers {
+  onInsert: (row: DoodleRow) => void;
+  onUpdate?: (row: DoodleRow) => void;
+  onDelete?: (oldId: string) => void;
+}
+
+/** Shared listener wiring for both feed subscriptions. DELETE is bound
+ *  WITHOUT a server-side filter on purpose: postgres_changes filters match
+ *  against the event's record, and a DELETE's old record carries only the
+ *  primary key — a `desk_id=eq.…` filter would never match, silently
+ *  dropping every delete. So deletes arrive table-wide and the caller
+ *  desk-scopes by matching the id against its own loaded objects (which IS
+ *  the viewed desk's set — an unknown id is a no-op). */
+function bindFeedHandlers(
+  channel: ReturnType<typeof supabase.channel>,
+  handlers: DoodleFeedHandlers,
+  insertUpdateFilter?: string,
+): ReturnType<typeof supabase.channel> {
+  let bound = channel.on(
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: TABLE, filter: insertUpdateFilter },
+    (payload) => {
+      handlers.onInsert(payload.new as DoodleRow);
+    },
+  );
+  if (handlers.onUpdate) {
+    const onUpdate = handlers.onUpdate;
+    bound = bound.on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: TABLE, filter: insertUpdateFilter },
+      (payload) => {
+        onUpdate(payload.new as DoodleRow);
+      },
+    );
+  }
+  if (handlers.onDelete) {
+    const onDelete = handlers.onDelete;
+    bound = bound.on(
+      'postgres_changes',
+      // NO filter — see the function comment (DELETE old records carry only
+      // the PK, so a desk filter would suppress every delete event).
+      { event: 'DELETE', schema: 'public', table: TABLE },
+      (payload) => {
+        const id = (payload.old as { id?: unknown } | null)?.id;
+        if (typeof id === 'string' && id) onDelete(id);
+      },
+    );
+  }
+  return bound;
+}
+
+/**
+ * M9: subscribe to the shared feed (live canvas) — INSERT + (Rock B) UPDATE
+ * and DELETE postgres_changes on public.doodles (the table is added to the
+ * realtime publication by supabase/schema.sql). Graceful no-op when realtime
+ * is unavailable: channel setup failures are swallowed and the callbacks
+ * simply never fire — the feed still works via listDoodles on load/refresh.
+ * Returns an unsubscribe function (call it on unmount).
+ */
+export function subscribeDoodles(handlers: DoodleFeedHandlers): () => void {
   try {
-    const channel = supabase
-      .channel('public:doodles')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: TABLE },
-        (payload) => {
-          onInsert(payload.new as DoodleRow);
-        },
-      )
-      .subscribe();
+    const channel = bindFeedHandlers(
+      supabase.channel('public:doodles'),
+      handlers,
+    ).subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };
@@ -517,33 +573,26 @@ export function subscribeDoodles(onInsert: (row: DoodleRow) => void): () => void
 }
 
 /**
- * v2: subscribe to new doodles landing on ONE desk (live per-desk feed).
+ * v2: subscribe to ONE desk's live feed (multi-desk view).
  *
- * Same as subscribeDoodles but the realtime postgres_changes filter scopes to
- * `desk_id=eq.<deskId>` so you only get live inserts for the desk you're
- * looking at — not the whole world (the multi-desk point). Graceful no-op when
- * realtime is unavailable. Returns an unsubscribe function (call on unmount).
+ * Same as subscribeDoodles but INSERT + UPDATE events scope server-side to
+ * `desk_id=eq.<deskId>` so you only get live changes for the desk you're
+ * looking at — not the whole world (the multi-desk point). DELETE events
+ * cannot be desk-filtered (PK-only old record — see bindFeedHandlers) so
+ * they arrive table-wide; the caller's id-match makes them desk-scoped.
+ * Graceful no-op when realtime is unavailable. Returns an unsubscribe
+ * function (call on unmount).
  */
 export function subscribeDoodlesForDesk(
   deskId: string,
-  onInsert: (row: DoodleRow) => void,
+  handlers: DoodleFeedHandlers,
 ): () => void {
   try {
-    const channel = supabase
-      .channel(`public:doodles:desk:${deskId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: TABLE,
-          filter: `desk_id=eq.${deskId}`,
-        },
-        (payload) => {
-          onInsert(payload.new as DoodleRow);
-        },
-      )
-      .subscribe();
+    const channel = bindFeedHandlers(
+      supabase.channel(`public:doodles:desk:${deskId}`),
+      handlers,
+      `desk_id=eq.${deskId}`,
+    ).subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };

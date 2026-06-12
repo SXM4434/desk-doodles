@@ -3,11 +3,10 @@ import type { CSSProperties, ReactNode } from 'react';
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
 import { PILL, CTA, SECTION_LABEL } from '../../lib/chromeStyles';
-import {
-  Canvas3DProvider,
-  GEOMETRY_MODE_OPTIONS,
-  useCanvas3D,
-} from '../../state/Canvas3DContext';
+import { Canvas3DProvider, useCanvas3D } from '../../state/Canvas3DContext';
+import { useF3RoughModifiers } from '../../state/F3RoughModifiersContext';
+// Type-only import — erased at compile, keeps three out of the main chunk.
+import type { HatchInputs } from '../canvas3d/hatchMaterial';
 
 // CTA mixes PILL's `border` shorthand with a `borderColor` longhand — React
 // dev warns when such conflicting styles diff across renders. Collapse to a
@@ -15,6 +14,7 @@ import {
 const { borderColor: _ctaBorderColor, ...CTA_REST } = CTA;
 const CTA_PILL: CSSProperties = { ...CTA_REST, border: `1px solid ${String(_ctaBorderColor)}` };
 import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
+import { Canvas3DChrome } from '../chrome/Canvas3DChrome';
 import {
   CollapsiblePanel,
   PanelToggle,
@@ -83,8 +83,32 @@ function DeskDoodlesCanvasPage() {
   // — the 3D scene is fed the SAME strokes the 2D surface holds, so flipping
   // the mode tab converts exactly what's drawn).
   const [strokes3d, setStrokes3d] = useState<Stroke[]>([]);
-  const { geometryMode, setGeometryMode } = useCanvas3D();
+  const { geometryMode, style3d, materialPreset, modeParams } = useCanvas3D();
+  const { state: mods } = useF3RoughModifiers();
   const strokePoints = useMemo(() => strokes3d.map((s) => s.points), [strokes3d]);
+  // Live 2D Shading values → hatch/svg-port uniforms (one math, two
+  // renderers): the SAME F3RoughModifiers state the 2D pen reads. Memo keyed
+  // on the consumed fields only, so unrelated 2D toggles don't churn the prop.
+  const hatchInputs = useMemo<HatchInputs>(
+    () => ({
+      hachureGap: mods.hachureGap,
+      hachureAngle: mods.hachureAngle,
+      strokeWidth: mods.strokeWidth,
+      inkIntensity: mods.inkIntensity,
+      fillStyle: mods.fillStyle,
+      wobble: mods.wobble,
+      fillOpacity: mods.fillOpacity,
+    }),
+    [
+      mods.hachureGap,
+      mods.hachureAngle,
+      mods.strokeWidth,
+      mods.inkIntensity,
+      mods.fillStyle,
+      mods.wobble,
+      mods.fillOpacity,
+    ],
+  );
   const [leftOpen, toggleLeft, setLeftOpen] = usePanelOpen('canvas.left');
   const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('canvas.right');
   useMinimizeUi([
@@ -169,41 +193,11 @@ function DeskDoodlesCanvasPage() {
               </button>
             ))}
           </div>
-          {/* 3D geometry pills — header chrome per feedback_toggles_always_in_chrome
-              (never in the cell/design). FULL set Auto/Rod/Extrude/Inflate/Solid,
-              never trimmed (D-7 locked model + feedback_more_toggle_options_better).
-              Only mounts in 3D mode — the row appears with the mode it controls. */}
-          {mode === '3d' && (
-            <div
-              role="tablist"
-              aria-label="3D geometry"
-              style={{
-                display: 'inline-flex',
-                border: '1px solid var(--dir-border)',
-                borderRadius: 999,
-                overflow: 'hidden',
-              }}
-            >
-              {GEOMETRY_MODE_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  role="tab"
-                  aria-selected={geometryMode === opt.id}
-                  onClick={() => setGeometryMode(opt.id)}
-                  title={opt.detail}
-                  style={{
-                    ...PILL,
-                    border: 'none',
-                    borderRadius: 0,
-                    background: geometryMode === opt.id ? 'var(--dir-accent)' : 'transparent',
-                    color: geometryMode === opt.id ? 'var(--dir-bg)' : 'var(--dir-text-body)',
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Round-7 chrome split (3d-mode-controls-spec §5): the geometry
+              control moved from header pills into the right panel's GEOMETRY
+              cluster (Canvas3DChrome) — still shell chrome per
+              feedback_toggles_always_in_chrome, now beside its full per-mode
+              param set. Only the 2D|3D MODE pair stays in the header. */}
         </div>
 
         <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -346,6 +340,10 @@ function DeskDoodlesCanvasPage() {
                     <Stroke3DSceneLazy
                       strokes={strokePoints}
                       geometryMode={geometryMode}
+                      style3d={style3d}
+                      materialPreset={materialPreset}
+                      modeParams={modeParams}
+                      hatchInputs={hatchInputs}
                       style={{ width: '100%', height: '100%' }}
                     />
                   </Suspense>
@@ -385,7 +383,10 @@ function DeskDoodlesCanvasPage() {
             )}
           </div>
         </main>
-        {/* Right chrome — Smart Hachure modifier panel from the audit/playground */}
+        {/* Right chrome — THE ROUND-7 SPLIT (3d-mode-controls-spec §0.1, locked):
+            2D mode → the 2D SVG chrome; 3D mode → 3D controls ONLY. The 2D
+            chrome reappears in 3D solely under Canvas3DChrome's SVG-port
+            style, where it drives the ported treatment. */}
         <CollapsiblePanel
           side="right"
           open={rightOpen}
@@ -397,7 +398,7 @@ function DeskDoodlesCanvasPage() {
             overflowY: 'auto',
           }}
         >
-          <SmartHachureChrome />
+          {mode === '3d' ? <Canvas3DChrome /> : <SmartHachureChrome />}
         </CollapsiblePanel>
       </div>
     </div>

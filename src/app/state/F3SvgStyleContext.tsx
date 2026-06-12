@@ -17,6 +17,14 @@ export type F3SvgStyle =
   | 'charcoal'
   | 'risograph'
   | 'newsprint'
+  // RETIRED (Rock B 2026-06-12, Sebs ratified): 'wireframe' is no longer in
+  // F3_SVG_STYLES — the SVG bounding-box stub rendered garbage on real art.
+  // The id stays in the union so persisted legacy render_configs and the
+  // per-style Record tables (STYLE_PRESETS, MODIFIER_SETS_BY_STYLE) keep
+  // typechecking; every parser validates against F3_SVG_STYLES membership,
+  // so legacy 'wireframe' rows fall back to rough-handdrawn at parse.
+  // Real wireframe rides the 3D path (Three.js WireframeGeometry),
+  // post-makeathon.
   | 'wireframe';
 
 export type F3SvgStyleMeta = {
@@ -38,7 +46,10 @@ export const F3_SVG_STYLES: F3SvgStyleMeta[] = [
   { id: 'charcoal',        label: 'Charcoal',        detail: 'feTurbulence filter overlay on strokes — graphite register.', isRoughFamily: false },
   { id: 'risograph',       label: 'Risograph',       detail: 'Each path duplicated in 2 colors with offset — print-shop register.', isRoughFamily: false },
   { id: 'newsprint',       label: 'Newsprint',       detail: 'Dot-pattern fills via SVG pattern — newspaper register.', isRoughFamily: false },
-  { id: 'wireframe',       label: 'Wireframe',       detail: 'Bounding-box / simplified outline only, no fills — schematic register.', isRoughFamily: false },
+  // 'wireframe' REMOVED from this list (Rock B 2026-06-12 — see the union
+  // type note above). Membership in THIS array is what the dropdowns render
+  // and what every render_config parser validates against, so removal here
+  // both kills the option and makes persisted legacy ids fall back at parse.
 ];
 
 type Ctx = {

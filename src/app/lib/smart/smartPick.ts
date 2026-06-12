@@ -113,7 +113,7 @@ export type SmartPickResult = {
 
 export type InputPickLogEntry = {
   surface: 'input-pick';
-  event: 'pick' | 'abstain' | 'undo';
+  event: 'pick' | 'abstain' | 'undo' | 'overridden';
   input: SmartPickInput;
   svgHash: string;
   axes: SmartPickAxes | null;
@@ -163,6 +163,26 @@ export function logSmartPickUndo(result: SmartPickResult): void {
   pushInputPickLogEntry({
     surface: 'input-pick',
     event: 'undo',
+    input: result.input,
+    svgHash: result.svgHash,
+    axes: result.pick.axes,
+    firedRules: result.pick.firedRules,
+    reason: result.pick.reason,
+    features: result.pick.features,
+  });
+}
+
+/** Log that a pick stopped being the active truth WITHOUT an undo: the user
+ *  manually moved a style/control after it (their choice supersedes the
+ *  pick — the chip would be lying if it kept claiming the pen), or the
+ *  picked input itself was removed. A softer correction than 'undo' (the
+ *  user built ON TOP of the pick rather than rejecting it) — labeled
+ *  separately so the two never get conflated in training data. */
+export function logSmartPickOverridden(result: SmartPickResult): void {
+  if (!result.pick) return;
+  pushInputPickLogEntry({
+    surface: 'input-pick',
+    event: 'overridden',
     input: result.input,
     svgHash: result.svgHash,
     axes: result.pick.axes,

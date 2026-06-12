@@ -56,7 +56,7 @@ export function strokeToPolygonPath(points: StrokePoint[]): string {
  *  filled paths). The viewBox is the tight bbox of the gesture (+pad) so
  *  normalizeSvgSize at the desk's add boundary scales the DOODLE to
  *  ~180px, not the whole 800×600 draw frame. */
-export function strokesToObjectMarkup(strokes: Stroke[]): string {
+export function strokesToObjectMarkup(strokes: Stroke[], toneFills: ToneFill[] = []): string {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -69,16 +69,28 @@ export function strokesToObjectMarkup(strokes: Stroke[]): string {
       if (y > maxY) maxY = y;
     }
   }
+  // Tone patches join the tight bbox — a brushed region can extend past the
+  // ink, and clipping a band statement would silently rewrite it.
+  for (const fill of toneFills) {
+    for (const [x, y] of fill.points) {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
   const pad = 6; // breathing room for the 3px stroke + round caps
   const r = (v: number) => (Math.round(v * 100) / 100).toString();
   const vb = `${r(minX - pad)} ${r(minY - pad)} ${r(maxX - minX + pad * 2)} ${r(maxY - minY + pad * 2)}`;
+  // Tone UNDER ink: patches first in document order, strokes paint on top.
+  const tonePaths = toneFillsMarkup(toneFills);
   const paths = strokes
     .map(
       (stroke) =>
         `<path d="${strokeToPolylinePath(stroke.points)}" fill="none" stroke="var(--dir-text-primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`,
     )
     .join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">${paths}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">${tonePaths}${paths}</svg>`;
 }
 
 /** Size-guard a stroke record (strokes-in-the-record contract): round coords,
@@ -355,11 +367,17 @@ export function backdropDisplayMarkup(f: BackdropFrame): string {
 export function composeBackdropAndStrokes(
   f: BackdropFrame,
   strokes: Stroke[],
-  opts: { tight?: boolean } = {},
+  opts: { tight?: boolean; toneFills?: ToneFill[] } = {},
 ): string {
   const { s, ox, oy } = backdropMapping(f);
   const toLocal = ([x, y]: StrokePoint): [number, number] => [(x - ox) / s, (y - oy) / s];
+  const toLocal2 = ([x, y]: [number, number]): [number, number] => [(x - ox) / s, (y - oy) / s];
+  const toneFills = opts.toneFills ?? [];
   const localWidth = Math.max(0.05, Math.round((3 / s) * 100) / 100);
+  // Tone patches ride the same inverse mapping as strokes (frame → upload-
+  // local), painting OVER the upload but UNDER the drawn ink — shading the
+  // picture, not erasing it. Fills need no width scaling.
+  const tonePaths = toneFillsMarkup(toneFills, toLocal2);
   const paths = strokes
     .map((stroke) => {
       const d = stroke.points.reduce((acc, pt, i) => {
@@ -371,7 +389,8 @@ export function composeBackdropAndStrokes(
     .join('');
   let vb: string;
   if (opts.tight) {
-    // Union of the upload's viewBox and the mapped strokes' bbox (+pad).
+    // Union of the upload's viewBox and the mapped strokes' + tone patches'
+    // bbox (+pad).
     let minX = f.vbX;
     let minY = f.vbY;
     let maxX = f.vbX + f.vbW;
@@ -379,6 +398,15 @@ export function composeBackdropAndStrokes(
     for (const stroke of strokes) {
       for (const pt of stroke.points) {
         const [lx, ly] = toLocal(pt);
+        if (lx < minX) minX = lx;
+        if (ly < minY) minY = ly;
+        if (lx > maxX) maxX = lx;
+        if (ly > maxY) maxY = ly;
+      }
+    }
+    for (const fill of toneFills) {
+      for (const pt of fill.points) {
+        const [lx, ly] = toLocal2(pt);
         if (lx < minX) minX = lx;
         if (ly < minY) minY = ly;
         if (lx > maxX) maxX = lx;
@@ -394,7 +422,7 @@ export function composeBackdropAndStrokes(
     vb = `${rnd((0 - ox) / s)} ${rnd((0 - oy) / s)} ${rnd(VIEWBOX_W / s)} ${rnd(VIEWBOX_H / s)}`;
   }
   const sizing = opts.tight ? '' : ' width="100%" height="100%"';
-  return `<svg xmlns="http://www.w3.org/2000/svg"${f.rootAttrs} viewBox="${vb}"${sizing}>${f.inner}${paths}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg"${f.rootAttrs} viewBox="${vb}"${sizing}>${f.inner}${tonePaths}${paths}</svg>`;
 }
 
 // In-frame action pill — PILL at the smaller in-canvas scale, on paper so the
@@ -442,6 +470,9 @@ export function DrawSurface({
   styled,
   initialStrokes,
   backdrop,
+  shade,
+  initialToneFills,
+  onToneFillsChange,
 }: {
   mode: CanvasMode;
   input: InputMode;
@@ -475,6 +506,21 @@ export function DrawSurface({
    *  the live preview == the published object). Host (DrawPanel) owns the
    *  file pick; /canvas leaves this unset. */
   backdrop?: BackdropFrame | null;
+  /** THE SHADE REGISTER (round 7, tone-fill brush): when `active`, the
+   *  pointer brushes TONE instead of ink — soft band-grey regions in the
+   *  discrete coverage.ts 8-band ladder, stored as ToneFill records (the
+   *  explicit shading register — mark-intent D2-F: always beats inference).
+   *  `erase` flips the brush into a patch-lifter (band 0 = paper = absence).
+   *  Tool state is owned by the host's chrome (DrawPanel's Ink|Shade pills +
+   *  band cluster); /canvas leaves this unset — zero behavior change. */
+  shade?: { active: boolean; band: number; radius: number; erase: boolean } | null;
+  /** Preload tone patches (Re-draw: the object's recorded tone comes back
+   *  editable, sibling of initialStrokes — addendum ch.2 lifecycle). */
+  initialToneFills?: ToneFill[];
+  /** Live mirror of the tone-patch pool — same contract as onStrokesChange
+   *  (stable callback, fired from an effect). The host stages
+   *  render_config.toneFills from this at Done. */
+  onToneFillsChange?: (toneFills: ToneFill[]) => void;
 }) {
   // PREVIEW strokes — gestures the user has finished pen-up on but hasn't
   // committed yet. While in this state they render as raw perfect-freehand
@@ -491,6 +537,16 @@ export function DrawSurface({
   const [committed, setCommitted] = useState(false);
   const [uploadedSvg, setUploadedSvg] = useState<{ name: string; markup: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // TONE PATCHES — the shade register's pool (sibling of `strokes`).
+  const [toneFills, setToneFills] = useState<ToneFill[]>(() =>
+    (initialToneFills ?? []).map((f, i) => ({ ...f, id: f.id || `loaded-tone-${i}` })),
+  );
+  // The brush centerline being actively dragged (shade register's `current`).
+  const [toneBrush, setToneBrush] = useState<[number, number][] | null>(null);
+  // Pointer position while the shade register is active — drives the honest
+  // brush-footprint ring (the radius is in viewBox units, so a CSS cursor
+  // could not show the true footprint).
+  const [hoverPt, setHoverPt] = useState<[number, number] | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -498,6 +554,11 @@ export function DrawSurface({
   useEffect(() => {
     onStrokesChange?.(strokes);
   }, [strokes, onStrokesChange]);
+
+  // Mirror the tone pool out too — same stable-callback contract.
+  useEffect(() => {
+    onToneFillsChange?.(toneFills);
+  }, [toneFills, onToneFillsChange]);
 
   function handleFilePick() {
     fileInputRef.current?.click();
@@ -573,28 +634,100 @@ export function DrawSurface({
     return [svgPt.x, svgPt.y, e.pressure || 0.5];
   }
 
+  // The shade register owns the pointer when active (and drawing isn't
+  // paused) — same gating as ink, different tool in the hand.
+  const shadeActive = !!shade?.active && !styled && input === 'draw' && mode !== '3d';
+
+  /** Patch hit-test for the eraser: inside the outline polygon, or within the
+   *  eraser radius of any outline anchor (forgiving on thin patches). */
+  function toneHit(f: ToneFill, x: number, y: number, radius: number): boolean {
+    let inside = false;
+    const pts = f.points;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i];
+      const [xj, yj] = pts[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) return true;
+    const r2 = radius * radius;
+    for (const [px, py] of pts) {
+      const dx = px - x;
+      const dy = py - y;
+      if (dx * dx + dy * dy <= r2) return true;
+    }
+    return false;
+  }
+
+  /** Erase = lift whole patches the eraser touches (patch-level granularity —
+   *  per-pixel boolean subtraction is post-makeathon per addendum ch.2.3;
+   *  repaint = brush again). */
+  function eraseToneAt(x: number, y: number, radius: number) {
+    setToneFills((prev) => prev.filter((f) => !toneHit(f, x, y, radius)));
+  }
+
   function handlePointerDown(e: React.PointerEvent) {
     // Style mode pauses drawing — flip back to Draw to keep sketching.
     if (styled) return;
     if (input !== 'draw' || mode === '3d') return;
     (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+    if (shadeActive) {
+      const [x, y] = eventToSvgPoint(e);
+      if (shade!.erase) {
+        eraseToneAt(x, y, shade!.radius);
+        setToneBrush([[x, y]]); // marks an erase-drag in progress (never rendered)
+      } else {
+        setToneBrush([[x, y]]);
+      }
+      return;
+    }
     setCurrent({ id: `s-${Date.now()}`, points: [eventToSvgPoint(e)] });
   }
 
   function handlePointerMove(e: React.PointerEvent) {
+    if (shadeActive) {
+      const [x, y] = eventToSvgPoint(e);
+      setHoverPt([x, y]);
+      if (toneBrush) {
+        if (shade!.erase) eraseToneAt(x, y, shade!.radius);
+        else setToneBrush((b) => (b ? [...b, [x, y]] : b));
+      }
+      return;
+    }
     if (!current) return;
     setCurrent((s) => (s ? { ...s, points: [...s.points, eventToSvgPoint(e)] } : null));
   }
 
   function handlePointerUp() {
+    if (toneBrush) {
+      if (!shade?.erase) {
+        // Sweep the centerline into the patch outline at the picked band —
+        // a tap is a dab, a drag is a soft region.
+        const outline = toneOutline(toneBrush, shade?.radius ?? 24);
+        if (outline.length >= 3 && shade) {
+          setToneFills((prev) => [
+            ...prev,
+            { id: `t-${Date.now()}`, points: outline, band: shade.band },
+          ]);
+        }
+      }
+      setToneBrush(null);
+      return;
+    }
     if (!current || current.points.length < 2) { setCurrent(null); return; }
     setStrokes((prev) => [...prev, current]);
     setCurrent(null);
   }
 
+  function handlePointerLeave() {
+    setHoverPt(null);
+    handlePointerUp();
+  }
+
   function clearAll() {
     setStrokes([]);
     setCurrent(null);
+    setToneFills([]);
+    setToneBrush(null);
     setCommitted(false);
   }
 
@@ -657,6 +790,37 @@ export function DrawSurface({
           dangerouslySetInnerHTML={{ __html: backdropDisplayMarkup(backdrop) }}
         />
       )}
+      {/* Layer 0t — TONE PATCHES, raw (Sketch mode): flat translucent band-
+          grey UNDER the ink strokes (round-7 contract), above any upload
+          backdrop. One <g> per band at one opacity — overlap WITHIN a band
+          composites solid-then-fades, so it never compounds into a band the
+          user didn't brush (flat by construction); bands ascend so darker
+          paints over lighter. Style mode skips this layer — the patches ride
+          the styled markup instead and render as marks. */}
+      {!styled && toneFills.length > 0 && (
+        <svg
+          viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+          width="100%"
+          height="100%"
+          xmlns="http://www.w3.org/2000/svg"
+          style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+          aria-hidden
+        >
+          {COVERAGE_BANDS.map((_, band) => {
+            const hex = TONE_BAND_HEX[band];
+            if (!hex) return null;
+            const fills = toneFills.filter((f) => f.band === band && f.points.length >= 3);
+            if (fills.length === 0) return null;
+            return (
+              <g key={band} opacity={0.55}>
+                {fills.map((f) => (
+                  <path key={f.id} d={tonePathD(f.points)} fill={hex} stroke="none" />
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+      )}
       {/* Layer 0s — UPLOAD BACKDROP + strokes, MERGED, in Style mode: ONE
           SvgStyleTransform over the SAME composed markup Done stages (full-
           frame viewBox so it letterboxes exactly like the raw layers). The
@@ -670,17 +834,24 @@ export function DrawSurface({
               style={{ width: '100%', height: '100%' }}
               aria-hidden
               dangerouslySetInnerHTML={{
-                __html: composeBackdropAndStrokes(backdrop, strokes, { tight: false }),
+                __html: composeBackdropAndStrokes(backdrop, strokes, {
+                  tight: false,
+                  toneFills,
+                }),
               }}
             />
           </SvgStyleTransform>
         </div>
       )}
       {/* Layer 1a — when COMMITTED (or the host's Style mode is on), strokes
-          flow through SvgStyleTransform so they pick up the active style and
-          re-render live as the pen controls change. (With a backdrop the
-          merged layer above already carries the strokes — skip.) */}
-      {(committed || styled) && strokes.length > 0 && !backdrop && (
+          AND tone patches flow through SvgStyleTransform so they pick up the
+          active style and re-render live as the pen controls change. Tone
+          patches enter FIRST (under ink) as flat solid band-greys — the
+          pipeline's signals layer reads the grey as source darkness and the
+          shading machinery converts it to fillStyle marks at band density
+          (band → coverage.ts — the I-2 wedge). (With a backdrop the merged
+          layer above already carries strokes + tone — skip.) */}
+      {(committed || styled) && (strokes.length > 0 || toneFills.length > 0) && !backdrop && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <SvgStyleTransform
             wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}
@@ -692,6 +863,19 @@ export function DrawSurface({
               xmlns="http://www.w3.org/2000/svg"
               aria-hidden
             >
+              {sortedToneFills(toneFills).map((f) => {
+                const hex = TONE_BAND_HEX[f.band];
+                if (!hex || f.points.length < 3) return null;
+                return (
+                  <path
+                    key={f.id}
+                    d={tonePathD(f.points)}
+                    fill={hex}
+                    stroke="none"
+                    data-tone-band={f.band}
+                  />
+                );
+              })}
               {strokes.map((stroke) => (
                 <path
                   key={stroke.id}
@@ -728,7 +912,10 @@ export function DrawSurface({
           ))}
         </svg>
       )}
-      {/* Layer 2: live in-progress stroke + pointer capture surface */}
+      {/* Layer 2: live in-progress stroke / tone brush + pointer capture
+          surface. In shade mode the native cursor hides — the in-svg
+          footprint ring below is the honest cursor (radius lives in viewBox
+          units; a CSS cursor can't show the true brushed size). */}
       <svg
         ref={svgRef}
         viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
@@ -737,13 +924,13 @@ export function DrawSurface({
         style={{
           position: 'absolute',
           inset: 0,
-          cursor: input === 'draw' ? 'crosshair' : 'default',
+          cursor: shadeActive ? 'none' : input === 'draw' ? 'crosshair' : 'default',
           touchAction: 'none',
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
       >
         {current && (
           <path
@@ -753,11 +940,37 @@ export function DrawSurface({
             stroke="none"
           />
         )}
+        {/* Live tone sweep — the patch forming under the brush, previewed at
+            the same flat translucency the committed raw layer uses. */}
+        {shadeActive && toneBrush && !shade?.erase && (
+          <path
+            d={tonePathD(toneOutline(toneBrush, shade?.radius ?? 24))}
+            fill={TONE_BAND_HEX[shade?.band ?? 3] ?? '#888888'}
+            fillOpacity={0.55}
+            stroke="none"
+          />
+        )}
+        {/* Brush-footprint ring — paint mode shows the band grey; erase mode
+            shows a dashed accent lifter. */}
+        {shadeActive && hoverPt && (
+          <circle
+            cx={hoverPt[0]}
+            cy={hoverPt[1]}
+            r={shade?.radius ?? 24}
+            fill={shade?.erase ? 'none' : TONE_BAND_HEX[shade?.band ?? 3] ?? '#888888'}
+            fillOpacity={shade?.erase ? 0 : 0.18}
+            stroke={shade?.erase ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)'}
+            strokeWidth={1.25}
+            strokeDasharray={shade?.erase ? '5 4' : undefined}
+            pointerEvents="none"
+          />
+        )}
       </svg>
       {/* Empty-state hint — DRAW mode: warm sentence-case invitation (was
           shouty uppercase; warmth pass 2026-06-11). UPLOAD-SVG mode: prompt
           to pick a file. Upload-image is covered by its honesty gate below. */}
-      {((input === 'draw' && allStrokes.length === 0 && !backdrop) || (isUpload && !uploadedSvg)) && (
+      {((input === 'draw' && allStrokes.length === 0 && toneFills.length === 0 && !backdrop) ||
+        (isUpload && !uploadedSvg)) && (
         <div
           style={{
             position: 'absolute',
@@ -894,6 +1107,128 @@ export function DrawSurface({
           <span>Rod &amp; Extrude geometry built from your strokes — landing soon.</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── ToneShadeCluster — the shade register's tool chrome ─────────────────────
+// Band picker (the FULL coverage.ts ladder: 7 paint swatches + Erase, which IS
+// band 0/paper — absence of tone) + brush-size slider. Controlled component so
+// any host owns the state: DrawPanel mounts it beside its Sketch|Style row;
+// ObjectSurface's Re-draw mounts the same cluster when it wires tone editing
+// (cross-rock contract — pairs with DrawSurface's shade/initialToneFills/
+// onToneFillsChange props). Pill idioms per chromeStyles.
+
+export type ShadeToolState = {
+  /** COVERAGE_BANDS index 1–7 (paint band). */
+  band: number;
+  /** Brush radius, draw-frame viewBox px. */
+  radius: number;
+  /** Erase mode — lifts whole patches (band 0 = paper = absence). */
+  erase: boolean;
+};
+
+export const SHADE_TOOL_DEFAULT: ShadeToolState = { band: 3, radius: 26, erase: false };
+
+export function ToneShadeCluster({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: ShadeToolState;
+  onChange: (next: ShadeToolState) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        minWidth: 0,
+        opacity: disabled ? 0.45 : 1,
+        pointerEvents: disabled ? 'none' : 'auto',
+      }}
+    >
+      {/* Band swatches — bands 1..7 of the one 8-band table, light → dark. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} role="radiogroup" aria-label="Tone band">
+        {COVERAGE_BANDS.map((b, band) => {
+          const hex = TONE_BAND_HEX[band];
+          if (!hex) return null; // band 0 = paper = the Erase pill
+          const selected = !value.erase && value.band === band;
+          return (
+            <button
+              key={band}
+              role="radio"
+              aria-checked={selected}
+              data-tone-swatch={band}
+              title={`${b.name} — band ${band} of 7`}
+              onClick={() => onChange({ ...value, band, erase: false })}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 999,
+                padding: 0,
+                background: hex,
+                cursor: 'pointer',
+                border: '1px solid var(--dir-border)',
+                boxShadow: selected
+                  ? '0 0 0 2px var(--dir-bg), 0 0 0 4px var(--dir-accent)'
+                  : 'none',
+                flexShrink: 0,
+              }}
+            />
+          );
+        })}
+      </div>
+      <button
+        onClick={() => onChange({ ...value, erase: !value.erase })}
+        aria-pressed={value.erase}
+        data-tone-erase
+        title="Paper (band 0) — touch a patch to lift it; brush again to repaint"
+        style={{
+          ...PILL,
+          padding: '5px 12px',
+          background: value.erase ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+          color: value.erase ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+          flexShrink: 0,
+        }}
+      >
+        Erase
+      </button>
+      {/* Brush size — viewBox px, 29 ticks (8–64 step 2). */}
+      <label
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          minWidth: 0,
+          fontFamily: IS,
+          fontSize: 10,
+          fontWeight: 500,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'var(--dir-text-secondary)',
+          whiteSpace: 'nowrap',
+        }}
+        title="Brush radius — soft region size, in canvas units"
+      >
+        Brush
+        <input
+          type="range"
+          className="dd-range"
+          min={8}
+          max={64}
+          step={2}
+          value={value.radius}
+          onChange={(e) => onChange({ ...value, radius: Number(e.target.value) })}
+          style={{ width: 90 }}
+          aria-label="Brush radius"
+        />
+        <span style={{ color: 'var(--dir-text-body-soft)', fontVariantNumeric: 'tabular-nums' }}>
+          {value.radius}px
+        </span>
+      </label>
     </div>
   );
 }

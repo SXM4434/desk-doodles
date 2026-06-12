@@ -5,55 +5,78 @@ import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-
 import * as THREE from 'three';
 import {
   DEFAULT_VIEWBOX,
+  DEDUPE_MIN_DIST,
+  EXTRUDE_BEVEL_SEGMENTS,
+  EXTRUDE_BEVEL_SIZE,
+  EXTRUDE_BEVEL_THICKNESS,
+  EXTRUDE_SMOOTH_MIN_ANCHORS,
+  INFLATE_BASE_RADIUS,
+  INFLATE_PRESSURE_INFLUENCE,
+  INFLATE_TIP_RADIUS,
+  JOINT_ANGLE_THRESHOLD_DEG,
+  JOINT_DEDUP_FACTOR,
+  JOINT_ENDPOINT_EPS_FACTOR,
+  MIN_EXTRUDE_AREA,
+  ROD_RADIUS,
+  SOLID_INK_RADIUS,
   SPHERE_SEGMENTS,
+  WORLD_SCALE,
+  buildExtrudeGeometry,
+  buildInflateGeometry,
   buildPoolSolidGeometry,
-  buildStrokeGeometry,
+  buildRodGeometry,
+  extractPressures,
+  isClosedStroke,
+  normalizeStrokePoints,
   poolCenter,
+  rdpPoints,
+  resolveGeometryMode,
   strokesKey,
   type GeometryModeSetting,
   type StrokeGeometryResult,
   type StrokeInputPoint,
   type ViewBoxSize,
 } from '../../lib/geometry3d/strokeTo3d';
+import {
+  DEFAULT_MODE3D_PARAMS,
+  extrudeBevelAutoDisabled,
+  extrudeEffectiveDepth,
+  inflatePuffAspectZ,
+  type Mode3DParams,
+} from './modeParams';
+import {
+  INK_3D_DEFAULT,
+  MATERIAL_PARAMS_3D,
+  MODE_MATERIAL_DEFAULTS_3D,
+  type MaterialPresetId,
+} from './materials3d';
+import { createHatchMaterial, updateHatchUniforms, type HatchInputs } from './hatchMaterial';
 
-// ─── Stroke3DScene — R3F scene for the stroke→3D round-trip (NATIVE-first) ──
-// Implements docs/design/3d-roundtrip-build-plan.md §2 with the plain-material
-// MVP only (per feedback_native_first_then_variants — the NPR hatch pass is a
-// LATER rock; nothing here imports postprocessing). Self-contained: the wiring
-// layer (DrawSurface honesty gate / chrome pills) mounts this and passes
-// strokes — this file reads no app contexts.
+// ─── Stroke3DScene — R3F scene for the stroke→3D round-trip ────────────────
+// Round-7 chrome-split build (docs/design/3d-mode-controls-spec.md): the scene
+// now consumes the FULL per-mode param sets + the 3-style taxonomy:
+//   · Native   — FS MeshPhysicalMaterial presets (materials3d.ts, D-C)
+//   · Hatch    — band-quantized procedural hachure, uniforms from the LIVE 2D
+//                Shading sliders (hatchMaterial.ts — one math, two renderers)
+//   · SVG-port — M8 v1: same band machinery + the 2D chrome's mark grammar
+//                (fillStyle/wobble/fillOpacity) + ink EdgesGeometry outline.
+// Self-contained: the wiring layer (DeskDoodlesCanvas / chrome) passes strokes
+// + params — this file reads no app contexts.
 //
 // Determinism: no unseeded randomness, no wall-clock reads. Same strokes +
 // props → same scene.
 
 const WARM_PAPER_FALLBACK = '#FDFCF9'; // theme.css --dir-bg (light direction)
 
-// ── Warm-graphite material + studio rig — PORTED from Free Stroke ──────────
-// PROVENANCE: free-stroke origin/main components/viewport-3d.tsx (liveMaterial
-// MeshPhysicalMaterial + ambient/key/fill/rim + baked <Environment> with four
-// Lightformer panels) and lib/style-system.ts MATERIAL_PARAMS. Read via
-// `git show origin/main:...` 2026-06-12 — the local checkout is stale.
-// ADAPTED for white paper: Free Stroke tunes charcoal ink (#26262b) against a
-// dark viewport; on warm-paper white the same albedo collapses to a flat
-// silhouette (Sebs 2026-06-12: "flat unlit black blobs"). The structure ports
-// verbatim (3 directionals at FS positions + low ambient + baked env so
-// clearcoat/sheen have something to reflect); albedo lifts to a mid warm
-// graphite so DIFFUSE shading carries curvature, and a hemisphere light
-// stands in for paper bounce. Verified by tools/3d/audit-sweep.mjs.
-const INK_SOFT_FALLBACK = '#5A5043'; // warm graphite, mid tone — curvature shows on white
-/** MeshPhysicalMaterial params — Free Stroke "ink" preset character (soft
- *  clearcoat + a whisper of sheen) re-balanced for a light background. */
-const MATERIAL_PARAMS = {
-  roughness: 0.48,
-  metalness: 0.0,
-  clearcoat: 0.6,
-  clearcoatRoughness: 0.22,
-  reflectivity: 0.5,
-  sheen: 0.35,
-  sheenRoughness: 0.6,
-  sheenColor: '#d8c9ae', // warm paper-tinted sheen — soft top glow, not plastic
-  envMapIntensity: 0.8,
-} as const;
+// ── Studio rig — PORTED from Free Stroke ───────────────────────────────────
+// PROVENANCE: free-stroke origin/main components/viewport-3d.tsx (ambient/key/
+// fill/rim + baked <Environment> with four Lightformer panels), read via
+// `git show origin/main:...` 2026-06-12. ADAPTED for white paper (hemisphere
+// stands in for paper bounce). The single mid-graphite material that lived
+// here (#5A5043) is GONE per amendment D2-E — it sat at the W1 caption-ink
+// tier and produced the bronze/clay read. Native now uses the FS material
+// presets verbatim (materials3d.ts); ink for the mark styles = INK_3D_DEFAULT.
+
 /** Ground-contact shadow (soft AO pool under the doodle — the cue that the
  *  form is an OBJECT above paper, not a flat mark on it). */
 const CONTACT_SHADOW = {
@@ -69,13 +92,8 @@ const CONTACT_SHADOW_DROP = 0.04;
 
 // ── Content-fit camera framing — PORTED from Free Stroke ───────────────────
 // PROVENANCE: viewport-3d.tsx `bounds.center + dir · bounds.radius × FRAME_K`
-// (FRAME_K = 3.0, verbatim). Without it the camera sits at a FIXED distance,
-// so a full-canvas doodle (8×6 world units) overflows the ~5-unit frustum —
-// big closed shapes rendered as a wall filling 100% of the frame (the worst
-// "blob" case the 2026-06-12 sweep caught: framedSketch/pitchDeckCover auto
-// + solid). Free Stroke frames along the (1,1,1) iso diagonal; we keep a
-// gentler mostly-frontal 3/4 so the doodle still reads as the drawing, with
-// top + side walls visible for depth.
+// (FRAME_K = 3.0, verbatim). Gentler mostly-frontal 3/4 so the doodle still
+// reads as the drawing, with top + side walls visible for depth.
 const FRAME_K = 3.0;
 const FRAME_DIR = new THREE.Vector3(0.5, 0.55, 1).normalize();
 /** Floor on the framing radius so a dot-tap doodle doesn't slam the camera
@@ -130,25 +148,269 @@ function resolvePaperHex(): string {
   }
 }
 
+// ── Param-default sync guard (dev only) ─────────────────────────────────────
+// modeParams.ts duplicates strokeTo3d defaults as literals (it must stay
+// three-free for the lazy-chunk split). This assert catches drift the moment
+// either side moves.
+if (import.meta.env.DEV) {
+  const d = DEFAULT_MODE3D_PARAMS;
+  if (
+    d.rod.radius !== ROD_RADIUS ||
+    d.rod.jointSensitivityDeg !== JOINT_ANGLE_THRESHOLD_DEG ||
+    d.inflate.baseRadius !== INFLATE_BASE_RADIUS ||
+    d.inflate.tipRadius !== INFLATE_TIP_RADIUS ||
+    d.inflate.pressureInfluence !== INFLATE_PRESSURE_INFLUENCE ||
+    d.solid.inkRadius !== SOLID_INK_RADIUS
+  ) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[Stroke3DScene] modeParams defaults drifted from strokeTo3d constants — re-sync modeParams.ts',
+    );
+  }
+}
+
+// ── Local mirrors of strokeTo3d module-private steps ────────────────────────
+// strokeTo3d.ts is the geometry rock's file (exclusive ownership) — the two
+// helpers below mirror its private logic so the spec'd params (joint
+// sensitivity 20–70°, bevel toggle) are REAL today. Followup filed for the
+// builders to grow `jointAngleThresholdDeg` / `bevelEnabled` options so these
+// mirrors can be deleted (cross-rock contract, see rock report).
+
+const DEDUPE_MIN_DIST_SQ = DEDUPE_MIN_DIST * DEDUPE_MIN_DIST;
+function dedupeConsecutiveLocal(world: THREE.Vector3[]): THREE.Vector3[] {
+  const out: THREE.Vector3[] = [];
+  for (const v of world) {
+    const prev = out[out.length - 1];
+    if (!prev || prev.distanceToSquared(v) > DEDUPE_MIN_DIST_SQ) out.push(v);
+  }
+  return out;
+}
+
+/** MIRROR of strokeTo3d detectJointPositions (FS detectJoints3D semantics)
+ *  with the angle threshold as a PARAMETER — at 40° output is identical to
+ *  the lib walk; the chrome's Joint-sensitivity slider drives it 20–70°. */
+function detectJointsWithAngle(
+  filtered: THREE.Vector3[],
+  startPt: THREE.Vector3,
+  endPt: THREE.Vector3,
+  radius: number,
+  angleDeg: number,
+): THREE.Vector3[] {
+  const positions: THREE.Vector3[] = [];
+  const angleThresholdRad = (angleDeg * Math.PI) / 180;
+  const endpointEps = radius * JOINT_ENDPOINT_EPS_FACTOR;
+  const jointDedup = radius * JOINT_DEDUP_FACTOR;
+  for (let i = 1; i < filtered.length - 1; i++) {
+    const prev = filtered[i - 1];
+    const curr = filtered[i];
+    const next = filtered[i + 1];
+    const ax = curr.x - prev.x, ay = curr.y - prev.y, az = curr.z - prev.z;
+    const bx = next.x - curr.x, by = next.y - curr.y, bz = next.z - curr.z;
+    const magA = Math.sqrt(ax * ax + ay * ay + az * az);
+    const magB = Math.sqrt(bx * bx + by * by + bz * bz);
+    if (magA < 1e-6 || magB < 1e-6) continue;
+    const dot = ax * bx + ay * by + az * bz;
+    const cosAngle = Math.max(-1, Math.min(1, dot / (magA * magB)));
+    const deviation = Math.PI - Math.acos(cosAngle);
+    if (deviation > angleThresholdRad) {
+      if (curr.distanceTo(startPt) < endpointEps) continue;
+      if (curr.distanceTo(endPt) < endpointEps) continue;
+      if (positions.length > 0 && curr.distanceTo(positions[positions.length - 1]) < jointDedup)
+        continue;
+      positions.push(curr.clone());
+    }
+  }
+  return positions;
+}
+
+/** Signed shoelace area (mirror of strokeTo3d's private helper). */
+function shoelaceAreaLocal(world: THREE.Vector3[]): number {
+  let area = 0;
+  for (let i = 0; i < world.length; i++) {
+    const a = world[i];
+    const b = world[(i + 1) % world.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
+}
+
+function hasNonFinitePositionsLocal(geometry: THREE.BufferGeometry): boolean {
+  const pos = geometry.getAttribute('position');
+  if (!pos) return true;
+  const arr = pos.array as ArrayLike<number>;
+  for (let i = 0; i < arr.length; i++) {
+    if (!Number.isFinite(arr[i])) return true;
+  }
+  return false;
+}
+
+const EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR = 8; // mirror (private in strokeTo3d)
+const EXTRUDE_SMOOTH_MAX_SAMPLES = 256; // mirror (private in strokeTo3d)
+
+/** MIRROR of strokeTo3d buildExtrudeGeometry with `bevelEnabled` exposed —
+ *  called ONLY when the Bevel toggle is OFF (or auto-disabled below the FS
+ *  tiny-width threshold); bevel-ON extrudes go through the lib builder
+ *  verbatim. Same smooth-dispatch, same degenerate fallbacks. */
+function buildExtrudeNoBevel(
+  world: THREE.Vector3[],
+  depth: number,
+  rodRadius: number,
+): StrokeGeometryResult {
+  const pts = dedupeConsecutiveLocal(world);
+  if (pts.length > 1 && pts[0].distanceToSquared(pts[pts.length - 1]) < 1e-12) pts.pop();
+  if (pts.length < 3 || Math.abs(shoelaceAreaLocal(pts)) < MIN_EXTRUDE_AREA) {
+    return buildRodGeometry(world, { radius: rodRadius });
+  }
+  try {
+    let outline = pts;
+    if (pts.length >= EXTRUDE_SMOOTH_MIN_ANCHORS) {
+      const loop = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
+      const divisions = Math.min(
+        pts.length * EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR,
+        EXTRUDE_SMOOTH_MAX_SAMPLES,
+      );
+      outline = loop.getPoints(divisions);
+      outline.pop();
+    }
+    const shape = new THREE.Shape(outline.map((v) => new THREE.Vector2(v.x, v.y)));
+    const geometry = new THREE.ExtrudeGeometry(shape, {
+      depth,
+      bevelEnabled: false,
+      curveSegments: 12,
+      steps: 1,
+    });
+    if (hasNonFinitePositionsLocal(geometry)) {
+      geometry.dispose();
+      throw new Error('extrude produced non-finite positions');
+    }
+    geometry.translate(0, 0, -depth / 2);
+    return { kind: 'extrude', geometry, holesCut: 0 };
+  } catch {
+    return buildRodGeometry(world, { radius: rodRadius, closed: true });
+  }
+}
+
+/** Per-stroke build with the FULL spec §2 param sets applied. */
+function buildStrokeWithParams(
+  points: StrokeInputPoint[],
+  viewBox: ViewBoxSize,
+  center: { x: number; y: number },
+  setting: GeometryModeSetting,
+  p: Mode3DParams,
+): StrokeGeometryResult {
+  const simplified = rdpPoints(points);
+  const mode = resolveGeometryMode(setting, simplified);
+  const world = normalizeStrokePoints(simplified, viewBox, WORLD_SCALE, center);
+
+  if (mode === 'extrude') {
+    const depth = extrudeEffectiveDepth(p.extrude.width, p.extrude.depthMult);
+    const bevelOn = p.extrude.bevel && !extrudeBevelAutoDisabled(p.extrude.width);
+    const result = bevelOn
+      ? buildExtrudeGeometry(world, { depth, rodRadius: p.rod.radius })
+      : buildExtrudeNoBevel(world, depth, p.rod.radius);
+    return result;
+  }
+
+  if (mode === 'inflate') {
+    const result = buildInflateGeometry(world, {
+      baseRadius: p.inflate.baseRadius,
+      tipRadius: p.inflate.tipRadius,
+      pressures: extractPressures(simplified),
+      pressureInfluence: p.inflate.pressureInfluence,
+      rodRadius: p.rod.radius,
+    });
+    // Puff (D-A): FS Z-aspect applied as a geometry-space Z scale.
+    // applyMatrix4 runs positions AND normals through the normal matrix, so
+    // the non-uniform scale shades correctly. aspect 1.0 is skipped (no-op).
+    if (result.kind === 'inflate') {
+      const aspectZ = inflatePuffAspectZ(p.inflate.puff);
+      if (Math.abs(aspectZ - 1) > 1e-3) {
+        result.geometry.applyMatrix4(new THREE.Matrix4().makeScale(1, 1, aspectZ));
+      }
+    }
+    return result;
+  }
+
+  // rod (and auto-resolved rod)
+  const rod = buildRodGeometry(world, {
+    radius: p.rod.radius,
+    closed: isClosedStroke(simplified),
+  });
+  if (
+    rod.kind === 'rod' &&
+    p.rod.jointBlobs &&
+    p.rod.jointSensitivityDeg !== JOINT_ANGLE_THRESHOLD_DEG
+  ) {
+    // Re-detect joints at the user's sensitivity (lib walk is fixed at 40°).
+    const pts = dedupeConsecutiveLocal(world);
+    if (pts.length >= 3) {
+      rod.jointPositions = detectJointsWithAngle(
+        pts,
+        pts[0],
+        pts[pts.length - 1],
+        p.rod.radius,
+        p.rod.jointSensitivityDeg,
+      );
+    }
+  }
+  return rod;
+}
+
 export interface Stroke3DSceneProps {
   /** Raw strokes in viewBox coords (y-down). Points are [x, y] or
-   *  [x, y, pressure] — DrawSurface's `stroke.points` pass through unchanged.
-   *  Pressure is ignored in MVP (radius modulation = stretch 6.1). */
+   *  [x, y, pressure] — DrawSurface's `stroke.points` pass through unchanged. */
   strokes: StrokeInputPoint[][];
   /** Source coordinate space. Defaults to the draw surface's 800×600. */
   viewBox?: ViewBoxSize;
-  /** 'auto' picks per stroke: open → rod, closed → extrude. The stretch
-   *  modes are EXPLICIT-ONLY — auto never resolves to them: 'inflate'
-   *  (swept variable-radius capsule) and 'solid' (whole pool rasterized into
-   *  ONE watertight mass — renders as a single mesh). */
+  /** 'auto' picks per stroke: open → rod, closed → extrude. 'inflate' and
+   *  'solid' are explicit-only — auto never resolves to them. */
   geometryMode?: GeometryModeSetting;
-  /** Background override. Default: --dir-bg resolved once at mount,
-   *  warm-paper hex fallback. */
+  /** 3D style (spec §3): native (lit presets) · hatch (Shading-slider
+   *  hachure) · svg-port (2D-chrome-driven treatment + ink edges). */
+  style3d?: 'native' | 'hatch' | 'svg-port';
+  /** Native material preset. Default: FS per-mode default for geometryMode. */
+  materialPreset?: MaterialPresetId;
+  /** Per-mode param sets (spec §2). Default: the spec's tuned defaults. */
+  modeParams?: Mode3DParams;
+  /** Live 2D Shading-cluster values for hatch/svg-port (the scene only
+   *  consumes; the wiring layer reads F3RoughModifiersContext). */
+  hatchInputs?: HatchInputs;
+  /** Background override. Default: --dir-bg resolved once at mount. */
   background?: string;
-  /** Mesh color (plain-material MVP). */
+  /** Legacy explicit ink override — when set, overrides the Native preset's
+   *  color and the mark styles' ink. Default ink = INK_3D_DEFAULT (D2-E). */
   inkColor?: string;
   style?: CSSProperties;
   className?: string;
+}
+
+const DEFAULT_HATCH_INPUTS: HatchInputs = {
+  hachureGap: 4,
+  hachureAngle: -41,
+  strokeWidth: 1.2,
+  inkIntensity: 1.0,
+};
+
+/** Copies live slider values into the hatch uniforms (device-px aware).
+ *  Runs as an effect INSIDE the Canvas so it can read the real pixel ratio. */
+function HatchUniformSync({
+  material,
+  variant,
+  inputs,
+  ink,
+  paper,
+}: {
+  material: THREE.ShaderMaterial;
+  variant: 'hatch' | 'svg-port';
+  inputs: HatchInputs;
+  ink: string;
+  paper: string;
+}) {
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    updateHatchUniforms(material, variant, inputs, ink, paper, gl.getPixelRatio());
+  }, [material, variant, inputs, ink, paper, gl]);
+  return null;
 }
 
 /** One mesh per stroke (matches the 2D commit layer's one-<path>-per-stroke),
@@ -160,13 +422,20 @@ function StrokeMeshes({
   viewBox,
   geometryMode,
   material,
+  modeParams,
+  showEdges,
+  edgeColor,
 }: {
   strokes: StrokeInputPoint[][];
   viewBox: ViewBoxSize;
   geometryMode: GeometryModeSetting;
   material: THREE.Material;
+  modeParams: Mode3DParams;
+  showEdges: boolean;
+  edgeColor: string;
 }) {
   const key = strokesKey(strokes);
+  const paramsKey = JSON.stringify(modeParams);
 
   const builds = useMemo<StrokeGeometryResult[]>(() => {
     const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES_3D);
@@ -176,19 +445,69 @@ function StrokeMeshes({
     const center = poolCenter(pool, viewBox);
     if (geometryMode === 'solid') {
       // Solid is pool-level by nature: ALL strokes rasterize into ONE
-      // watertight mass (research §5b) — a single mesh, not per-stroke.
-      return [buildPoolSolidGeometry(pool, { viewBox, center })];
+      // watertight mass — a single mesh, not per-stroke. NOTE: `holes` rides
+      // along for the day the geometry rock's builder accepts it (option needs
+      // filed cross-rock); until then the chrome surfaces the toggle as
+      // pending — never a silent no-op.
+      return [
+        buildPoolSolidGeometry(pool, {
+          viewBox,
+          center,
+          inkRadius: modeParams.solid.inkRadius,
+          depth: modeParams.solid.depth,
+          rodRadius: modeParams.rod.radius,
+          holes: modeParams.solid.holes,
+        } as Parameters<typeof buildPoolSolidGeometry>[1]),
+      ];
     }
-    return pool.map((points) => buildStrokeGeometry(points, { viewBox, mode: geometryMode, center }));
-    // `key` stands in for the strokes array identity (cheap deterministic key).
+    return pool.map((points) =>
+      buildStrokeWithParams(points, viewBox, center, geometryMode, modeParams),
+    );
+    // `key`/`paramsKey` stand in for array/object identity (cheap deterministic keys).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, geometryMode, viewBox.w, viewBox.h]);
+  }, [key, paramsKey, geometryMode, viewBox.w, viewBox.h]);
 
   useEffect(() => {
     return () => {
       for (const b of builds) b.geometry.dispose();
     };
   }, [builds]);
+
+  // Debug introspection (window.__dd_decisionLog house pattern, QW-2): the
+  // verify harness + future calibration sweeps read what the scene actually
+  // built — no sampled claims, receipts from the live object.
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__dd3d = {
+      geometryMode,
+      paramsKey,
+      builds: builds.map((b) =>
+        b.kind === 'rod'
+          ? { kind: b.kind, joints: b.jointPositions.length, caps: b.capPositions.length, radius: b.radius }
+          : { kind: b.kind },
+      ),
+    };
+  }, [builds, geometryMode, paramsKey]);
+
+  // SVG-port ink outline: EdgesGeometry per mesh (30° crease threshold —
+  // smooth tubes contribute almost nothing, slab rims read as drawn lines).
+  // This is the v1 bridge's outline register; the post-makeathon TAM path
+  // replaces it with a stable-seed SvgStyleTransform projection (M8 doc).
+  const edges = useMemo<THREE.EdgesGeometry[]>(() => {
+    if (!showEdges) return [];
+    return builds.map((b) => new THREE.EdgesGeometry(b.geometry, 30));
+  }, [builds, showEdges]);
+  useEffect(() => {
+    return () => {
+      for (const e of edges) e.dispose();
+    };
+  }, [edges]);
+  const edgeMaterial = useMemo(
+    () => new THREE.LineBasicMaterial({ color: new THREE.Color(edgeColor) }),
+    [edgeColor],
+  );
+  useEffect(() => {
+    return () => edgeMaterial.dispose();
+  }, [edgeMaterial]);
 
   // Shared unit sphere for rod endpoint caps AND joint spheres, scaled per
   // use (plan §1.1 — sibling meshes instead of CSG merge). Tessellation =
@@ -230,26 +549,30 @@ function StrokeMeshes({
       {builds.map((b, i) => (
         <group key={i}>
           <mesh geometry={b.geometry} material={material} />
+          {showEdges && edges[i] && (
+            <lineSegments geometry={edges[i]} material={edgeMaterial} />
+          )}
+          {/* Endpoint caps — chrome-controlled (spec §2.1 End caps toggle). */}
           {b.kind === 'rod' &&
+            modeParams.rod.caps &&
             b.capPositions.map((p, j) => (
               <mesh key={j} geometry={capSphere} position={p} scale={b.radius} material={material} />
             ))}
-          {/* Joint spheres (free-stroke ink-blob character): centerline
-              spheres at tube radius fill the pinch crease at kinks. */}
+          {/* Joint spheres (free-stroke ink-blob character) — chrome-controlled
+              (spec §2.1 Joint blobs toggle + sensitivity slider). */}
           {b.kind === 'rod' &&
+            modeParams.rod.jointBlobs &&
             b.jointPositions.map((p, j) => (
               <mesh key={`j${j}`} geometry={capSphere} position={p} scale={b.radius} material={material} />
             ))}
         </group>
       ))}
-      {/* Soft ground-contact shadow (rig adaptation for white paper — grounds
-          the form so it reads as an object, not a flat mark). frames={1} bakes
-          ONCE per mount = deterministic; the key remounts it whenever the
-          strokes/mode (and therefore the geometry) change. Scale rides the
-          pool radius so big doodles keep a full shadow pool. */}
+      {/* Soft ground-contact shadow (rig adaptation for white paper). frames={1}
+          bakes ONCE per mount = deterministic; the key remounts it whenever
+          the strokes/mode/params (and therefore the geometry) change. */}
       {builds.length > 0 && bounds && (
         <ContactShadows
-          key={`${key}|${geometryMode}`}
+          key={`${key}|${geometryMode}|${paramsKey}`}
           frames={1}
           position={[bounds.center.x, bounds.minY - CONTACT_SHADOW_DROP, bounds.center.z]}
           opacity={CONTACT_SHADOW.opacity}
@@ -269,36 +592,57 @@ export function Stroke3DScene({
   strokes,
   viewBox = DEFAULT_VIEWBOX,
   geometryMode = 'auto',
+  style3d = 'native',
+  materialPreset,
+  modeParams = DEFAULT_MODE3D_PARAMS,
+  hatchInputs = DEFAULT_HATCH_INPUTS,
   background,
-  inkColor = INK_SOFT_FALLBACK,
+  inkColor,
   style,
   className,
 }: Stroke3DSceneProps) {
   // Lazy initializer = resolved once at mount, never re-read during render.
   const [paper] = useState(resolvePaperHex);
   const bg = background ?? paper;
+  const ink = inkColor ?? INK_3D_DEFAULT;
 
-  // ONE shared MeshPhysicalMaterial for every mesh (Free Stroke liveMaterial
-  // pattern) — disposed on color change / unmount.
-  const material = useMemo(
-    () =>
-      new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color(inkColor),
-        roughness: MATERIAL_PARAMS.roughness,
-        metalness: MATERIAL_PARAMS.metalness,
-        clearcoat: MATERIAL_PARAMS.clearcoat,
-        clearcoatRoughness: MATERIAL_PARAMS.clearcoatRoughness,
-        reflectivity: MATERIAL_PARAMS.reflectivity,
-        sheen: MATERIAL_PARAMS.sheen,
-        sheenRoughness: MATERIAL_PARAMS.sheenRoughness,
-        sheenColor: new THREE.Color(MATERIAL_PARAMS.sheenColor),
-        envMapIntensity: MATERIAL_PARAMS.envMapIntensity,
-      }),
-    [inkColor],
-  );
+  // ── Native: FS preset MeshPhysicalMaterial (materials3d.ts, verbatim) ──
+  const preset: MaterialPresetId = materialPreset ?? MODE_MATERIAL_DEFAULTS_3D[geometryMode];
+  const nativeMaterial = useMemo(() => {
+    const p = MATERIAL_PARAMS_3D[preset];
+    return new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(inkColor ?? p.color),
+      roughness: p.roughness,
+      metalness: p.metalness,
+      clearcoat: p.clearcoat,
+      clearcoatRoughness: p.clearcoatRoughness,
+      reflectivity: p.reflectivity,
+      sheen: p.sheen,
+      sheenRoughness: p.sheenRoughness,
+      sheenColor: new THREE.Color(p.sheenColor),
+      emissive: new THREE.Color(p.emissive),
+      emissiveIntensity: p.emissiveIntensity,
+      envMapIntensity: p.envMapIntensity,
+    });
+  }, [preset, inkColor]);
   useEffect(() => {
-    return () => material.dispose();
-  }, [material]);
+    return () => nativeMaterial.dispose();
+  }, [nativeMaterial]);
+
+  // ── Hatch / SVG-port: the band-quantized ShaderMaterial (one instance,
+  // uniforms updated live — slider moves re-hatch without rebuilds). ──
+  const hatchVariant = style3d === 'svg-port' ? 'svg-port' : 'hatch';
+  const hatchMaterial = useMemo(() => {
+    if (style3d === 'native') return null;
+    return createHatchMaterial(hatchVariant);
+  }, [style3d, hatchVariant]);
+  useEffect(() => {
+    return () => {
+      if (hatchMaterial) hatchMaterial.dispose();
+    };
+  }, [hatchMaterial]);
+
+  const material: THREE.Material = hatchMaterial ?? nativeMaterial;
 
   return (
     <Canvas
@@ -312,7 +656,9 @@ export function Stroke3DScene({
       {/* Studio rig — Free Stroke key+fill+rim structure (positions verbatim
           from viewport-3d.tsx), re-balanced for white paper: hemisphere light
           stands in for paper bounce (sky-warm above, paper-bounce below) and
-          the ambient floor drops so form shading keeps its gradient range. */}
+          the ambient floor drops so form shading keeps its gradient range.
+          The hatch/svg-port ShaderMaterial computes its own lambert from the
+          same key/fill directions — the rig stays for Native + shadows. */}
       <ambientLight intensity={0.25} />
       <hemisphereLight args={['#fff7e8', '#cdbfa6', 0.55]} />
       <directionalLight position={[5, 8, 5]} intensity={1.45} color="#fff3e0" />
@@ -367,7 +713,24 @@ export function Stroke3DScene({
           scale={[0.6, 5, 1]}
         />
       </Environment>
-      <StrokeMeshes strokes={strokes} viewBox={viewBox} geometryMode={geometryMode} material={material} />
+      {hatchMaterial && (
+        <HatchUniformSync
+          material={hatchMaterial}
+          variant={hatchVariant}
+          inputs={hatchInputs}
+          ink={ink}
+          paper={bg}
+        />
+      )}
+      <StrokeMeshes
+        strokes={strokes}
+        viewBox={viewBox}
+        geometryMode={geometryMode}
+        material={material}
+        modeParams={modeParams}
+        showEdges={style3d === 'svg-port'}
+        edgeColor={ink}
+      />
       <OrbitControls makeDefault enableDamping />
     </Canvas>
   );

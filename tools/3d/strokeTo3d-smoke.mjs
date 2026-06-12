@@ -12,19 +12,28 @@ const {
   rdpPoints,
   normalizeStrokePoints,
   isClosedStroke,
+  closureStateOf,
   pickGeometryMode,
   resolveGeometryMode,
   buildRodGeometry,
   buildExtrudeGeometry,
+  buildExtrudeGeometryWithHoles,
   buildInflateGeometry,
   buildSolidGeometry,
   buildPoolSolidGeometry,
   buildStrokeGeometry,
+  containmentDepths,
+  extractPoolRegions,
+  extractStrokePoolRegions,
   extractPressures,
   poolCenter,
   strokesKey,
   DEFAULT_VIEWBOX,
+  REGION_EXTRACTOR_VERSION,
 } = mod;
+const { convertStrokePool } = await import(
+  new URL('../../src/app/lib/geometry3d/convert.ts', import.meta.url)
+);
 
 const results = [];
 function check(name, fn) {
@@ -347,6 +356,126 @@ check("buildStrokeGeometry mode:'solid' → single-stroke solid (API total)", ()
   const out = buildStrokeGeometry(loop, { mode: 'solid' });
   assert(out.kind === 'solid', `pipeline picked ${out.kind}`);
   assert(resolveGeometryMode('auto', loop) === 'extrude', 'auto must still pick extrude, never solid');
+});
+
+// ── 6d. ROCK 2 — 3-state closure + parity holes + region extractor ──────────
+
+check('closureStateOf: 3 states (closed / treated-as-closed / open), boolean unchanged', () => {
+  // The 120-pt circle closes within ~5px → 'closed' (silent slab).
+  assert(closureStateOf(loop) === 'closed', `loop → ${closureStateOf(loop)}`);
+  // Sine endpoints are far apart → 'open'.
+  assert(closureStateOf(sine) === 'open', `sine → ${closureStateOf(sine)}`);
+  // Arrow-band fixture: gap 18px on a ~304px-diag shape ∈ [8, 24.3) → TAC.
+  const band = [];
+  const arrowPts = [[200, 300], [400, 300], [400, 260], [480, 320], [400, 380], [400, 340], [200, 340], [202, 318]];
+  for (let s = 0; s + 1 < arrowPts.length; s++) {
+    const [ax, ay] = arrowPts[s];
+    const [bx, by] = arrowPts[s + 1];
+    for (let t = 0; t <= 19; t++) band.push([ax + ((bx - ax) * t) / 20, ay + ((by - ay) * t) / 20, 0.5]);
+  }
+  band.push([202, 318, 0.5]);
+  assert(closureStateOf(band) === 'treated-as-closed', `arrow band → ${closureStateOf(band)}`);
+  // Back-compat law: solid family ≡ the old boolean for every fixture.
+  for (const pts of [loop, sine, band, collinear]) {
+    assert(isClosedStroke(pts) === (closureStateOf(pts) !== 'open'), 'boolean drifted from 3-state');
+  }
+});
+
+check('containmentDepths: 3 nested squares → [0, 1, 2]', () => {
+  const sq = (c, r) => [
+    [c - r, c - r], [c + r, c - r], [c + r, c + r], [c - r, c + r],
+  ];
+  const depths = containmentDepths([sq(0, 30), sq(0, 20), sq(0, 10)]);
+  assert(depths.join(',') === '0,1,2', `depths ${depths.join(',')}`);
+});
+
+check('buildExtrudeGeometryWithHoles: donut loops → 1 slab with 1 hole (more verts than plain)', () => {
+  const outer = normalizeStrokePoints(rdpPoints(loop), DEFAULT_VIEWBOX);
+  const innerRaw = [];
+  for (let i = 0; i < 60; i++) {
+    const t = (i / 60) * Math.PI * 2;
+    innerRaw.push([400 + 40 * Math.cos(t), 300 + 40 * Math.sin(t), 0.5]);
+  }
+  const inner = normalizeStrokePoints(rdpPoints(innerRaw), DEFAULT_VIEWBOX);
+  const holed = buildExtrudeGeometryWithHoles(outer, [inner]);
+  const plain = buildExtrudeGeometry(outer);
+  assert(holed.kind === 'extrude' && plain.kind === 'extrude', 'both should extrude');
+  assert(holed.holesCut === 1, `holesCut ${holed.holesCut} ≠ 1`);
+  assert(plain.holesCut === 0, `plain holesCut ${plain.holesCut} ≠ 0`);
+  const hv = holed.geometry.getAttribute('position').count;
+  const pv = plain.geometry.getAttribute('position').count;
+  assert(hv > pv, `holed verts ${hv} should exceed plain ${pv}`);
+  // Degenerate hole skipped, never crash.
+  const degHole = buildExtrudeGeometryWithHoles(outer, [inner.slice(0, 2)]);
+  assert(degHole.kind === 'extrude' && degHole.holesCut === 0, 'degenerate hole should be skipped');
+  console.log(`   extrude holes: plain ${pv} verts → holed ${hv} verts (1 hole)`);
+});
+
+check('extractPoolRegions: annulus strokes → outer + hole with parentIndex, deterministic', () => {
+  const arcA = [];
+  const arcB = [];
+  for (let i = 0; i <= 80; i++) {
+    const t1 = -0.2 + (i / 80) * (Math.PI + 0.4);
+    arcA.push([400 + 150 * Math.cos(t1), 300 + 150 * Math.sin(t1), 0.5]);
+    const t2 = Math.PI - 0.2 + (i / 80) * (Math.PI + 0.4);
+    arcB.push([400 + 150 * Math.cos(t2), 300 + 150 * Math.sin(t2), 0.5]);
+  }
+  const a = extractStrokePoolRegions([arcA, arcB]);
+  assert(a.extractorVersion === REGION_EXTRACTOR_VERSION, 'version missing');
+  assert(a.closureStates.length === 2 && a.closureStates.every((c) => c === 'open'), 'arc closures wrong');
+  const outers = a.regions.filter((r) => r.role === 'outer');
+  const holes = a.regions.filter((r) => r.role === 'hole');
+  assert(outers.length === 1 && holes.length === 1, `regions ${outers.length} outer / ${holes.length} hole`);
+  assert(holes[0].parentIndex !== null && a.regions[holes[0].parentIndex].role === 'outer', 'hole parent wrong');
+  assert(holes[0].areaWorld > 0 && outers[0].areaWorld > holes[0].areaWorld, 'areas inconsistent');
+  // Determinism: byte-equal outlines across runs.
+  const b = extractStrokePoolRegions([arcA, arcB]);
+  assert(JSON.stringify(a) === JSON.stringify(b), 'extraction not deterministic');
+  // Pure world-space entry agrees on counts.
+  const world = [arcA, arcB].map((s) => normalizeStrokePoints(rdpPoints(s), DEFAULT_VIEWBOX));
+  const w = extractPoolRegions(world, { closedFlags: [false, false] });
+  assert(w.regions.length === a.regions.length, 'world-entry region count differs');
+  console.log(`   regions: ${outers.length} outer + ${holes.length} hole (extractor v${a.extractorVersion})`);
+});
+
+check('convertStrokePool auto: donut → slab w/ hole + hole receipt; receipts complete', () => {
+  const circ = (r) => {
+    const o = [];
+    for (let i = 0; i <= 90; i++) {
+      const t = (i / 90) * Math.PI * 2;
+      o.push([400 + r * Math.cos(t), 300 + r * Math.sin(t), 0.5]);
+    }
+    return o;
+  };
+  const res = convertStrokePool([circ(150), circ(60)], { mode: 'auto' });
+  assert(res.units.length === 2, `units ${res.units.length} ≠ 2`);
+  const slab = res.units.find((u) => u.treatment === 'solid');
+  const hole = res.units.find((u) => u.treatment === 'hole');
+  assert(slab && slab.build && slab.build.kind === 'extrude' && slab.holesCut === 1, 'slab w/ hole missing');
+  assert(hole && hole.build === null, 'hole unit should carry no geometry');
+  assert(res.receipts.length === res.units.length, 'one receipt per unit');
+  for (const r of res.receipts) {
+    assert(r.surface === 'conversion' && r.register === 'drawn' && r.mode === 'auto', 'receipt fields wrong');
+    assert(Array.isArray(r.firedRules) && r.firedRules.length > 0, 'receipt missing firedRules');
+  }
+});
+
+check('convertStrokePool: determinism — two runs produce identical unit summaries', () => {
+  const strokes = [loop, sine];
+  const s = (res) =>
+    JSON.stringify(
+      res.units.map((u) => [u.id, u.treatment, u.intent, u.closure, u.band, u.holesCut, u.build?.kind ?? null]),
+    );
+  assert(s(convertStrokePool(strokes, { mode: 'auto' })) === s(convertStrokePool(strokes, { mode: 'auto' })), 'auto not deterministic');
+  assert(s(convertStrokePool(strokes, { mode: 'solid' })) === s(convertStrokePool(strokes, { mode: 'solid' })), 'solid not deterministic');
+});
+
+check('convertStrokePool explicit modes: dropdown stays sacred (rod/solid render everything)', () => {
+  const strokes = [loop, sine];
+  const rod = convertStrokePool(strokes, { mode: 'rod' });
+  assert(rod.units.length === 2 && rod.units.every((u) => u.build !== null), 'rod mode must render every stroke');
+  const solid = convertStrokePool(strokes, { mode: 'solid' });
+  assert(solid.units.length === 1 && solid.units[0].build?.kind === 'solid', 'solid mode = one pool mass');
 });
 
 // ── 7. Full pipeline ────────────────────────────────────────────────────────
