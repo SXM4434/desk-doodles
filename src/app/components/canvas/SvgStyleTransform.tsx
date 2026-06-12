@@ -330,8 +330,23 @@ function injectJaggedness(
   seed: number,
 ): Array<[number, number]> {
   if (points.length < 2 || jaggedness <= 0.05) return points;
-  // jagged 0.5 → 1 zig per segment; jagged 1 → 2 zigs; jagged 2 → 4 zigs
-  const zigsPerSeg = Math.min(4, Math.max(1, Math.round(jaggedness * 2)));
+  // jagged 0.5 → 1 zig per segment; jagged 1 → 2 zigs; jagged 2 → 4 zigs.
+  //
+  // 2026-06-11 slider-sweep QUEUE fix (audit-runs/2026-06-11-slider-sweep/
+  // REPORT.md §2): the integer Math.round(jaggedness * 2) collapsed the
+  // 41-tick slider into a 4-level STAIRCASE — crossing a rounding boundary
+  // re-laid-out every zig (measured MAD cliff ~1.5-1.9), while moves inside
+  // a bucket only scaled amplitude (~0.2-0.4). Fix: per-segment DITHERED zig
+  // count — the fractional part of `jaggedness * 2` sets what FRACTION of
+  // segments carry the next integer zig count (seeded draw, deterministic),
+  // so each slider tick migrates ~10% of segments instead of all-at-once.
+  // At the integer anchors (0.5 → 1, 1.0 → 2, 1.5 → 3, 2.0 → 4) every
+  // segment gets the same count as before — the calibrated endpoint looks
+  // (subtle roughening → dramatic full-sawtooth) are preserved. Default
+  // jaggedness = 0 early-returns above, byte-identical.
+  const zigFloat = Math.min(4, Math.max(1, jaggedness * 2));
+  const zigBase = Math.floor(zigFloat);
+  const zigFrac = zigFloat - zigBase;
   // Perpendicular displacement scales with jaggedness so high jaggedness = wider zig
   const ampScale = jaggedness * 0.9;
   const r = seededRandom(seed + 9973);
@@ -343,6 +358,8 @@ function injectJaggedness(
     const dy = by - ay;
     const len = Math.hypot(dx, dy);
     if (len < 0.5) { out.push([bx, by]); continue; }
+    // Per-segment dithered zig count (seeded — deterministic per shape).
+    const zigsPerSeg = Math.min(4, zigBase + (r() < zigFrac ? 1 : 0));
     // unit perpendicular
     const px = -dy / len;
     const py = dx / len;
@@ -2362,6 +2379,34 @@ const TEXTURE_RECIPES: Record<Exclude<TextureStep, 'none'>, {
   canvas:       { type: 'turbulence',   baseFrequency: '0.22',       numOctaves: '2', seed: '103', baseScale: 1.8, margin: 8  },
 };
 
+/** Displacement scale for the recipe-driven texture filter.
+ *
+ *  2026-06-11 slider-sweep fix-now #3 (audit-runs/2026-06-11-slider-sweep/
+ *  REPORT.md §12): the pure `baseScale × intensity` product left every
+ *  low-baseScale recipe (light 1.2 / wet-ink 1.3 / paper-tooth 1.4) sub-pixel
+ *  until intensity ~2 — texture `light` at the DEFAULT intensity 1.0 was
+ *  byte-identical to texture OFF (the user picks a texture and sees nothing).
+ *  Fix: an additive visibility ramp that reaches its full 1.6 offset by
+ *  intensity 0.4, so every recipe is subtle-but-present at 1.0 (light:
+ *  scale 1.2 → 2.8, ≈ today's intensity-2.3 look) while intensity 0 still
+ *  means OFF and the per-recipe growth slope stays monotonic — no new flat
+ *  zone anywhere in the range. Deterministic (pure function of slider state).
+ *
+ *  `stipple` keeps the pure multiplicative form: its prominence is owned by
+ *  the dotSize/dotScatter axes, and the newsprint + stipple PRESETS ship this
+ *  texture — adding the ramp would jump both presets (no-jump constraint;
+ *  verified byte-identical in the rock-3 before/after capture). */
+function textureDisplacementScale(
+  baseScale: number,
+  m: F3ModifiersState,
+  activeTexture: Exclude<TextureStep, 'none'>,
+): number {
+  if (activeTexture === 'stipple') {
+    return baseScale * m.textureIntensity * (m.dotSize * (0.4 + 2.0 * m.dotScatter));
+  }
+  return baseScale * m.textureIntensity + 1.6 * Math.min(1, m.textureIntensity / 0.4);
+}
+
 // ─── NEWSPRINT DOT SCREEN — real per-layout dot geometry ───────────────────
 //
 // 2026-06-10: dotPattern ('grid' | 'staggered' | 'random' | 'concentric')
@@ -2556,7 +2601,7 @@ export function TextureFilterDefs() {
             <feDisplacementMap
               in={recipe.blur !== undefined ? 'blurred' : 'SourceGraphic'}
               in2="noise"
-              scale={recipe.baseScale * m.textureIntensity * (activeTexture === 'stipple' ? m.dotSize * (0.4 + 2.0 * m.dotScatter) : 1)}
+              scale={textureDisplacementScale(recipe.baseScale, m, activeTexture)}
             />
           </filter>
         )}

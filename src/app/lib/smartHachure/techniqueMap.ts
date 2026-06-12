@@ -261,10 +261,48 @@ function applyModifierOverrides(
   // Effective gap (px) = base hachureGap slider × role's gap multiplier,
   // capped at 12 px (edge-case table "Huge shapes" row: beyond that, lines
   // read as discrete strokes, not a darker hatched area — Agent 2 §7).
-  const effectiveGap = Math.max(1.5, Math.min(12, m.hachureGap * styled.gap));
+  //
+  // 2026-06-11 slider-sweep fix-now #1 (audit-runs/2026-06-11-slider-sweep/
+  // REPORT.md §7): the role gap multipliers (0.9-5×) pushed the raw product
+  // past the 12 px cap by slider ~5-6, pinning every fillable role for the
+  // top HALF of the slider (two measured consecutive steps with literally
+  // zero pixel change). Fix per I-3 "bias within band": keep the sub-default
+  // mapping byte-identical (slider ≤ 4 — preserves the default render AND
+  // every preset that sets hachureGap ≤ 4, e.g. stipple's 2.5), and remap
+  // the above-default half so each role travels from its default-anchored
+  // gap to the 12 px cap as the slider reaches its max — slider max now
+  // lands AT the cap for every role instead of hitting it early and dying.
+  // sparse-tonal (5×) is already AT the cap at the default; it stays pinned
+  // above 4 by design (the cap is the locked perceptual bound) — the
+  // aggregate response stays alive via mid/dense/solid roles.
+  const GAP_FLOOR = 1.5;
+  const GAP_CAP = 12;
+  const GAP_SLIDER_DEFAULT = 4; // DEFAULT_MODIFIERS.hachureGap — anchor value
+  const GAP_SLIDER_MAX = 12; // SLIDER_SPECS.hachureGap.max
+  let effectiveGap: number;
+  if (m.hachureGap <= GAP_SLIDER_DEFAULT) {
+    // Bottom half: today's exact formula — byte-identical output.
+    effectiveGap = Math.max(GAP_FLOOR, Math.min(GAP_CAP, m.hachureGap * styled.gap));
+  } else {
+    // Top half: lerp from the role's default-anchored gap to the cap.
+    const gapAtDefault = Math.max(GAP_FLOOR, Math.min(GAP_CAP, GAP_SLIDER_DEFAULT * styled.gap));
+    const t = Math.min(1, (m.hachureGap - GAP_SLIDER_DEFAULT) / (GAP_SLIDER_MAX - GAP_SLIDER_DEFAULT));
+    effectiveGap = gapAtDefault + (GAP_CAP - gapAtDefault) * t;
+  }
 
   // Effective weight (px) = strokeWidth × role's weight multiplier × fillDensity scale
-  let effectiveWeight = m.strokeWidth * styled.weight * Math.max(0.5, m.fillDensity);
+  //
+  // 2026-06-11 slider-sweep fix-now #2 (REPORT.md §9): the flat
+  // Math.max(0.5, m.fillDensity) floor swallowed slider values 0-0.5 —
+  // the bottom 40% of the slider was byte-identical output. Default-
+  // preserving piecewise remap: keep the 0.5 floor's INTENT (light fills
+  // never vanish) by mapping 0 → 0.5 and ramping to the 0.7 default
+  // (0.7 → 0.7 exactly — default render byte-identical; ≥ 0.7 passes
+  // through untouched, so bold-ink/stipple presets at 1.0 are unchanged).
+  // Monotonic, continuous at 0.7, no dead zone.
+  const densityScale =
+    m.fillDensity < 0.7 ? 0.5 + (m.fillDensity / 0.7) * 0.2 : m.fillDensity;
+  let effectiveWeight = m.strokeWidth * styled.weight * densityScale;
 
   // Cap weight at 70% of gap so hachure lines never merge to solid (Agent 5)
   effectiveWeight = Math.min(effectiveWeight, effectiveGap * 0.7);
