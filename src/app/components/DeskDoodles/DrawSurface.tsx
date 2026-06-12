@@ -43,6 +43,57 @@ export function strokeToPolygonPath(points: StrokePoint[]): string {
  *  outline pipeline filters out filled paths, so we feed it a stroke-only
  *  version of the user's gesture instead. Loses variable-width character
  *  but gains style-pipeline transformability (wobble / jaggedness / etc). */
+/** Build the stroke-only SVG markup for ONE desk object — the polyline
+ *  commit-layer form (fill="none" + stroke) that survives Smart Hachure,
+ *  same shape as /canvas's committed layer (its outline pipeline drops
+ *  filled paths). The viewBox is the tight bbox of the gesture (+pad) so
+ *  normalizeSvgSize at the desk's add boundary scales the DOODLE to
+ *  ~180px, not the whole 800×600 draw frame. */
+export function strokesToObjectMarkup(strokes: Stroke[]): string {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const stroke of strokes) {
+    for (const [x, y] of stroke.points) {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  const pad = 6; // breathing room for the 3px stroke + round caps
+  const r = (v: number) => (Math.round(v * 100) / 100).toString();
+  const vb = `${r(minX - pad)} ${r(minY - pad)} ${r(maxX - minX + pad * 2)} ${r(maxY - minY + pad * 2)}`;
+  const paths = strokes
+    .map(
+      (stroke) =>
+        `<path d="${strokeToPolylinePath(stroke.points)}" fill="none" stroke="var(--dir-text-primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`,
+    )
+    .join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">${paths}</svg>`;
+}
+
+/** Size-guard a stroke record (strokes-in-the-record contract): round coords,
+ *  then halve point density until the JSON fits the row budget (~45KB). */
+export function capStrokes(raw: Stroke[]): StrokePoint[][] {
+  let pts: StrokePoint[][] = raw.map((st) =>
+    st.points.map(([x, y, pr]) => [
+      Math.round(x * 10) / 10,
+      Math.round(y * 10) / 10,
+      Math.round(pr * 100) / 100,
+    ] as StrokePoint),
+  );
+  while (JSON.stringify(pts).length > 45000) {
+    const before = JSON.stringify(pts).length;
+    pts = pts.map((st) =>
+      st.length > 8 ? st.filter((_, i) => i % 2 === 0 || i === st.length - 1) : st,
+    );
+    if (JSON.stringify(pts).length >= before) break;
+  }
+  return pts;
+}
+
 export function strokeToPolylinePath(points: StrokePoint[]): string {
   if (points.length === 0) return '';
   return points.reduce(
@@ -93,6 +144,8 @@ export function DrawSurface({
   onStrokesChange,
   hideActions,
   fill,
+  liveStyle,
+  initialStrokes,
 }: {
   mode: CanvasMode;
   input: InputMode;
@@ -106,11 +159,25 @@ export function DrawSurface({
   /** Fill the parent box (popup mini-desk) instead of clamping to 4:3 —
    *  the inner SVG letterboxes via its viewBox either way. */
   fill?: boolean;
+  /** LIVE-STYLED CANVAS (Sebs 2026-06-11 popup feedback ④: "the canvas IS the
+   *  preview"): finished strokes render through the SAME SvgStyleTransform
+   *  commit layer continuously — no Done needed — so pen-control changes
+   *  restyle the drawing live (SvgStyleTransform subscribes to the style +
+   *  modifier contexts itself). The ACTIVE in-flight stroke stays a raw
+   *  perfect-freehand polygon for zero-latency feel (motion research: direct
+   *  manipulation, no tween) and joins the styled pool on stroke end.
+   *  /canvas leaves this unset — its Done/Edit commit flow is unchanged. */
+  liveStyle?: boolean;
+  /** Preload the canvas with stored strokes (Re-draw: the object's recorded
+   *  gesture comes back editable — the record keeps the hand). */
+  initialStrokes?: StrokePoint[][];
 }) {
   // PREVIEW strokes — gestures the user has finished pen-up on but hasn't
   // committed yet. While in this state they render as raw perfect-freehand
   // polygons so the user sees their drawing AS DRAWN, not pre-styled.
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const [strokes, setStrokes] = useState<Stroke[]>(() =>
+    (initialStrokes ?? []).map((points, i) => ({ id: `loaded-${i}`, points })),
+  );
   // CURRENT stroke — the one being actively dragged.
   const [current, setCurrent] = useState<Stroke | null>(null);
   // COMMITTED — flip to true when user hits "Done." Only then do the
@@ -263,11 +330,15 @@ export function DrawSurface({
           </SvgStyleTransform>
         </div>
       )}
-      {/* Layer 1a — when COMMITTED, strokes flow through SvgStyleTransform so
-          they pick up the active style (rough-handdrawn / wet-ink / etc). */}
-      {committed && strokes.length > 0 && (
+      {/* Layer 1a — when COMMITTED (or hosted with liveStyle: the popup canvas
+          IS the preview), strokes flow through SvgStyleTransform so they pick
+          up the active style (rough-handdrawn / wet-ink / etc) and re-render
+          live as the pen controls change. */}
+      {(committed || liveStyle) && strokes.length > 0 && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-          <SvgStyleTransform>
+          <SvgStyleTransform
+            wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}
+          >
             <svg
               viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
               width="100%"
@@ -290,9 +361,9 @@ export function DrawSurface({
           </SvgStyleTransform>
         </div>
       )}
-      {/* Layer 1b — while NOT committed, render strokes raw as perfect-freehand
-          polygons so user sees what they drew, unstyled. */}
-      {!committed && strokes.length > 0 && (
+      {/* Layer 1b — while NOT committed (and not live-styling), render strokes
+          raw as perfect-freehand polygons so user sees what they drew, unstyled. */}
+      {!committed && !liveStyle && strokes.length > 0 && (
         <svg
           viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
           width="100%"

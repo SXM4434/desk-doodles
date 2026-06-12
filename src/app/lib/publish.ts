@@ -402,6 +402,31 @@ export async function updateDoodleConfig(
 }
 
 /**
+ * v5 (Re-draw): rewrite one of YOUR doodles' svg + render_config together —
+ * one transaction server-side (update_my_doodle_svg, schema-v5-redraw.sql).
+ * Returns false gracefully while v5 isn't pasted (the surface shows the
+ * honest local-save note instead of lying).
+ */
+export async function updateDoodleSvg(
+  id: string,
+  svg: string,
+  renderConfig: Record<string, unknown>,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc('update_my_doodle_svg', {
+    p_id: id,
+    p_session: getSessionId(),
+    p_svg: svg,
+    p_render_config: renderConfig,
+    p_content_hash: await contentHash(svg),
+  });
+  if (error) {
+    if (isMissingV2(error)) return false; // pre-v5 DB — RPC not installed yet
+    throw new Error(`updateDoodleSvg failed: ${error.message}`);
+  }
+  return data === true;
+}
+
+/**
  * v4 helper: resolve a doodle ROW from its svg markup via the content_hash
  * column (the same SHA-1 cache key publishDoodle stamps at insert).
  *

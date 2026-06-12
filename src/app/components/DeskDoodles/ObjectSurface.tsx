@@ -38,7 +38,9 @@ import {
   DEFAULT_MODIFIERS,
 } from '../../state/F3RoughModifiersContext';
 import { applyStylePreset } from '../canvas/SvgStyleTransform';
-import { findDoodleBySvg, updateDoodleConfig } from '../../lib/publish';
+import { findDoodleBySvg, updateDoodleConfig, updateDoodleSvg } from '../../lib/publish';
+import { DrawSurface, strokesToObjectMarkup, capStrokes, type Stroke, type StrokePoint } from './DrawSurface';
+import { normalizeSvgSize } from '../../lib/normalizeInput';
 
 // ─── ObjectSurface — the one morphing object panel (modes, never nested) ──────
 // Per docs/design/object-model-and-desk-architecture.md §"The one object
@@ -76,6 +78,10 @@ export type ObjectSurfaceMode = 'edit' | 'sandbox';
 export type SurfaceRenderConfig = {
   svgStyle: F3SvgStyle;
   modifiers: F3ModifiersState;
+  /** Extras (e.g. `strokes` — the recorded gesture) pass through every hop
+   *  UNTOUCHED (strokes-in-the-record contract): a config save that rebuilt
+   *  only {svgStyle, modifiers} would silently destroy the source strokes. */
+  [extra: string]: unknown;
 };
 
 export type ObjectSurfaceData = {
@@ -129,7 +135,8 @@ function parseSurfaceConfig(raw: unknown): SurfaceRenderConfig | null {
       (modifiers as Record<string, unknown>)[key] = v;
     }
   }
-  return { svgStyle: style as F3SvgStyle, modifiers };
+  // Spread-then-override: extras (strokes etc.) ride through untouched.
+  return { ...rec, svgStyle: style as F3SvgStyle, modifiers };
 }
 
 /** Sync bridge between ObjectSurface's plain local state and the NESTED
@@ -463,6 +470,7 @@ export function ObjectSurface({
   object,
   onClose,
   onDelete,
+  onObjectUpdate,
   onSave,
   onConfigSave,
   rightInset = 0,
@@ -474,6 +482,9 @@ export function ObjectSurface({
   onDelete?: () => void;
   /** Edit mode only — persist the edited name/why (called on Done). */
   onSave?: (name: string | null, why: string | null) => void;
+  /** Edit mode only (Re-draw) — hands the regenerated svg + config back so
+   *  the desk object updates in place (persistence runs in the surface). */
+  onObjectUpdate?: (svgMarkup: string, config: SurfaceRenderConfig) => void;
   /** Edit mode only — the optimistic local config update at Done: lets the
    *  caller (DeskPage) re-pin the desk object to the edited config without a
    *  reload. Fired BEFORE the persist resolves, and regardless of its result
@@ -599,7 +610,7 @@ export function ObjectSurface({
       return;
     }
 
-    const config: SurfaceRenderConfig = { svgStyle: surfStyle, modifiers: surfMods };
+    const config: SurfaceRenderConfig = { ...baseline, svgStyle: surfStyle, modifiers: surfMods };
     // Optimistic local update — ALWAYS (the caller re-pins the desk object;
     // the note below covers the not-persisted case honestly).
     onConfigSave?.(config);
@@ -618,6 +629,54 @@ export function ObjectSurface({
     }
     if (persisted) onClose();
     else setConfigNote(true); // quiet one-liner, stays open so it's seen
+  };
+
+  // ── RE-DRAW (round 4): reopen the recorded gesture, modify, save back ────
+  // The record keeps the hand: render_config.strokes (written at Done by the
+  // create flow) reload into the draw canvas, editable; Done re-runs the same
+  // markup path the create flow uses and persists svg + config in one v5 RPC.
+  const [redrawing, setRedrawing] = useState(false);
+  const redrawStrokesRef = useRef<Stroke[]>([]);
+  const [redrawCount, setRedrawCount] = useState(0);
+  // Local art override so the card refreshes instantly after a re-draw save.
+  const [artMarkup, setArtMarkup] = useState(object.svgMarkup);
+  const storedStrokes = useMemo<StrokePoint[][] | null>(() => {
+    const raw = (baseline as Record<string, unknown>).strokes;
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    const ok = raw.every(
+      (st) =>
+        Array.isArray(st) &&
+        st.length >= 2 &&
+        st.every(
+          (pt) =>
+            Array.isArray(pt) && pt.length === 3 && pt.every((n) => Number.isFinite(n)),
+        ),
+    );
+    return ok ? (raw as StrokePoint[][]) : null;
+  }, [baseline]);
+
+  const handleRedrawDone = async () => {
+    const drawn = redrawStrokesRef.current;
+    if (drawn.length === 0) return;
+    const markup = normalizeSvgSize(strokesToObjectMarkup(drawn), 180);
+    const config: SurfaceRenderConfig = {
+      ...baseline,
+      svgStyle: surfStyle,
+      modifiers: surfMods,
+      strokes: capStrokes(drawn),
+    };
+    // Optimistic everywhere: the card + the desk object update immediately.
+    setArtMarkup(markup);
+    setBaseline(config);
+    onObjectUpdate?.(markup, config);
+    setRedrawing(false);
+    let persisted = false;
+    if (rowId) {
+      setSaving(true);
+      persisted = await updateDoodleSvg(rowId, markup, config).catch(() => false);
+      setSaving(false);
+    }
+    if (!persisted) setConfigNote(true); // honest local-save note (needs v5)
   };
 
   useEffect(() => {
@@ -669,6 +728,7 @@ export function ObjectSurface({
   };
 
   const panel: CSSProperties = {
+    position: 'relative',
     background: 'var(--dir-raised)',
     border: '1px solid var(--dir-border)',
     // Sandbox gets a distinct dashed edge so it never reads as "your editable
@@ -700,7 +760,7 @@ export function ObjectSurface({
       <F3RoughModifiersProvider>
         <SurfaceRenderScope svgStyle={surfStyle} mods={surfMods}>
           <ObjectCard
-            svgMarkup={object.svgMarkup}
+            svgMarkup={artMarkup}
             name={isSandbox ? object.name : name}
             why={isSandbox ? object.why : why}
             owner={object.owner}
@@ -836,6 +896,55 @@ export function ObjectSurface({
           </div>
         )}
 
+        {/* RE-DRAW STAGE — covers the card UI; the recorded gesture reloads
+            into the live-styled canvas (rendered under THIS object's current
+            edit-state config via the same nested-provider scope), editable.
+            Done re-runs the create flow's markup path + persists via v5. */}
+        {redrawing && storedStrokes && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 5,
+              background: 'var(--dir-raised)',
+              borderRadius: 16,
+              padding: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+            }}
+          >
+            <span style={SECTION_LABEL}>Re-draw — your original strokes, editable</span>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+              <F3SvgStyleProvider>
+                <F3RoughModifiersProvider>
+                  <SurfaceRenderScope svgStyle={surfStyle} mods={surfMods}>
+                    <DrawSurface
+                      mode="svg"
+                      input="draw"
+                      hideActions
+                      fill
+                      liveStyle
+                      initialStrokes={storedStrokes}
+                      onStrokesChange={(st) => { redrawStrokesRef.current = st; setRedrawCount(st.length); }}
+                    />
+                  </SurfaceRenderScope>
+                </F3RoughModifiersProvider>
+              </F3SvgStyleProvider>
+            </div>
+            <footer style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <button onClick={() => setRedrawing(false)} style={PILL}>Back</button>
+              <button
+                onClick={() => void handleRedrawDone()}
+                disabled={redrawCount === 0 || saving}
+                style={{ ...CTA, opacity: redrawCount === 0 || saving ? 0.7 : 1 }}
+              >
+                {saving ? 'Saving…' : 'Done'}
+              </button>
+            </footer>
+          </div>
+        )}
+
         <footer style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
           {isSandbox ? (
             // Just Close in Sandbox for now. The "Remix as mine" button returns
@@ -843,14 +952,37 @@ export function ObjectSurface({
             <button onClick={onClose} style={PILL}>Close</button>
           ) : (
             <>
-              <button
-                onClick={onDelete}
-                disabled={!onDelete}
-                title="Remove this doodle from the desk"
-                style={{ ...PILL, borderColor: 'var(--dir-border)', color: 'var(--dir-text-body-soft)' }}
-              >
-                Delete
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  onClick={onDelete}
+                  disabled={!onDelete}
+                  title="Remove this doodle from the desk"
+                  style={{ ...PILL, borderColor: 'var(--dir-border)', color: 'var(--dir-text-body-soft)' }}
+                >
+                  Delete
+                </button>
+                {storedStrokes ? (
+                  <button
+                    onClick={() => { redrawStrokesRef.current = []; setRedrawCount(0); setRedrawing(true); }}
+                    disabled={saving}
+                    title="Reopen the drawing with your original strokes"
+                    style={PILL}
+                  >
+                    Re-draw
+                  </button>
+                ) : (
+                  <span
+                    style={{
+                      fontFamily: IS,
+                      fontSize: 10,
+                      fontStyle: 'italic',
+                      color: 'var(--dir-text-body-soft)',
+                    }}
+                  >
+                    drawn before re-editing existed
+                  </span>
+                )}
+              </div>
               <button
                 onClick={() => void handleDone()}
                 disabled={saving}

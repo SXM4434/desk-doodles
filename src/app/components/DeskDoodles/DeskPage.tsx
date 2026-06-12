@@ -92,9 +92,17 @@ import { ObjectSurface, type ObjectSurfaceMode } from './ObjectSurface';
 // (every object re-renders under the live panel state; records untouched;
 // nobody else sees it). Objects with NO config (pre-existing rows) fall back
 // to the live global state — exactly the pre-D-7 behavior, nothing breaks.
+// The index signature is the STROKES-IN-THE-RECORD contract (2026-06-12):
+// render_config may carry extra fields beyond the pen snapshot — today
+// `strokes` (Array<Array<[x, y, pressure]>>, draw-canvas 800×600 viewBox
+// space, written at the Done boundary below) — and every parse/persist hop
+// must pass unknown fields through UNTOUCHED so the record's source strokes
+// survive round-trips (Edit-restyle re-persists the whole config; a parser
+// that rebuilt only {svgStyle, modifiers} would silently destroy them).
 type ObjectRenderConfig = {
   svgStyle: F3SvgStyle;
   modifiers: F3ModifiersState;
+  [extra: string]: unknown;
 };
 
 /** Discrete modifier keys → their legal enum values. parseRenderConfig checks
@@ -118,7 +126,10 @@ const MODIFIER_ENUMS: Partial<Record<keyof F3ModifiersState, readonly string[]>>
  *  real F3SvgStyle, and modifier values are taken key-by-key ONLY where the
  *  type matches DEFAULT_MODIFIERS' (finite numbers; enum strings checked
  *  against their step lists) — unknown/missing keys fall back to the
- *  defaults, so configs stay forward-compatible as the modifier set grows. */
+ *  defaults, so configs stay forward-compatible as the modifier set grows.
+ *  UNKNOWN TOP-LEVEL FIELDS (e.g. `strokes`) pass through untouched — the
+ *  render path only reads svgStyle/modifiers, and consumers of the extras
+ *  (3D conversion, re-draw) do their own validation. */
 function parseRenderConfig(raw: unknown): ObjectRenderConfig | null {
   if (!raw || typeof raw !== 'object') return null;
   const rec = raw as Record<string, unknown>;
@@ -138,7 +149,9 @@ function parseRenderConfig(raw: unknown): ObjectRenderConfig | null {
       (modifiers as Record<string, unknown>)[key] = v;
     }
   }
-  return { svgStyle: style as F3SvgStyle, modifiers };
+  // Spread-then-override: extras (strokes etc.) ride through as-is; the
+  // validated svgStyle + modifiers replace their raw counterparts.
+  return { ...rec, svgStyle: style as F3SvgStyle, modifiers };
 }
 
 type DeskObject = {
@@ -890,8 +903,21 @@ export function DeskPage() {
   // ONE object per Done — the add boundary. normalizeSvgSize here is the
   // locked auto-resize decision (21-research §2): every object lands at
   // ~180px on its longest axis before entering the render pipeline.
+  // `meta` rides in from the DrawPanel naming stage (2026-06-12): the raw
+  // source strokes (already size-guarded by the panel per the strokes-in-the-
+  // record contract) join the render_config snapshot, and name/why publish
+  // with the row (publish_to_open_desk's p_name/p_why). All optional —
+  // upload-SVG objects carry no strokes, a skipped naming stage publishes
+  // nameless exactly as before.
   const addObject = useCallback(
-    (rawMarkup: string) => {
+    (
+      rawMarkup: string,
+      meta?: {
+        strokes?: [number, number, number][][];
+        name?: string | null;
+        why?: string | null;
+      },
+    ) => {
       const svgMarkup = normalizeSvgSize(rawMarkup, 180);
       counterRef.current += 1;
       const id = `doodle-${counterRef.current}`;
@@ -950,10 +976,16 @@ export function DeskPage() {
       // + the full modifier state become this object's permanent record.
       // penModifiers is the context's state object (immutably replaced on
       // every change), so holding the reference is a true snapshot.
+      // STROKES IN THE RECORD: the raw gesture rides the same snapshot
+      // (optional field — absent on uploads), so the record holds the SOURCE
+      // of the doodle, not just its look (the wedge: the hand survives).
       const renderConfig: ObjectRenderConfig = {
         svgStyle: penStyle,
         modifiers: penModifiers,
+        ...(meta?.strokes && meta.strokes.length > 0 ? { strokes: meta.strokes } : {}),
       };
+      const name = meta?.name ?? null;
+      const why = meta?.why ?? null;
 
       // Drawing always routes to the OPEN desk. If we're viewing a closed past
       // desk, optimistically showing the object here would be wrong (it lands
@@ -964,10 +996,11 @@ export function DeskPage() {
         // ownerSession on the optimistic add so clicking your just-drawn
         // object opens Edit (yours), not Sandbox, before the insert resolves.
         // renderConfig rides along so the optimistic object is pinned to the
-        // pen it was drawn with from its very first paint.
+        // pen it was drawn with from its very first paint; name/why from the
+        // naming stage show up immediately if the object is opened.
         setObjects((prev) => [
           ...prev,
-          { id, svgMarkup, x, y, rotation, ownerSession: getSessionId(), renderConfig },
+          { id, svgMarkup, x, y, rotation, ownerSession: getSessionId(), renderConfig, name, why },
         ]);
       }
 
@@ -977,7 +1010,7 @@ export function DeskPage() {
       // filled the desk). renderConfig persists the pen snapshot into
       // doodles.render_config (D-6) so every viewer renders this object under
       // the look it was MADE with.
-      publishDoodle({ svg: svgMarkup, x, y, rotation, deskId: openDeskId ?? undefined, renderConfig })
+      publishDoodle({ svg: svgMarkup, x, y, rotation, name, why, deskId: openDeskId ?? undefined, renderConfig })
         .then(({ row, desk: landedDesk }) => {
           // The desk this object actually landed on (when v2 is live).
           if (landedDesk) {
@@ -1632,6 +1665,21 @@ export function DeskPage() {
                 id: obj.dbId ?? null,
                 renderConfig: obj.renderConfig ?? null,
               }}
+              onObjectUpdate={
+                activeSurface.mode === 'edit'
+                  ? (svgMarkup, config) => {
+                      // Re-draw saved: the desk object updates in place (svg +
+                      // re-pinned config); persistence already ran in the surface.
+                      setObjects((prev) =>
+                        prev.map((o) =>
+                          o.id === obj.id
+                            ? { ...o, svgMarkup, renderConfig: parseRenderConfig(config) }
+                            : o,
+                        ),
+                      );
+                    }
+                  : undefined
+              }
               onConfigSave={
                 activeSurface.mode === 'edit'
                   ? (config) => {

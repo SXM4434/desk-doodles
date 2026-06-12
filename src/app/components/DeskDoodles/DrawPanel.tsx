@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { IS } from '../../lib/typography';
+import { IS, ISe } from '../../lib/typography';
+import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
 import { PILL, CTA, SECTION_LABEL, RAISED_SHADOW } from '../../lib/chromeStyles';
-import { DrawSurface, strokeToPolylinePath, type Stroke } from './DrawSurface';
+import { DrawSurface, strokesToObjectMarkup, capStrokes, type Stroke, type StrokePoint } from './DrawSurface';
 import { prepareSvgUpload } from '../../lib/svgUpload';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { Dropdown } from '../chrome/Dropdown';
@@ -28,36 +29,6 @@ type PanelInput = 'draw' | 'upload-svg' | 'upload-image';
 // surfaces, ONE pen — values set here are the values the desk panel shows,
 // and the next doodle renders with them at Done).
 
-/** Build the stroke-only SVG markup for ONE desk object — the polyline
- *  commit-layer form (fill="none" + stroke) that survives Smart Hachure,
- *  same shape as /canvas's committed layer (its outline pipeline drops
- *  filled paths). The viewBox is the tight bbox of the gesture (+pad) so
- *  normalizeSvgSize at the desk's add boundary scales the DOODLE to
- *  ~180px, not the whole 800×600 draw frame. */
-function strokesToObjectMarkup(strokes: Stroke[]): string {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const stroke of strokes) {
-    for (const [x, y] of stroke.points) {
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-  }
-  const pad = 6; // breathing room for the 3px stroke + round caps
-  const r = (v: number) => (Math.round(v * 100) / 100).toString();
-  const vb = `${r(minX - pad)} ${r(minY - pad)} ${r(maxX - minX + pad * 2)} ${r(maxY - minY + pad * 2)}`;
-  const paths = strokes
-    .map(
-      (stroke) =>
-        `<path d="${strokeToPolylinePath(stroke.points)}" fill="none" stroke="var(--dir-text-primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`,
-    )
-    .join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">${paths}</svg>`;
-}
 
 /** Tabbable elements inside the dialog, in DOM order. Computed fresh per
  *  keypress so input-mode switches (draw ↔ upload) and disabled-state flips
@@ -77,8 +48,13 @@ export function DrawPanel({
   onCancel,
   rightInset = 0,
 }: {
-  /** Receives the stroke-only SVG markup for the ONE object this session made. */
-  onDone: (svgMarkup: string) => void;
+  /** Receives the markup for the ONE object this session made, plus the
+   *  naming-stage meta: source strokes (the record keeps the hand — wedge
+   *  contract), name + why. All optional — uploads carry no strokes. */
+  onDone: (
+    svgMarkup: string,
+    meta?: { strokes?: StrokePoint[][]; name?: string | null; why?: string | null },
+  ) => void;
   onCancel: () => void;
   /** px width of an open right controls panel (the desk's). The scrim reserves
    *  this on the right so the modal centers over the desk working area, not
@@ -171,12 +147,29 @@ export function DrawPanel({
   const canDone =
     input === 'draw' ? strokes.length > 0 : input === 'upload-svg' ? upload !== null : false;
 
+  // ── NAMING STAGE (the minting moment — Sebs, round 4) ────────────────────
+  // Done no longer publishes: it stages the doodle and asks for its card info.
+  // Back returns to drawing with strokes intact; Place publishes with meta.
+  const [staged, setStaged] = useState<{ markup: string; strokes?: StrokePoint[][] } | null>(null);
+  const [stageName, setStageName] = useState('');
+  const [stageWhy, setStageWhy] = useState('');
+
+
   function handleDone() {
     if (input === 'draw' && strokes.length > 0) {
-      onDone(strokesToObjectMarkup(strokes));
+      setStaged({ markup: strokesToObjectMarkup(strokes), strokes: capStrokes(strokes) });
     } else if (input === 'upload-svg' && upload) {
-      onDone(upload.markup);
+      setStaged({ markup: upload.markup });
     }
+  }
+
+  function handlePlace() {
+    if (!staged) return;
+    onDone(staged.markup, {
+      strokes: staged.strokes,
+      name: stageName.trim() || null,
+      why: stageWhy.trim() || null,
+    });
   }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -225,6 +218,7 @@ export function DrawPanel({
         style={{
           background: 'var(--dir-raised)',
           border: '1px solid var(--dir-border)',
+          position: 'relative',
           borderRadius: 16,
           boxShadow: RAISED_SHADOW,
           padding: 20,
@@ -316,6 +310,7 @@ export function DrawPanel({
                 input="draw"
                 hideActions
                 fill
+                liveStyle
                 onStrokesChange={setStrokes}
               />
             )}
@@ -480,6 +475,86 @@ export function DrawPanel({
             </div>
           </div>
         </div>
+
+        {/* NAMING STAGE — covers the compose UI when staged (the minting
+            moment): art on the warm-paper well, name in the maker's register
+            (Fraunces + wonk, mirrors ObjectCard), why in Fraunces italic.
+            Back keeps the strokes; Place publishes with the meta. */}
+        {staged && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 5,
+              background: 'var(--dir-raised)',
+              borderRadius: 16,
+              padding: 24,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 14,
+            }}
+          >
+            <span style={SECTION_LABEL}>Name your doodle</span>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div
+                style={{
+                  width: 280,
+                  height: 280,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1px solid var(--dir-border)',
+                  borderRadius: 10,
+                  backgroundColor: 'var(--dir-bg)',
+                  backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
+                }}
+                dangerouslySetInnerHTML={{ __html: normalizeSvgSize(staged.markup, 230) }}
+              />
+            </div>
+            <div style={{ maxWidth: 460, width: '100%', alignSelf: 'center', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <input
+                autoFocus
+                value={stageName}
+                onChange={(e) => setStageName(e.target.value)}
+                placeholder="Name your doodle"
+                aria-label="Doodle name"
+                maxLength={60}
+                style={{
+                  fontFamily: ISe,
+                  fontVariationSettings: '"SOFT" 60, "WONK" 1',
+                  fontSize: 20,
+                  letterSpacing: '-0.01em',
+                  color: 'var(--dir-text-primary)',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: '1px solid var(--dir-border)',
+                  outline: 'none',
+                  padding: '2px 0',
+                }}
+              />
+              <input
+                value={stageWhy}
+                onChange={(e) => setStageWhy(e.target.value)}
+                placeholder={'Why\u2019s this on your desk?'}
+                aria-label="Why this doodle"
+                maxLength={140}
+                style={{
+                  fontFamily: ISe,
+                  fontSize: 14,
+                  fontStyle: 'italic',
+                  color: 'var(--dir-text-body)',
+                  background: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                }}
+              />
+            </div>
+            <footer style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <button onClick={() => setStaged(null)} style={PILL}>Back</button>
+              <button onClick={handlePlace} style={CTA}>Place on desk</button>
+            </footer>
+          </div>
+        )}
 
         <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button onClick={onCancel} style={PILL}>
