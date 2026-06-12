@@ -219,10 +219,22 @@ export function DrawSurface({
       const markup = result.markup.replace(
         /<svg\b([^>]*)>/i,
         (_m, attrs: string) => {
+          // No viewBox? Derive one from the source width/height BEFORE
+          // stripping them — otherwise forcing 100% leaves raw pixel coords
+          // with no mapping and big files overflow the frame (rose bug,
+          // Sebs 2026-06-12: "this still not resizing stuff").
+          let viewBox = '';
+          if (!/viewBox=/i.test(attrs)) {
+            const w = parseFloat((attrs.match(/\swidth="([\d.]+)/i) || [])[1] ?? '');
+            const h = parseFloat((attrs.match(/\sheight="([\d.]+)/i) || [])[1] ?? '');
+            if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+              viewBox = ` viewBox="0 0 ${w} ${h}"`;
+            }
+          }
           const cleaned = attrs
             .replace(/\swidth="[^"]*"/i, '')
             .replace(/\sheight="[^"]*"/i, '');
-          return `<svg${cleaned} width="100%" height="100%">`;
+          return `<svg${cleaned}${viewBox} width="100%" height="100%">`;
         },
       );
       setUploadedSvg({ name: result.name, markup });
