@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -56,6 +57,7 @@ import {
   type DoodleRow,
 } from '../../lib/publish';
 import { getSessionId } from '../../lib/session';
+import { supabase } from '../../lib/supabase';
 import { sanitizeSvgMarkup } from '../../lib/svgUpload';
 import { ObjectSurface, type ObjectSurfaceMode } from './ObjectSurface';
 
@@ -195,11 +197,32 @@ function ObjectConfigScope({
  *  on exactly (svgMarkup, renderConfig, deskLens). Position/rotation live on
  *  the wrapper OUTSIDE this memo, so drag never re-runs the rough.js
  *  pipeline — not even for the dragged object itself.
- *  - PEN scope + config: nested providers pin the object to ITS OWN record
- *    (the global context never reaches this subtree — panel tweaks skip it).
- *  - DESK scope (the lens) or no config: renders straight off the global
- *    context; context updates pierce React.memo by design, so the sweep and
- *    the legacy fallback both restyle live. */
+ *
+ *  TWO render slots (R6 remount-determinism redesign, 2026-06-11):
+ *  - The RECORD render is the object's own look. With a config: nested
+ *    providers pin it to ITS OWN record (the global context never reaches
+ *    that subtree — panel tweaks skip it). Without one (legacy row): it
+ *    renders straight off the global context (follows the live pen, the
+ *    pre-D-7 fallback). The record element is useMemo'd on
+ *    (svgMarkup, renderConfig) ONLY, so lens flips never re-render it —
+ *    its DOM is RETAINED (visibility-hidden) under the lens and re-shown
+ *    untouched on flip-back.
+ *  - The LENS render mounts only while the Desk scope is on, straight off
+ *    the global context (context updates pierce React.memo by design, so
+ *    the sweep restyles live), and unmounts when the lens lifts.
+ *
+ *  WHY retained-DOM instead of re-rendering on flip-back: the
+ *  OBJECT_SIT_SHADOW (CSS drop-shadow) does not rasterize reproducibly over
+ *  REGENERATED or re-shown-after-repaint nodes — its fractional offsets snap
+ *  to one of two subpixel states depending on paint timing, which left the
+ *  ink's edge pixels sub-perceptually jittered across flips (isolated by
+ *  A/B-removing the filter → byte-identical). The fix is to never rebuild
+ *  the record's raster at all: keep its DOM, keep its filter on a promoted
+ *  layer, and hide it with a compositor-only opacity flip. That implements
+ *  "lift the lens" literally (D-7 amendment 2: records untouched, every
+ *  object RETURNS to its own look — here, the very same pixels). Opacity
+ *  hiding also keeps layout alive, so a hidden legacy record re-rendering
+ *  under a pen tweak still measures real getBBox values. */
 const DeskObjectArt = memo(function DeskObjectArt({
   svgMarkup,
   renderConfig,
@@ -209,18 +232,50 @@ const DeskObjectArt = memo(function DeskObjectArt({
   renderConfig: ObjectRenderConfig | null;
   deskLens: boolean;
 }) {
-  const art = (
-    <SvgStyleTransform>
-      <div dangerouslySetInnerHTML={{ __html: svgMarkup }} />
-    </SvgStyleTransform>
-  );
-  if (deskLens || !renderConfig) return art;
+  const record = useMemo(() => {
+    const art = (
+      <SvgStyleTransform>
+        <div dangerouslySetInnerHTML={{ __html: svgMarkup }} />
+      </SvgStyleTransform>
+    );
+    if (!renderConfig) return art;
+    return (
+      <F3SvgStyleProvider>
+        <F3RoughModifiersProvider>
+          <ObjectConfigScope config={renderConfig}>{art}</ObjectConfigScope>
+        </F3RoughModifiersProvider>
+      </F3SvgStyleProvider>
+    );
+  }, [svgMarkup, renderConfig]);
+
+  // Slot mechanics: the record box carries the sit-shadow filter on its OWN
+  // permanently-promoted layer (willChange) and is hidden under the lens via
+  // `opacity: 0` — an opacity flip on a composited layer is COMPOSITOR-ONLY,
+  // so the record's raster (ink + shadow) is never rebuilt and flip-back
+  // re-shows the exact same pixels. visibility/display hiding re-rasterized
+  // on re-show and re-rolled the drop-shadow snap (measured). The lens is a
+  // separate transient overlay with its own shadow, outside that layer, so
+  // its mount/unmount can't disturb the record layer's bounds. Opacity is
+  // set explicitly both ways so React can't leave a stale style residue.
   return (
-    <F3SvgStyleProvider>
-      <F3RoughModifiersProvider>
-        <ObjectConfigScope config={renderConfig}>{art}</ObjectConfigScope>
-      </F3RoughModifiersProvider>
-    </F3SvgStyleProvider>
+    <div style={{ position: 'relative' }}>
+      <div
+        style={{
+          filter: OBJECT_SIT_SHADOW,
+          willChange: 'filter, opacity',
+          opacity: deskLens ? 0 : 1,
+        }}
+      >
+        {record}
+      </div>
+      {deskLens && (
+        <div style={{ position: 'absolute', left: 0, top: 0, filter: OBJECT_SIT_SHADOW }}>
+          <SvgStyleTransform>
+            <div dangerouslySetInnerHTML={{ __html: svgMarkup }} />
+          </SvgStyleTransform>
+        </div>
+      )}
+    </div>
   );
 });
 
@@ -303,19 +358,22 @@ const DeskObjectView = memo(function DeskObjectView({
     <div
       onPointerDown={(e) => onPointerDown(e, obj)}
       onAnimationEnd={nudged ? onNudgeEnd : undefined}
+      // The nudge rides a CLASS (not an inline animation) so the page's
+      // prefers-reduced-motion media query can swap the keyframe — inline
+      // styles can't be overridden by a media query (R5). Both keyframes fire
+      // animationend, so onNudgeEnd always clears the state.
+      className={nudged ? 'dd-nudge' : undefined}
       style={{
         position: 'absolute',
         left: obj.x,
         top: obj.y,
         transform: `rotate(${obj.rotation}deg)`,
-        // Sit on the surface, not float over it (warm layered shadow).
-        filter: OBJECT_SIT_SHADOW,
+        // The OBJECT_SIT_SHADOW filter lives INSIDE DeskObjectArt (per render
+        // slot, on a promoted layer) — see the R6 note there for why the
+        // wrapper itself must stay filter-free.
         cursor: dragging ? 'grabbing' : 'grab',
         touchAction: 'none',
         userSelect: 'none',
-        // The nudge animates the CSS `translate` property, which composes
-        // with (never clobbers) the rotation on `transform`.
-        animation: nudged ? 'dd-foreign-nudge 280ms ease-out' : undefined,
       }}
     >
       {/* Markup already normalized to ~180px at the add boundary. */}
@@ -362,6 +420,32 @@ function zoomCameraAt(c: DeskCamera, sx: number, sy: number, factor: number): De
   if (zoom === c.zoom) return c;
   const k = zoom / c.zoom;
   return { zoom, panX: sx - (sx - c.panX) * k, panY: sy - (sy - c.panY) * k };
+}
+
+/** The PAPER_GRAIN data-URI tile is 280×280 (deskCraft.ts svg width/height) —
+ *  the viewport-fixed grain layer needs the natural tile size to scale its
+ *  background-size by zoom so the tooth magnifies exactly like it did when it
+ *  rode the camera transform. */
+const GRAIN_TILE = 280;
+
+/** PAN LEASH (R2): at least this many px of the lamp-pool working area must
+ *  stay inside the desk viewport on each axis — the desk can wander onto the
+ *  endless paper but never get LOST (recoverable by panning back, no Fit
+ *  required). */
+const PAN_LEASH_PX = 160;
+
+/** Clamp pan so the working area (the camera plane: vw×vh desk units at
+ *  `zoom`, screen rect [panX, panX+vw·zoom]×[panY, panY+vh·zoom]) keeps at
+ *  least PAN_LEASH_PX visible on each axis. At very small zoom the leash
+ *  shrinks to the working area's own on-screen size so the clamp range never
+ *  inverts. Pure function — applied inside setCamera on every update. */
+function leashCamera(c: DeskCamera, vw: number, vh: number): DeskCamera {
+  const mx = Math.min(PAN_LEASH_PX, vw * c.zoom, vw);
+  const my = Math.min(PAN_LEASH_PX, vh * c.zoom, vh);
+  const panX = Math.min(vw - mx, Math.max(mx - vw * c.zoom, c.panX));
+  const panY = Math.min(vh - my, Math.max(my - vh * c.zoom, c.panY));
+  if (panX === c.panX && panY === c.panY) return c;
+  return { ...c, panX, panY };
 }
 
 /** Deterministic 32-bit FNV-1a hash of an object id — seeds the scatter
@@ -435,8 +519,81 @@ export function DeskPage() {
   objectsRef.current = objects;
   const [drawOpen, setDrawOpen] = useState(false);
   const [feedStatus, setFeedStatus] = useState<'loading' | 'live' | 'offline'>('loading');
+  // Live mirror for the channel watcher below (interval closure reads the
+  // CURRENT load state without re-arming on every transition).
+  const feedStatusRef = useRef(feedStatus);
+  feedStatusRef.current = feedStatus;
   const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('desk.right');
   useMinimizeUi([{ open: rightOpen, setOpen: setRightOpen }]);
+
+  // ── HONEST CONNECTIVITY (R3/R4) ──────────────────────────────────────────
+  // The ●Live chip must never lie: `feedStatus` tracks the LOAD lifecycle
+  // (loading/live/offline-as-in-failed), `linkDown` tracks the LINK (navigator
+  // connectivity + supabase realtime channel health). The chip shows
+  // "○ Offline" when either says down. `reloadNonce` re-runs the whole
+  // mount-resolve (fresh loads + fresh subscriptions — the verified
+  // resubscribe path) — bumped on restore events, the auto-retry timer, and
+  // the error-state Retry pill.
+  const [linkDown, setLinkDown] = useState(false);
+  const linkDownRef = useRef(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const retryNow = useCallback(() => setReloadNonce((n) => n + 1), []);
+  const setLink = useCallback((down: boolean, reloadOnRecover: boolean) => {
+    if (linkDownRef.current === down) return; // transitions only — no churn
+    linkDownRef.current = down;
+    setLinkDown(down);
+    if (!down && reloadOnRecover) setReloadNonce((n) => n + 1);
+  }, []);
+
+  // navigator connectivity — the chip flips to ○ Offline the moment the
+  // browser knows the link dropped (well under the ~2s budget); coming back
+  // online triggers a full reload + resubscribe so the desk catches up on
+  // anything missed while down.
+  useEffect(() => {
+    const goOffline = () => setLink(true, false);
+    const goOnline = () => setLink(false, true);
+    window.addEventListener('offline', goOffline);
+    window.addEventListener('online', goOnline);
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) setLink(true, false);
+    return () => {
+      window.removeEventListener('offline', goOffline);
+      window.removeEventListener('online', goOnline);
+    };
+  }, [setLink]);
+
+  // supabase realtime channel health — a 2s poll of the client's channel
+  // states (event-driven UI state, never a render-path read). Only judged in
+  // steady state (feed live): during desk switches channels legitimately pass
+  // through closed/joining and must not flap the chip. All-channels
+  // errored/closed → the socket is gone → ○ Offline; when supabase's own
+  // reconnect lands the channels rejoin → chip recovers via a reload (fresh
+  // subscription + catch-up, the path the sweep verified).
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return; // navigator owns this case
+      if (feedStatusRef.current !== 'live') return;
+      let channels: Array<{ state: string }> = [];
+      try {
+        channels = supabase.getChannels();
+      } catch {
+        return;
+      }
+      if (channels.length === 0) return; // nothing to judge (flat pre-realtime)
+      const allDown = channels.every((c) => c.state === 'errored' || c.state === 'closed');
+      setLink(allDown, true);
+    }, 2000);
+    return () => clearInterval(id);
+  }, [setLink]);
+
+  // FAILED LOAD ≠ EMPTY (R4): while a load has failed and the browser still
+  // believes it's online, retry on a quiet 5s cadence. Navigator-offline skips
+  // the timer — the 'online' event owns that resume.
+  useEffect(() => {
+    if (feedStatus !== 'offline') return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    const t = setTimeout(retryNow, 5000);
+    return () => clearTimeout(t);
+  }, [feedStatus, reloadNonce, retryNow]);
 
   // ── The Pen|Desk gate (D-7 ratified) ─────────────────────────────────────
   // 'pen' (default): the right panel styles the draw popup + the NEXT doodle;
@@ -591,7 +748,10 @@ export function DeskPage() {
     // deskParam: re-resolve the viewed desk when the ?desk= target changes
     // (e.g. clicking another gallery card while already on /desk). readDeskParam
     // inside reads the now-current URL, so the resolve picks up the new target.
-  }, [loadDeskView, deskParam]);
+    // reloadNonce: connectivity restore / auto-retry / Retry pill — re-runs the
+    // whole resolve (fresh loads + fresh realtime subscriptions) so recovering
+    // from offline actually reconnects instead of just relabeling the chip.
+  }, [loadDeskView, deskParam, reloadNonce]);
 
   // Surface a transient "a fresh desk opened" note (auto-clears).
   const announceFreshDesk = useCallback((name: string) => {
@@ -604,7 +764,17 @@ export function DeskPage() {
   // Every object press (own OR foreign) — pointer-up needs the pressed object
   // to tell click (open surface) from drag, and `mine` decides whether the
   // press may drag at all. draggingId stays own-objects-only.
-  const pressRef = useRef<{ id: string; mine: boolean; nudged: boolean } | null>(null);
+  // startX/startY = the object's DESK coords at pointer-down: a within-slop
+  // press still routes its pointermoves through the live drag path, so the
+  // click branch must RESTORE these (R1) — otherwise every open applies an
+  // unreverted, unpersisted micro-drag (≈8 desk px per open at 25% zoom).
+  const pressRef = useRef<{
+    id: string;
+    mine: boolean;
+    nudged: boolean;
+    startX: number;
+    startY: number;
+  } | null>(null);
   // FOREIGN-DRAG BLOCK: id of the object currently playing its tiny
   // nudge-and-settle (you tried to drag someone else's doodle — it shrugs and
   // settles back, never ghost-moves). Cleared by the animation's end event.
@@ -632,7 +802,13 @@ export function DeskPage() {
   const cameraRef = useRef<DeskCamera>(CAMERA_HOME);
   const setCamera = useCallback((updater: (c: DeskCamera) => DeskCamera) => {
     setCameraState((prev) => {
-      const next = updater(prev);
+      let next = updater(prev);
+      // PAN LEASH (R2): every camera update is clamped so the lamp-pool
+      // working area can never be pushed fully out of view — the desk stays
+      // recoverable by panning back, no Fit required. Event-driven measure
+      // (setCamera only runs on input events), never a render-path read.
+      const rect = deskRef.current?.getBoundingClientRect();
+      if (rect && rect.width > 0) next = leashCamera(next, rect.width, rect.height);
       cameraRef.current = next;
       return next;
     });
@@ -851,7 +1027,7 @@ export function DeskPage() {
       // can't prove it's yours, and the server-side session scope would
       // reject the move anyway — so no ghost-move.
       const mine = obj.ownerSession != null && obj.ownerSession === getSessionId();
-      pressRef.current = { id: obj.id, mine, nudged: false };
+      pressRef.current = { id: obj.id, mine, nudged: false, startX: obj.x, startY: obj.y };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       if (!mine) return;
       const p = screenToDesk(e.clientX, e.clientY);
@@ -920,6 +1096,17 @@ export function DeskPage() {
         if (e.type === 'pointerup' && moved < clickSlop && obj) {
           // A click, not a drag → open the ONE object surface: Edit if it's
           // yours, Sandbox if it's someone else's.
+          // R1: within-slop pointermoves on an own object were applied as a
+          // live drag (screen-px ÷ zoom → up to ~8 desk px at 25%), and the
+          // click branch never persists — RESTORE the pointer-down coords so
+          // opening a doodle never shifts it out of sync with the DB.
+          if (press.mine && (obj.x !== press.startX || obj.y !== press.startY)) {
+            setObjects((prev) =>
+              prev.map((o) =>
+                o.id === press.id ? { ...o, x: press.startX, y: press.startY } : o,
+              ),
+            );
+          }
           setActiveSurface({ mode: press.mine ? 'edit' : 'sandbox', objectId: obj.id });
         } else if (press.mine && obj?.dbId) {
           // A real drag of YOUR object → persist the resting position
@@ -939,6 +1126,15 @@ export function DeskPage() {
   // rejection) fires neither pointerup nor a reliable leave — without this the
   // drag stays glued to the object forever. Just end the drag/pan, never a click.
   const handlePointerCancel = useCallback(() => {
+    // Restore the pressed object's coords (same as the click branch) — a
+    // cancel mid-press (touch scroll-steal, OS gesture) must not leave the
+    // unreverted micro-drag the click-open fix eliminated.
+    const press = pressRef.current;
+    if (press) {
+      setObjects((prev) =>
+        prev.map((o) => (o.id === press.id ? { ...o, x: press.startX, y: press.startY } : o)),
+      );
+    }
     setDraggingId(null);
     pressRef.current = null;
     downPosRef.current = null;
@@ -988,12 +1184,24 @@ export function DeskPage() {
       {/* FOREIGN-DRAG nudge keyframes — a few px shrug + quick settle. Scoped
           here with the only consumer (DeskObjectView) rather than in shared
           CSS. Animates the standalone `translate` property so it composes
-          with (never clobbers) the wrapper's rotate on `transform`. */}
+          with (never clobbers) the wrapper's rotate on `transform`.
+          REDUCED MOTION (R5): prefers-reduced-motion swaps the shrug for a
+          motion-free opacity dip of the same duration — feedback survives,
+          movement doesn't, and animationend still fires to clear the state. */}
       <style>{`@keyframes dd-foreign-nudge {
         0% { translate: 0 0; }
         35% { translate: 5px 2px; rotate: 0.6deg; }
         70% { translate: -2px -1px; rotate: -0.3deg; }
         100% { translate: 0 0; rotate: 0deg; }
+      }
+      @keyframes dd-foreign-nudge-dim {
+        0% { opacity: 1; }
+        35% { opacity: 0.55; }
+        100% { opacity: 1; }
+      }
+      .dd-nudge { animation: dd-foreign-nudge 280ms ease-out; }
+      @media (prefers-reduced-motion: reduce) {
+        .dd-nudge { animation: dd-foreign-nudge-dim 280ms ease-out; }
       }`}</style>
       {/* Top chrome — brand + desk readout left, Add doodle center, controls toggle + Live right */}
       <header
@@ -1154,26 +1362,39 @@ export function DeskPage() {
             controlsId="desk-right-panel"
           />
           {/* Auto-publish status — every Done saves itself, so there is no
-              Publish button to press (M9 wired 2026-06-11). */}
-          <span
-            title={
-              feedStatus === 'live'
-                ? 'Connected — doodles save to the shared desk automatically'
-                : feedStatus === 'loading'
-                  ? 'Connecting to the shared desk…'
-                  : 'Offline — doodles stay on this desk until reconnect'
-            }
-            style={{
-              ...CHIP,
-              // Offline reads quieter; live/connecting use the default body ink.
-              color:
-                feedStatus === 'offline'
-                  ? 'var(--dir-text-body-soft)'
-                  : 'var(--dir-text-body)',
-            }}
-          >
-            {feedStatus === 'live' ? '● Live' : feedStatus === 'loading' ? '○ Connecting' : '○ Offline'}
-          </span>
+              Publish button to press (M9 wired 2026-06-11). R3: the chip is
+              HONEST — it reads the load lifecycle AND the link (navigator
+              connectivity + realtime channel health), so a dropped connection
+              flips it to ○ Offline within ~2s and a restore reconnects +
+              brings it back to ● Live. */}
+          {(() => {
+            const chipState = linkDown || feedStatus === 'offline'
+              ? 'offline'
+              : feedStatus === 'loading'
+                ? 'loading'
+                : 'live';
+            return (
+              <span
+                title={
+                  chipState === 'live'
+                    ? 'Connected — doodles save to the shared desk automatically'
+                    : chipState === 'loading'
+                      ? 'Connecting to the shared desk…'
+                      : 'Offline — doodles stay on this desk until reconnect'
+                }
+                style={{
+                  ...CHIP,
+                  // Offline reads quieter; live/connecting use the default body ink.
+                  color:
+                    chipState === 'offline'
+                      ? 'var(--dir-text-body-soft)'
+                      : 'var(--dir-text-body)',
+                }}
+              >
+                {chipState === 'live' ? '● Live' : chipState === 'loading' ? '○ Connecting' : '○ Offline'}
+              </span>
+            );
+          })()}
         </div>
       </header>
 
@@ -1200,12 +1421,31 @@ export function DeskPage() {
             touchAction: 'none',
           }}
         >
-          {/* THE DESK SURFACE — the camera-transformed plane. Warm paper craft
-              (fine grain, lamp pool, edge vignette — restraint over ornament,
-              no scraps/wood) + every object ride ONE transform, so zooming
-              magnifies the grain with the doodles and reads as leaning into a
-              real desk, not scaling a flat div. transformOrigin 0 0 keeps the
-              screen = desk·zoom + pan math exact. */}
+          {/* ENDLESS PAPER v2 (R2 — replaces the oversized in-camera layer,
+              which still ENDED after ~3 viewport-widths of pan and showed a
+              hard grain seam): the grain is now a VIEWPORT-FIXED layer whose
+              background-position is driven by the camera's pan and whose
+              background-size scales the natural 280px tile by zoom — exactly
+              the screen = desk·zoom + pan mapping, but as an infinitely-tiling
+              background. Infinite paper, one viewport-sized paint. */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              backgroundColor: 'var(--dir-bg)',
+              backgroundImage: PAPER_GRAIN,
+              backgroundPosition: `${camera.panX}px ${camera.panY}px`,
+              backgroundSize: `${GRAIN_TILE * camera.zoom}px ${GRAIN_TILE * camera.zoom}px`,
+              pointerEvents: 'none',
+            }}
+          />
+          {/* THE DESK SURFACE — the camera-transformed plane. The lamp pool,
+              edge vignette + every object ride ONE transform, so zooming
+              reads as leaning into a real desk, not scaling a flat div (the
+              grain layer above tracks the same camera math from outside the
+              transform). transformOrigin 0 0 keeps the screen = desk·zoom +
+              pan math exact. */}
           <div
             style={{
               position: 'absolute',
@@ -1218,26 +1458,9 @@ export function DeskPage() {
               willChange: 'transform',
             }}
           >
-            {/* ENDLESS PAPER (Sebs 2026-06-11 "the background doesn't extend"):
-                the grain rides a hugely-oversized layer inside the camera so
-                zooming out never reveals a void — the desk reads as one endless
-                sheet. 700% at min zoom 0.25 still over-covers the viewport.
-                pointerEvents none keeps pan/click targets unchanged. */}
-            <div
-              aria-hidden="true"
-              style={{
-                position: 'absolute',
-                left: '-300%',
-                top: '-300%',
-                width: '700%',
-                height: '700%',
-                backgroundColor: 'var(--dir-bg)',
-                backgroundImage: PAPER_GRAIN,
-                pointerEvents: 'none',
-              }}
-            />
-            {/* The LAMP POOL + vignette stay sized to the working area — on an
-                endless sheet, the light marks WHERE the desk is. */}
+            {/* The LAMP POOL + vignette stay camera-space, sized to the
+                working area — on an endless sheet, the light marks WHERE the
+                desk is (and the R2 pan leash keeps it reachable). */}
             <div
               aria-hidden="true"
               style={{
@@ -1291,7 +1514,41 @@ export function DeskPage() {
             </div>
           )}
 
-          {objects.length === 0 && (
+          {/* R4 — FAILED LOAD ≠ EMPTY: the friendly empty copy only renders
+              when a load actually SUCCEEDED and the desk is truly empty. A
+              failed load gets honest copy + a Retry pill (the 5s auto-retry
+              runs regardless); while loading, say nothing rather than briefly
+              lying that the desk is empty. */}
+          {objects.length === 0 && feedStatus === 'offline' && (
+            <div
+              role="status"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--dir-text-body-soft)',
+                fontFamily: IS,
+                fontSize: 12,
+                textAlign: 'center',
+                lineHeight: 1.7,
+                pointerEvents: 'none',
+              }}
+            >
+              <span>
+                Couldn’t reach the desk — retrying.<br />
+                Anything you draw stays on this desk and publishes once it reconnects.
+              </span>
+              <button onClick={retryNow} onPointerDown={(e) => e.stopPropagation()} style={{ ...PILL, pointerEvents: 'auto' }}>
+                Retry now
+              </button>
+            </div>
+          )}
+
+          {objects.length === 0 && feedStatus === 'live' && (
             <div
               style={{
                 position: 'absolute',
@@ -1372,7 +1629,24 @@ export function DeskPage() {
                 // for now the session id stands in so others aren't all "anon").
                 owner: obj.ownerSession === getSessionId() ? 'you' : (obj.ownerSession ?? null),
                 createdAt: obj.createdAt,
+                id: obj.dbId ?? null,
+                renderConfig: obj.renderConfig ?? null,
               }}
+              onConfigSave={
+                activeSurface.mode === 'edit'
+                  ? (config) => {
+                      // Re-pin the desk object to the saved config immediately
+                      // (no reload needed); persistence already ran in the surface.
+                      setObjects((prev) =>
+                        prev.map((o) =>
+                          o.id === obj.id
+                            ? { ...o, renderConfig: parseRenderConfig(config) }
+                            : o,
+                        ),
+                      );
+                    }
+                  : undefined
+              }
               onClose={() => setActiveSurface(null)}
               onDelete={activeSurface.mode === 'edit' ? () => handleDeleteObject(obj) : undefined}
               onSave={

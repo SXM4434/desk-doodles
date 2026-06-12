@@ -4,6 +4,13 @@ import { PILL, CTA, SECTION_LABEL, RAISED_SHADOW } from '../../lib/chromeStyles'
 import { DrawSurface, strokeToPolylinePath, type Stroke } from './DrawSurface';
 import { prepareSvgUpload } from '../../lib/svgUpload';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
+import { Dropdown } from '../chrome/Dropdown';
+import { Slider } from '../chrome/Slider';
+import { SLIDER_SPECS, MODIFIER_SETS_BY_STYLE, UNIVERSAL_MODIFIERS } from '../chrome/modifierSpecs';
+import { useF3SvgStyle, F3_SVG_STYLES } from '../../state/F3SvgStyleContext';
+import { useF3RoughModifiers, DEFAULT_MODIFIERS } from '../../state/F3RoughModifiersContext';
+import { applyStylePreset } from '../canvas/SvgStyleTransform';
+import { SurfaceControls } from './ObjectSurface';
 
 type PanelInput = 'draw' | 'upload-svg' | 'upload-image';
 
@@ -13,6 +20,13 @@ type PanelInput = 'draw' | 'upload-svg' | 'upload-image';
 // objects array; this panel only captures strokes and hands back markup.
 // The panel unmounts on close, so its stroke state clears automatically —
 // every open is a fresh draw session.
+//
+// CREATE-AS-MINI-DESK (Sebs 2026-06-11, ratified): the popup uses the same
+// side-by-side grammar as the Sandbox surface — drawing canvas on the LEFT,
+// pen controls column on the RIGHT. The column reads/writes the SAME
+// F3SvgStyleContext + F3RoughModifiersContext the desk panel uses (D-7: two
+// surfaces, ONE pen — values set here are the values the desk panel shows,
+// and the next doodle renders with them at Done).
 
 /** Build the stroke-only SVG markup for ONE desk object — the polyline
  *  commit-layer form (fill="none" + stroke) that survives Smart Hachure,
@@ -45,6 +59,19 @@ function strokesToObjectMarkup(strokes: Stroke[]): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}">${paths}</svg>`;
 }
 
+/** Tabbable elements inside the dialog, in DOM order. Computed fresh per
+ *  keypress so input-mode switches (draw ↔ upload) and disabled-state flips
+ *  (Done) never leave the trap holding a stale list. display:none elements
+ *  (the hidden file input) return zero client rects and drop out. */
+function getFocusables(root: HTMLElement): HTMLElement[] {
+  return Array.from(
+    root.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]'),
+  ).filter(
+    (el) =>
+      !el.hasAttribute('disabled') && el.tabIndex !== -1 && el.getClientRects().length > 0,
+  );
+}
+
 export function DrawPanel({
   onDone,
   onCancel,
@@ -68,8 +95,22 @@ export function DrawPanel({
   const [upload, setUpload] = useState<{ name: string; markup: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Escape cancels — standard dialog convention.
+  // ── THE PEN (shared state — D-7) ──────────────────────────────────────────
+  // Same contexts the desk panel's SmartHachureChrome reads/writes. The popup
+  // column is a second face of the ONE pen: change wobble here, the desk
+  // panel's wobble slider holds the same value after close. The style
+  // dropdown mirrors the chrome's preset-snap semantics exactly so picking a
+  // style behaves identically from either surface.
+  const { state: svgStyle, setState: setSvgStyle } = useF3SvgStyle();
+  const { state: mods, set: setMod } = useF3RoughModifiers();
+  const declared = MODIFIER_SETS_BY_STYLE[svgStyle] ?? UNIVERSAL_MODIFIERS;
+  const has = (k: string) => (declared as readonly string[]).includes(k);
+
+  // Escape cancels — standard dialog convention. Bubble phase on window, so
+  // an open Dropdown popover (capture-phase document listener that stops
+  // propagation) closes itself first: one press, one layer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel();
@@ -77,6 +118,55 @@ export function DrawPanel({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
+
+  // ── FOCUS: initial move-in + restore-to-opener ───────────────────────────
+  // On open, focus the first control (the Draw pill — aria-modal demands
+  // focus lands inside). On close, DeskPage unmounts us, so the cleanup
+  // returns focus to whatever opened the panel (the Add-doodle pill), if it
+  // still exists. theme.css's button:focus-visible rule draws the ring.
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    if (dialog) (getFocusables(dialog)[0] ?? dialog).focus();
+    return () => {
+      if (opener && document.contains(opener)) opener.focus();
+    };
+  }, []);
+
+  // ── FOCUS TRAP: Tab cycles inside the dialog, Shift+Tab reverses ─────────
+  // Document-level so the trap still works if focus ever lands on the body
+  // (e.g. after a pointer interaction with the non-focusable canvas svg) —
+  // the next Tab pulls focus back to the first control instead of escaping
+  // into the page behind the scrim.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = getFocusables(dialog);
+      if (focusables.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !dialog.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
+      if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   const canDone =
     input === 'draw' ? strokes.length > 0 : input === 'upload-svg' ? upload !== null : false;
@@ -123,11 +213,14 @@ export function DrawPanel({
     >
       {/* Centered panel — W1 raised surface, popover radius 16 (chromeStyles
           canon); nested DrawSurface frame keeps its 6px radius (concentric
-          like dropdown option rows inside the 16px popover). */}
+          like dropdown option rows inside the 16px popover). Width sized for
+          the mini-desk row: canvas + pen column side by side. */}
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Draw a doodle"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         style={{
           background: 'var(--dir-raised)',
@@ -135,13 +228,18 @@ export function DrawPanel({
           borderRadius: 16,
           boxShadow: RAISED_SHADOW,
           padding: 20,
-          width: 'min(760px, calc(100vw - 64px))',
-          maxHeight: 'calc(100vh - 64px)',
-          overflowY: 'auto',
+          width: 'min(1180px, calc(100vw - 48px))',
+          height: 'min(820px, calc(100vh - 48px))',
+          maxHeight: 'calc(100vh - 48px)',
+          // The DIALOG never scrolls (Sebs: only the right panel scrolls; the
+          // canvas just fills the popup's fixed size). overflow hidden forces
+          // the flex chain to clamp; the controls column scrolls internally.
+          overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
           gap: 16,
           fontFamily: IS,
+          outline: 'none',
         }}
       >
         <header
@@ -196,104 +294,192 @@ export function DrawPanel({
           ))}
         </div>
 
-        {input === 'draw' && (
-          /* DrawSurface in draw mode — in-frame Done/Edit/Clear pills hidden;
-             the panel's own Done/Cancel below are the commit chrome. */
-          <DrawSurface
-            mode="svg"
-            input="draw"
-            hideActions
-            onStrokesChange={setStrokes}
-          />
-        )}
-
-        {input === 'upload-svg' && (
+        {/* MINI-DESK ROW (Sebs 2026-06-11, ratified): canvas on the left, pen
+            controls on the right — the same side-by-side grammar as the
+            Sandbox surface and the big desk itself (canvas + right panel).
+            flexWrap lets narrow viewports fall back to stacked. */}
+        <div style={{ display: 'flex', gap: 18, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
           <div
             style={{
-              minHeight: 260,
-              border: '1px solid var(--dir-border)',
-              borderRadius: 6,
-              background: 'var(--dir-bg)',
+              flex: '1 1 420px',
+              minWidth: 320,
+              minHeight: 0,
               display: 'flex',
               flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 12,
-              padding: 24,
             }}
           >
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".svg,image/svg+xml"
-              onChange={handleFileChange}
-              style={{ display: 'none' }}
-            />
-            {upload ? (
-              /* Preview the picked file at thumbnail scale — the desk's add
-                 boundary does the real ~180px normalization on Done. */
-              <div
-                style={{ width: 180, height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                dangerouslySetInnerHTML={{
-                  // normalizeSvgSize derives a viewBox from width/height when one
-                  // is missing and sizes the longest axis to 180px — fixes the
-                  // no-viewBox preview clip the gap sweep flagged. Markup is
-                  // already DOMPurify-sanitized by prepareSvgUpload upstream, so
-                  // this is purely a sizing improvement.
-                  __html: normalizeSvgSize(upload.markup, 180),
-                }}
+            {input === 'draw' && (
+              /* DrawSurface in draw mode — in-frame Done/Edit/Clear pills hidden;
+                 the panel's own Done/Cancel below are the commit chrome. */
+              <DrawSurface
+                mode="svg"
+                input="draw"
+                hideActions
+                fill
+                onStrokesChange={setStrokes}
               />
-            ) : (
-              <p style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', margin: 0 }}>
-                The file becomes one desk object, sized to the desk automatically.
-              </p>
             )}
-            <button
-              onClick={() => fileRef.current?.click()}
-              // Heavier border = empty-state affordance (canvas dock precedent).
-              style={{ ...PILL, padding: '10px 22px', background: 'var(--dir-bg)', borderColor: 'var(--dir-text-primary)' }}
-            >
-              {upload ? 'Pick a different file' : 'Pick an .svg file'}
-            </button>
-            {uploadError && (
-              <p style={{ fontFamily: IS, fontSize: 12, color: 'var(--dir-accent)', margin: 0 }}>
-                {uploadError}
-              </p>
+
+            {input === 'upload-svg' && (
+              <div
+                style={{
+                  minHeight: 260,
+                  border: '1px solid var(--dir-border)',
+                  borderRadius: 6,
+                  background: 'var(--dir-bg)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 12,
+                  padding: 24,
+                }}
+              >
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".svg,image/svg+xml"
+                  onChange={handleFileChange}
+                  style={{ display: 'none' }}
+                />
+                {upload ? (
+                  /* Preview the picked file at thumbnail scale — the desk's add
+                     boundary does the real ~180px normalization on Done. */
+                  <div
+                    style={{ width: 180, height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    dangerouslySetInnerHTML={{
+                      // normalizeSvgSize derives a viewBox from width/height when one
+                      // is missing and sizes the longest axis to 180px — fixes the
+                      // no-viewBox preview clip the gap sweep flagged. Markup is
+                      // already DOMPurify-sanitized by prepareSvgUpload upstream, so
+                      // this is purely a sizing improvement.
+                      __html: normalizeSvgSize(upload.markup, 180),
+                    }}
+                  />
+                ) : (
+                  <p style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', margin: 0 }}>
+                    The file becomes one desk object, sized to the desk automatically.
+                  </p>
+                )}
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  // Heavier border = empty-state affordance (canvas dock precedent).
+                  style={{ ...PILL, padding: '10px 22px', background: 'var(--dir-bg)', borderColor: 'var(--dir-text-primary)' }}
+                >
+                  {upload ? 'Pick a different file' : 'Pick an .svg file'}
+                </button>
+                {uploadError && (
+                  <p style={{ fontFamily: IS, fontSize: 12, color: 'var(--dir-accent)', margin: 0 }}>
+                    {uploadError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {input === 'upload-image' && (
+              /* Honest stub — image→object needs the autotrace path (stretch S1);
+                 no fake controls. No time commitments in the copy either. */
+              <div
+                style={{
+                  minHeight: 260,
+                  border: '1px solid var(--dir-border)',
+                  borderRadius: 6,
+                  background: 'var(--dir-bg)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 24,
+                }}
+              >
+                <p
+                  style={{
+                    fontFamily: IS,
+                    fontSize: 13,
+                    color: 'var(--dir-text-body-soft)',
+                    margin: 0,
+                    textAlign: 'center',
+                    lineHeight: 1.5,
+                    maxWidth: 380,
+                  }}
+                >
+                  Image upload is coming — it will trace your picture into
+                  desk-ready linework. For now, draw it or upload an SVG.
+                </p>
+              </div>
             )}
           </div>
-        )}
 
-        {input === 'upload-image' && (
-          /* Honest stub — image→object needs the autotrace path (stretch S1);
-             no fake controls per feedback_actual_ml_not_fake's spirit. */
+          {/* PEN CONTROLS COLUMN — the desk panel's pen, second face. Style
+              dropdown + the three core feel sliders (same specs + gating as
+              SmartHachureChrome, writing to the SAME contexts — one pen).
+              Border-left + paddingLeft mirrors the Sandbox column grammar. */}
           <div
             style={{
-              minHeight: 260,
-              border: '1px solid var(--dir-border)',
-              borderRadius: 6,
-              background: 'var(--dir-bg)',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 24,
+              flexDirection: 'column',
+              gap: 10,
+              flex: '1 1 240px',
+              minWidth: 220,
+              minHeight: 0,
+              borderLeft: '1px solid var(--dir-border)',
+              paddingLeft: 18,
+              alignSelf: 'stretch',
             }}
           >
-            <p
+            <div
               style={{
-                fontFamily: IS,
-                fontSize: 13,
-                color: 'var(--dir-text-body-soft)',
-                margin: 0,
-                textAlign: 'center',
-                lineHeight: 1.5,
-                maxWidth: 380,
+                display: 'flex',
+                alignItems: 'baseline',
+                justifyContent: 'space-between',
+                gap: 8,
               }}
             >
-              Image upload becomes a desk object via autotrace — that path
-              lands after the core 3D work. For now, draw it or upload an SVG.
-            </p>
+              <span style={SECTION_LABEL}>Pen</span>
+              <span
+                style={{
+                  fontFamily: IS,
+                  fontSize: 10,
+                  fontStyle: 'italic',
+                  color: 'var(--dir-text-body-soft)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                one pen — shared with the desk panel
+              </span>
+            </div>
+
+            {/* FULL per-style control set (feedback_never_trim_control_sets —
+                Sebs hit "missing toggles" 3x before this stuck): the SAME
+                generic spec-table renderer the Edit/Sandbox popups use. The
+                column scrolls internally; dropdown menus stay short so there
+                is never scroll-inside-scroll. */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
+              <SurfaceControls
+                svgStyle={svgStyle}
+                mods={mods}
+                onStyle={(nextStyle) => {
+                  setSvgStyle(nextStyle);
+                  // Auto-snap modifiers to the new style's preset — EXACTLY the
+                  // desk chrome's onChange, so the pen behaves identically no
+                  // matter which surface picks the style.
+                  const next = applyStylePreset(mods, nextStyle);
+                  (Object.keys(next) as (keyof typeof next)[]).forEach((k) => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    setMod(k, (next as any)[k]);
+                  });
+                }}
+                onMod={setMod}
+                onReset={() => {
+                  const next = applyStylePreset(DEFAULT_MODIFIERS, svgStyle);
+                  (Object.keys(next) as (keyof typeof next)[]).forEach((k) => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    setMod(k, (next as any)[k]);
+                  });
+                }}
+              />
+            </div>
           </div>
-        )}
+        </div>
 
         <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button onClick={onCancel} style={PILL}>
@@ -309,7 +495,7 @@ export function DrawPanel({
                   ? 'Draw something first'
                   : input === 'upload-svg'
                     ? 'Pick a file first'
-                    : 'Image upload lands with autotrace'
+                    : 'Image upload is coming — draw it or upload an SVG'
             }
             style={{
               ...CTA,

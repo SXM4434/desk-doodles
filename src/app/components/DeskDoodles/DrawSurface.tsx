@@ -92,6 +92,7 @@ export function DrawSurface({
   input,
   onStrokesChange,
   hideActions,
+  fill,
 }: {
   mode: CanvasMode;
   input: InputMode;
@@ -102,6 +103,9 @@ export function DrawSurface({
   /** Hide the in-frame Done/Edit/Clear pills when the host supplies its own
    *  commit chrome (DrawPanel's Done/Cancel). /canvas leaves this unset. */
   hideActions?: boolean;
+  /** Fill the parent box (popup mini-desk) instead of clamping to 4:3 —
+   *  the inner SVG letterboxes via its viewBox either way. */
+  fill?: boolean;
 }) {
   // PREVIEW strokes — gestures the user has finished pen-up on but hasn't
   // committed yet. While in this state they render as raw perfect-freehand
@@ -227,12 +231,9 @@ export function DrawSurface({
     <div
       style={{
         width: '100%',
-        maxWidth: 920,
-        // Clamp to the height the flex layout actually gives the main column
-        // — tall windows keep 4:3, short ones clamp and the inner SVG
-        // letterboxes via its viewBox. Page never scrolls.
-        maxHeight: '100%',
-        aspectRatio: `${VIEWBOX_W} / ${VIEWBOX_H}`,
+        ...(fill
+          ? { height: '100%' }
+          : { maxWidth: 920, maxHeight: '100%', aspectRatio: `${VIEWBOX_W} / ${VIEWBOX_H}` }),
         position: 'relative',
         background: 'var(--dir-bg)',
         border: '1px solid var(--dir-border)',
@@ -336,7 +337,8 @@ export function DrawSurface({
           />
         )}
       </svg>
-      {/* Empty-state hint — DRAW mode: prompt to draw. UPLOAD-SVG mode: prompt
+      {/* Empty-state hint — DRAW mode: warm sentence-case invitation (was
+          shouty uppercase; warmth pass 2026-06-11). UPLOAD-SVG mode: prompt
           to pick a file. Upload-image is covered by its honesty gate below. */}
       {((input === 'draw' && allStrokes.length === 0) || (isUpload && !uploadedSvg)) && (
         <div
@@ -348,10 +350,8 @@ export function DrawSurface({
             alignItems: 'center',
             justifyContent: 'center',
             fontFamily: IS,
-            fontSize: 12,
+            fontSize: 13,
             color: 'var(--dir-text-body-soft)',
-            letterSpacing: '0.04em',
-            textTransform: 'uppercase',
             gap: 12,
             pointerEvents: isUpload ? 'auto' : 'none',
           }}
@@ -380,7 +380,7 @@ export function DrawSurface({
               )}
             </>
           ) : (
-            <>Draw on the canvas</>
+            <>Draw your doodle</>
           )}
         </div>
       )}
@@ -462,7 +462,7 @@ export function DrawSurface({
       {input === 'upload-image' && (
         <div style={GATE_STYLE}>
           <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>
-            Image upload lands later this week
+            Image upload is coming
           </span>
           <span>SVG upload works today — switch input to Upload SVG.</span>
         </div>

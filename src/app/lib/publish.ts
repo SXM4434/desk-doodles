@@ -374,6 +374,74 @@ export async function updateDoodleMeta(
 }
 
 /**
+ * v4: persist an Edit-mode restyle — write a new render_config onto one of
+ * your own doodles. Routes through the session-scoped update_my_doodle_config
+ * SECURITY DEFINER RPC (supabase/schema-v4-config.sql — same pattern + grants
+ * as the v3 RPCs). Resolves true if a row matched.
+ *
+ * GRACEFUL NO-RPC FALLBACK: on a DB where schema-v4-config.sql hasn't been
+ * pasted yet, the RPC is absent (PGRST202 / schema-cache miss) → returns
+ * false so the caller can say "saved locally" honestly instead of lying.
+ * There is deliberately NO direct-table fallback here: v2+ dropped the open
+ * anon UPDATE policy, so a direct .update() would silently no-op anyway.
+ */
+export async function updateDoodleConfig(
+  id: string,
+  renderConfig: Record<string, unknown>,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc('update_my_doodle_config', {
+    p_id: id,
+    p_session: getSessionId(),
+    p_render_config: renderConfig,
+  });
+  if (error) {
+    if (isMissingV2(error)) return false; // pre-v4 DB — RPC not installed yet
+    throw new Error(`updateDoodleConfig failed: ${error.message}`);
+  }
+  return data === true;
+}
+
+/**
+ * v4 helper: resolve a doodle ROW from its svg markup via the content_hash
+ * column (the same SHA-1 cache key publishDoodle stamps at insert).
+ *
+ * Why it exists: the object surface (Edit/Sandbox popup) receives an object's
+ * MARKUP from DeskPage but not its row id / stored render_config. Until the
+ * caller passes those through (the clean contract — ObjectSurfaceData.id /
+ * .renderConfig), this lookup recovers them so Edit can initialize from the
+ * object's real config and persist on Done. scope 'mine' adds the session_id
+ * filter (Edit — your own row); 'any' matches any maker (Sandbox baseline).
+ *
+ * Best-effort by design: returns null on any error (missing table, network,
+ * no match) — callers fall back to the current pen values. Known limit: the
+ * hash is computed over the markup AS HELD by the caller; DeskPage sanitizes
+ * on read, so a sanitizer that rewrites the stored markup would miss here
+ * (the sanitize round-trip is idempotent for our own published markup, which
+ * was already sanitized at the add boundary). Newest row wins on duplicate
+ * content.
+ */
+export async function findDoodleBySvg(
+  svg: string,
+  scope: 'mine' | 'any' = 'mine',
+): Promise<DoodleRow | null> {
+  try {
+    const hash = await contentHash(svg);
+    let query = supabase
+      .from(TABLE)
+      .select('*')
+      .eq('content_hash', hash)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (scope === 'mine') query = query.eq('session_id', getSessionId());
+    const { data, error } = await query.maybeSingle();
+    if (error) return null;
+    return (data as DoodleRow) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * M9: subscribe to new doodles landing on the shared feed (live canvas).
  *
  * Listens for postgres_changes INSERT events on public.doodles (the table is
