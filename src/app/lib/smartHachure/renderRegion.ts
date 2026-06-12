@@ -15,6 +15,7 @@
 import rough from 'roughjs';
 import type { Options as RoughOptions } from 'roughjs/bin/core';
 import type { Treatment } from './types';
+import { coverageToParams, paramsToCoverage, isCoverageFillStyle } from '../smart/coverage';
 
 // ─── PUBLIC ENTRY POINT ───────────────────────────────────────────────────
 
@@ -64,6 +65,10 @@ function renderHachureFamily(
   const pathD = extractRegionPath(region);
   if (pathD === null) return []; // Region has no fillable geometry
 
+  // Density math routes through the shared coverage module (smart Phase A —
+  // one math, two renderers). See resolveDensity below.
+  const density = resolveDensity(treatment);
+
   // Build rough.js options from the treatment.
   // Map our biasMode → rough.js hachure angle variation:
   //   gap-dominant  = single direction (use treatment angle as-is)
@@ -75,8 +80,8 @@ function renderHachureFamily(
     stroke: 'none',
     fill: ctx.inkColor,
     fillStyle: treatment.fillStyle as RoughOptions['fillStyle'],
-    hachureGap: treatment.gap,
-    fillWeight: treatment.weight,
+    hachureGap: density.gap,
+    fillWeight: density.weight,
     // Hachure angle from the user's hachureAngle modifier, routed via the
     // treatment (default -41° per spec when unset), plus a tiny constant
     // epsilon (18-scope-audit §H-6 edge-case policy: jitter the scan
@@ -102,7 +107,7 @@ function renderHachureFamily(
   // accumulate tonal density without overlapping perfectly.
   // (rough.js's cross-hatch handles 2 directions internally — additional
   // layers go beyond that.)
-  const extraLayers = Math.max(0, treatment.layerCount - 1);
+  const extraLayers = Math.max(0, density.layers - 1);
   if (extraLayers === 0 || treatment.fillStyle === 'cross-hatch') {
     return [hachureGroup];
   }
@@ -126,6 +131,68 @@ function renderHachureFamily(
     }
   }
   return out;
+}
+
+// ─── DENSITY RESOLUTION — ONE MATH, TWO RENDERERS (smart Phase A) ─────────
+//
+// The treatment's (gap, weight, layerCount) IS today's blessed calibration
+// (techniqueMap role table × user sliders). Phase A swaps this renderer's
+// density math to route through the shared coverage module
+// (`lib/smart/coverage.ts` — the same math + 8-band table that will drive
+// the M8 screen-space hatch shader uniforms): derive the treatment's implied
+// ink coverage with the forward model, then invert through coverageToParams
+// anchored on the same weight + layer count. The inverse is the exact
+// algebraic inverse of the forward model, so defaults stay byte-identical
+// (golden-gated per feedback_never_declare_fixed_without_regression_check);
+// the snap below only strips ≤1-ulp float-division residue.
+//
+// RECALIBRATION — driving targetCoverage from source darkness
+// (darknessToCoverage + the 8-band quantization) instead of from the
+// treatment — is the later, visible-change step that Sebs eyeballs
+// separately. See docs/design/smart-system-build-plan.md Phase A row.
+
+function resolveDensity(
+  treatment: Treatment,
+): { gap: number; weight: number; layers: number } {
+  const { fillStyle } = treatment;
+  // 'solid' has no density axes (coverage ≡ 1); degenerate gap/weight (≤ 0
+  // or non-finite) can't carry coverage — pass both through untouched.
+  if (
+    !isCoverageFillStyle(fillStyle) ||
+    !Number.isFinite(treatment.gap) ||
+    !Number.isFinite(treatment.weight) ||
+    treatment.gap <= 0 ||
+    treatment.weight <= 0
+  ) {
+    return { gap: treatment.gap, weight: treatment.weight, layers: treatment.layerCount };
+  }
+
+  const layers = Math.max(1, treatment.layerCount);
+  const targetCoverage = paramsToCoverage(
+    { gap: treatment.gap, weight: treatment.weight, layers },
+    fillStyle,
+  );
+  const params = coverageToParams(targetCoverage, fillStyle, {
+    weight: treatment.weight,
+    layers,
+  });
+  return {
+    gap: snapToAnchor(params.gap, treatment.gap),
+    weight: snapToAnchor(params.weight, treatment.weight),
+    layers: params.layers,
+  };
+}
+
+/** Strip float-division residue: if the computed value matches its anchor to
+ *  1e-9 relative, return the anchor bit-exactly (rough.js scan-line layout is
+ *  a function of gap — bit-identical input → bit-identical marks). Larger
+ *  deviations pass through UNMASKED: if the coverage math ever disagrees
+ *  with the calibration, the render (and the screenshot gate) must show it,
+ *  never hide it. */
+function snapToAnchor(computed: number, anchor: number): number {
+  if (computed === anchor) return anchor;
+  const scale = Math.max(Math.abs(anchor), 1e-12);
+  return Math.abs(computed - anchor) / scale < 1e-9 ? anchor : computed;
 }
 
 // ─── GEOMETRY EXTRACTION ──────────────────────────────────────────────────

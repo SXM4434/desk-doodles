@@ -6,6 +6,29 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 ---
 
+### QUEUED ROUND 6 — HEADER CRAFT PASS (Sebs 2026-06-12 ~11:43: "chrome lacking proper spacing and alignment, doesn't scream craft and care")
+DeskPage header relayout spec: ONE baseline for wordmark / desk name / count (currently three ad-hoc baselines); consistent 12px gap rhythm inside clusters + 20px between clusters; the zoom cluster (- % + FIT) groups as ONE visual unit (shared bounding treatment or tighter internal gaps); Pen|Desk caption ("styling your next doodle") aligns under its pills, never floats; LIVE chip vertically centers with the pill row; DRAWER toggle sits with the identity cluster (wordmark side) with breathing room. Chevron-grammar fix DONE (committed). Files: DeskPage (wave-5 owns; fire after).
+
+### QUEUED ROUND 6 — DRAWER v2 (Sebs 2026-06-12 ~11:35 + screenshot)
+1. 2-col grid of MINI COLLECTIBLE CARDS (ObjectCard mini variant — TCG frame, the one marks stat, name banner) — kills the one-row-too-much-scrolling problem; full premium card treatment (shine/colophon) still rides the 06-16 identity pass.
+2. DRAG-TO-PLACE: drag a card from the drawer onto the desk, drop = copy published at the drop point (screenToDesk exists); Place-here pill stays as keyboard/fallback path.
+3. Drop animation = REUSE the ratified doodle-lands moment (two celebrated motion moments only — no third family; restraint per feedback_push_back_on_overadding, Sebs agreed framing).
+4. CLICK-TO-OPEN: drawer card click opens the SAME Edit ObjectSurface (one surface everywhere; drawer cards are always yours).
+Files: DrawerPanel + DeskPage (wave-5 rock A owns them; fire after it lands).
+
+### QUEUED ROUND 6 — UPLOAD PARITY (Sebs 2026-06-12 ~11:33 + screenshot): uploads get the draw-mode experience
+- Upload pane today: raw unstyled preview, dead space, no Sketch|Style, untouchable. FIX: (a) Sketch|Style pills work on uploads (Style = upload rendered through the pen via SvgStyleTransform, live); (b) DRAW-OVER: upload as backdrop layer + normal pen strokes on top, Done merges into one object (added strokes recorded -> Re-draw reopens them over the backdrop); (c) STRETCH, honest: convert stroke-like upload paths into editable pen strokes (the path sampler exists); complex fills fall back to backdrop mode, never pretend. (d) layout: preview fills the pane like draw mode.
+- Files: DrawPanel/DrawSurface (wave-5 smart-pick owns DrawPanel; fire after).
+
+### UX-AUDIT FIX BATCH (fires with the mega-sweep when wave-5 frees DeskPage/DrawPanel)
+1. LEGACY-ROW FREEZE (DeskPage): null render_config rows pin to a DEFAULT snapshot at load, so Pen-scope slider moves stop restyling the (mostly-legacy) live desk — makes the Pen|Desk pill legible (D-7 contradiction found by audit). Optional later: one-time backfill SQL.
+2. NAMING-STAGE STYLED PREVIEW (DrawPanel): the minting card currently shows RAW 3px polylines — wrap staged art in the nested-provider + SvgStyleTransform scope (pattern at ObjectSurface ~758) so the ceremony shows the doodle the user actually styled.
+3. ESCAPE/SCRIM SAFETY (DrawPanel): Escape during naming = Back (not destroy); scrim-click with strokes present = non-destructive. Also consider collapsing the desk panel while the popup is open (audit: two identical pen columns on screen; the familiar one is a discard trap).
+DONE ALREADY: in-flight stroke full-ink (37c73cc) - honest save-note copy - re-draw persistence (v5 pasted + RPC-verified live).
+
+### QUEUED: MEGA IMAGE-SWEEP (Sebs 2026-06-12 — fire the MOMENT wave-5 lands)
+Debug + edge testing, IMAGE-CHECKING heavy (every claim = screenshot READ): all 5 geometry pills visually distinct at 2+ orbit angles · 2D↔3D flip integrity · Sketch|Style at every stage · drawer copy round-trips · smart-pick chips · regression baselines for desk/popup/gallery. v4+v5 PASTED + RPC-verified (strokes survive). SVG→3D style-port toggle = M8, not built — sweep establishes its baselines.
+
 ## Current state · 2026-06-11 EVENING (Day 10 — COMMITTED+PUSHED · D-7 model LOCKED · build fleet paused on session limit)
 
 ### THE LOCKED CONTROL MODEL (D-7 + amendments 1-4, full chain in docs/design/global-toggles-and-mixed-3d.md — READ THAT DOC before touching desk controls)

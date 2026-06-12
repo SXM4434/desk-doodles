@@ -5,6 +5,7 @@ import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   DEFAULT_VIEWBOX,
+  SPHERE_SEGMENTS,
   buildPoolSolidGeometry,
   buildStrokeGeometry,
   poolCenter,
@@ -106,9 +107,10 @@ function StrokeMeshes({
     };
   }, [builds]);
 
-  // Shared unit sphere for rod endpoint caps, scaled per cap (plan §1.1 —
-  // sibling meshes instead of CSG merge).
-  const capSphere = useMemo(() => new THREE.SphereGeometry(1, 16, 12), []);
+  // Shared unit sphere for rod endpoint caps AND joint spheres, scaled per
+  // use (plan §1.1 — sibling meshes instead of CSG merge). Tessellation =
+  // free-stroke SPHERE_SEGMENTS (14×14, origin/main lib/geometry-engines.ts).
+  const capSphere = useMemo(() => new THREE.SphereGeometry(1, SPHERE_SEGMENTS, SPHERE_SEGMENTS), []);
   useEffect(() => {
     return () => capSphere.dispose();
   }, [capSphere]);
@@ -123,6 +125,14 @@ function StrokeMeshes({
           {b.kind === 'rod' &&
             b.capPositions.map((p, j) => (
               <mesh key={j} geometry={capSphere} position={p} scale={b.radius}>
+                <meshStandardMaterial color={inkColor} roughness={0.85} metalness={0} />
+              </mesh>
+            ))}
+          {/* Joint spheres (free-stroke ink-blob character): centerline
+              spheres at tube radius fill the pinch crease at kinks. */}
+          {b.kind === 'rod' &&
+            b.jointPositions.map((p, j) => (
+              <mesh key={`j${j}`} geometry={capSphere} position={p} scale={b.radius}>
                 <meshStandardMaterial color={inkColor} roughness={0.85} metalness={0} />
               </mesh>
             ))}

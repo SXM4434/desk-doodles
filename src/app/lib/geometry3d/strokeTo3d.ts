@@ -43,9 +43,14 @@ export interface ViewBoxSize {
 export interface RodGeometryResult {
   kind: 'rod';
   geometry: THREE.TubeGeometry;
-  /** Endpoint cap centers (empty when the curve is closed). Rendered as
-   *  sibling sphere meshes — simpler than CSG merge (plan §1.1). */
+  /** Endpoint cap centers (empty when the curve is closed), inset along the
+   *  tangents by radius × CAP_INSET_FACTOR (free-stroke character). Rendered
+   *  as sibling sphere meshes — simpler than CSG merge (plan §1.1). */
   capPositions: THREE.Vector3[];
+  /** Joint-sphere centers (free-stroke detectJoints3D port) — centerline
+   *  spheres that fill the crease where the tube kinks. Same radius as the
+   *  tube; rendered as sibling sphere meshes like the caps. */
+  jointPositions: THREE.Vector3[];
   radius: number;
 }
 
@@ -92,9 +97,43 @@ export const RDP_EPSILON = 3.0;
 /** viewBox px → world units. 800px-wide canvas → 8 world units. */
 export const WORLD_SCALE = 0.01;
 
-export const ROD_RADIUS = 0.05; // world units
-export const ROD_RADIAL_SEGMENTS = 10; // §5b budget: 8-12 thin, 16 hero
-export const ROD_MAX_TUBULAR_SEGMENTS = 512;
+// ── Rod character — PORTED from Free Stroke (2026-06-12) ──
+// PROVENANCE: ~/Desktop/Projects/free-stroke origin/main lib/geometry-engines.ts
+// (read via `git show origin/main:lib/geometry-engines.ts` — the local checkout
+// is stale; per docs/memory/project_free_stroke.md PORT-FIRST). Free Stroke
+// maps the canvas's LONGEST side to 3 world units (strokeTo3D: normScale =
+// 3 / max(w, h)); we map 800px → 8 units (WORLD_SCALE 0.01). All ABSOLUTE
+// world lengths convert ×8/3; radius-RELATIVE factors port verbatim.
+export const ROD_RADIUS = 0.032; // TUBE_RADIUS 0.012 × 8/3 — the tuned ink-line weight
+export const ROD_RADIAL_SEGMENTS = 16; // RADIAL_SEGMENTS 16 — round ink, not faceted
+export const ROD_TUBE_SEGMENTS_MULTIPLIER = 3; // TUBE_SEGMENTS_MULTIPLIER (already matched)
+export const ROD_MAX_TUBULAR_SEGMENTS = 512; // MAX_TUBULAR_SEGMENTS (already matched)
+/** Cap/joint sphere tessellation (SPHERE_SEGMENTS 14). */
+export const SPHERE_SEGMENTS = 14;
+/** Endpoint cap spheres sit INSIDE the tube ends — inset along the curve
+ *  tangent by radius × this factor, so the cap reads as a rounded ink tip,
+ *  not a bead stuck onto the end. */
+export const CAP_INSET_FACTOR = 0.35;
+/** Joint-sphere pass (the ink-blob feel): spheres on the centerline fill the
+ *  crease where TubeGeometry pinches at a kink. Threshold semantics ported
+ *  verbatim from detectJoints3D. */
+export const JOINT_ANGLE_THRESHOLD_DEG = 40;
+/** No joints within radius × this of either endpoint ("dot" artifacts —
+ *  free-stroke comment, verbatim factor). */
+export const JOINT_ENDPOINT_EPS_FACTOR = 1.25;
+/** Min spacing between consecutive joints, radius × this (verbatim factor). */
+export const JOINT_DEDUP_FACTOR = 0.75;
+/** Consecutive-point dedupe distance — filterDuplicates minDist 0.001 × 8/3.
+ *  (Was an exact-duplicate guard 1e-6; the tuned distance also stabilizes
+ *  joint detection on dense capture.) */
+export const DEDUPE_MIN_DIST = 0.001 * (8 / 3);
+/** Rod centerline resample spacing — free-stroke feeds its CatmullRom DENSE
+ *  arc-length-resampled points (processStroke spacing default 4 canvas px),
+ *  NOT sparse simplified anchors. 4 viewBox px × WORLD_SCALE = 0.04 world.
+ *  Without this the ×3 segment multiplier under-samples sharp corners (the
+ *  tube cuts the corner and the joint sphere floats off the ink — seen on
+ *  the first /canvas wiring screenshot 2026-06-12). */
+export const ROD_RESAMPLE_SPACING = 0.04;
 
 export const EXTRUDE_DEPTH = 0.5;
 
@@ -260,22 +299,103 @@ export function normalizeStrokePoints(
 
 // ─── Geometry builders ───────────────────────────────────────────────────────
 
-/** Drop consecutive duplicate points — identical neighbors make centripetal
- *  Catmull-Rom produce NaN tangents. RDP upstream removes most, this is the
- *  deterministic last guard. */
+/** Drop consecutive near-duplicate points — identical neighbors make
+ *  centripetal Catmull-Rom produce NaN tangents, and sub-threshold jitter
+ *  destabilizes joint detection. Distance = free-stroke filterDuplicates
+ *  minDist (0.001, converted ×8/3 — DEDUPE_MIN_DIST). RDP upstream removes
+ *  most; this is the deterministic last guard. */
+const DEDUPE_MIN_DIST_SQ = DEDUPE_MIN_DIST * DEDUPE_MIN_DIST;
 function dedupeConsecutive(world: THREE.Vector3[]): THREE.Vector3[] {
   const out: THREE.Vector3[] = [];
   for (const v of world) {
     const prev = out[out.length - 1];
-    if (!prev || prev.distanceToSquared(v) > 1e-12) out.push(v);
+    if (!prev || prev.distanceToSquared(v) > DEDUPE_MIN_DIST_SQ) out.push(v);
   }
   return out;
 }
 
+/** Arc-length resample — PORT of free-stroke resampleStroke (origin/main
+ *  lib/stroke-processing.ts ~47): walk the polyline, emit a point every
+ *  `spacing` world units, always keep the true endpoint (the caps anchor
+ *  there). The dense centerline is what makes the ×3 tubular multiplier hug
+ *  corners the way free-stroke tubes do. Deterministic, pure. */
+function resampleWorldPolyline(pts: THREE.Vector3[], spacing: number): THREE.Vector3[] {
+  if (pts.length < 2) return pts.slice();
+  const out: THREE.Vector3[] = [pts[0].clone()];
+  let prev = pts[0];
+  let carry = 0; // distance walked past the last emitted point
+  for (let i = 1; i < pts.length; i++) {
+    const curr = pts[i];
+    const segLen = prev.distanceTo(curr);
+    if (segLen <= 1e-12) continue;
+    let walked = spacing - carry;
+    while (walked <= segLen) {
+      out.push(new THREE.Vector3().lerpVectors(prev, curr, walked / segLen));
+      walked += spacing;
+    }
+    carry = segLen - (walked - spacing);
+    prev = curr;
+  }
+  const last = pts[pts.length - 1];
+  if (out[out.length - 1].distanceToSquared(last) > 1e-12) out.push(last.clone());
+  return out;
+}
+
+/** Joint detection — VERBATIM PORT of free-stroke detectJoints3D
+ *  (origin/main lib/geometry-engines.ts ~688, epsilons kept radius-relative).
+ *  Walks interior points of the polyline and emits a sphere center wherever
+ *  the turn clears the threshold, EXCEPT (a) within radius×1.25 of either
+ *  endpoint (cap zone — sphere there reads as a stray dot) and (b) within
+ *  radius×0.75 of the previous joint (dedup). The spheres ride the
+ *  centerline at tube radius, so on smooth runs they hide inside the tube
+ *  and at kinks they fill the pinch crease — the ink-blob feel. */
+export function detectJointPositions(
+  filtered: THREE.Vector3[],
+  startPt: THREE.Vector3,
+  endPt: THREE.Vector3,
+  radius: number,
+): THREE.Vector3[] {
+  const positions: THREE.Vector3[] = [];
+  const angleThresholdRad = (JOINT_ANGLE_THRESHOLD_DEG * Math.PI) / 180;
+  const endpointEps = radius * JOINT_ENDPOINT_EPS_FACTOR;
+  const jointDedup = radius * JOINT_DEDUP_FACTOR;
+
+  for (let i = 1; i < filtered.length - 1; i++) {
+    const prev = filtered[i - 1];
+    const curr = filtered[i];
+    const next = filtered[i + 1];
+
+    const ax = curr.x - prev.x, ay = curr.y - prev.y, az = curr.z - prev.z;
+    const bx = next.x - curr.x, by = next.y - curr.y, bz = next.z - curr.z;
+
+    const magA = Math.sqrt(ax * ax + ay * ay + az * az);
+    const magB = Math.sqrt(bx * bx + by * by + bz * bz);
+    if (magA < 1e-6 || magB < 1e-6) continue;
+
+    const dot = ax * bx + ay * by + az * bz;
+    const cosAngle = Math.max(-1, Math.min(1, dot / (magA * magB)));
+    const deviation = Math.PI - Math.acos(cosAngle);
+
+    if (deviation > angleThresholdRad) {
+      if (curr.distanceTo(startPt) < endpointEps) continue;
+      if (curr.distanceTo(endPt) < endpointEps) continue;
+      if (positions.length > 0) {
+        const lastJoint = positions[positions.length - 1];
+        if (curr.distanceTo(lastJoint) < jointDedup) continue;
+      }
+      positions.push(curr.clone());
+    }
+  }
+  return positions;
+}
+
 /** Open-stroke Rod: TubeGeometry over a centripetal CatmullRomCurve3
- *  (plan §1.1). Degenerate inputs (0-1 points — a dot tap) synthesize a tiny
- *  straight segment so the geometry never throws. Endpoint sphere caps are
- *  returned as positions for sibling meshes. */
+ *  (plan §1.1) with the free-stroke ink character: endpoint cap spheres
+ *  INSET along the tangents (radius × 0.35, so the tip reads rounded, not
+ *  beaded) + joint spheres filling kink creases (detectJointPositions).
+ *  Degenerate inputs (0-1 points — a dot tap) synthesize a tiny straight
+ *  segment so the geometry never throws — free-stroke SKIPS sub-
+ *  MIN_STROKE_LENGTH strokes; we keep the honest ink-bead instead. */
 export function buildRodGeometry(
   world: THREE.Vector3[],
   opts: { radius?: number; closed?: boolean } = {},
@@ -293,11 +413,32 @@ export function buildRodGeometry(
     ];
   }
   const canClose = closed && pts.length >= 3;
-  const curve = new THREE.CatmullRomCurve3(pts, canClose, 'centripetal', 0.5);
-  const tubularSegments = Math.min(Math.max(pts.length * 3, 8), ROD_MAX_TUBULAR_SEGMENTS);
+  // Joints detect on the SPARSE anchors (one sphere per real corner — the
+  // tube can only crease at an anchor turn); the tube itself builds from the
+  // DENSE resampled centerline, free-stroke's actual curve input (their
+  // pipeline resamples every 4 canvas px BEFORE the CatmullRom — sparse
+  // anchors under-sample corners and the joint spheres float off the ink).
+  const jointPositions = detectJointPositions(pts, pts[0], pts[pts.length - 1], radius);
+  const dense = resampleWorldPolyline(pts, ROD_RESAMPLE_SPACING);
+  const curve = new THREE.CatmullRomCurve3(dense, canClose, 'centripetal', 0.5);
+  const tubularSegments = Math.min(
+    Math.max(dense.length * ROD_TUBE_SEGMENTS_MULTIPLIER, 8),
+    ROD_MAX_TUBULAR_SEGMENTS,
+  );
   const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, ROD_RADIAL_SEGMENTS, canClose);
-  const capPositions = canClose ? [] : [pts[0].clone(), pts[pts.length - 1].clone()];
-  return { kind: 'rod', geometry, capPositions, radius };
+  // Caps inset along the curve tangents so they sit inside the tube ends
+  // (free-stroke RodEngine, verbatim: inset = TUBE_RADIUS * 0.35).
+  let capPositions: THREE.Vector3[] = [];
+  if (!canClose) {
+    const inset = radius * CAP_INSET_FACTOR;
+    const startTangent = curve.getTangentAt(0);
+    const endTangent = curve.getTangentAt(1);
+    capPositions = [
+      pts[0].clone().addScaledVector(startTangent, inset),
+      pts[pts.length - 1].clone().addScaledVector(endTangent, -inset),
+    ];
+  }
+  return { kind: 'rod', geometry, capPositions, jointPositions, radius };
 }
 
 /** Signed shoelace area of the world-space polygon (xy plane). */
@@ -323,6 +464,16 @@ function hasNonFinitePositions(geometry: THREE.BufferGeometry): boolean {
   return false;
 }
 
+/** 2D-parity outline dispatch for Extrude — mirrors the drawn-canvas
+ *  polygonal-vs-curve dispatch (research doc 22 dispatch-freeze; the 2D
+ *  pipeline renders ≤8 anchors as straight segments, 9+ as a smooth
+ *  Catmull-Rom). Without it a drawn circle extrudes as a faceted 14-gon
+ *  while its 2D render is a smooth spline — the round-trip must keep the
+ *  same shape family. */
+export const EXTRUDE_SMOOTH_MIN_ANCHORS = 9;
+const EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR = 8;
+const EXTRUDE_SMOOTH_MAX_SAMPLES = 256;
+
 /** Closed-stroke Extrude: THREE.Shape + ExtrudeGeometry (plan §1.1).
  *  Degenerate (collinear / near-zero area) inputs fall back to Rod
  *  PROACTIVELY; triangulation throws / NaN output fall back in the catch —
@@ -343,7 +494,21 @@ export function buildExtrudeGeometry(
   }
 
   try {
-    const shape = new THREE.Shape(pts.map((v) => new THREE.Vector2(v.x, v.y)));
+    // 9+ anchors = curve intent (2D dispatch parity): sample a CLOSED
+    // centripetal Catmull-Rom through the anchors so the outline is the same
+    // smooth family the 2D render shows. ≤8 anchors = polygonal intent —
+    // straight edges, sharp corners, untouched.
+    let outline = pts;
+    if (pts.length >= EXTRUDE_SMOOTH_MIN_ANCHORS) {
+      const loop = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
+      const divisions = Math.min(
+        pts.length * EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR,
+        EXTRUDE_SMOOTH_MAX_SAMPLES,
+      );
+      outline = loop.getPoints(divisions);
+      outline.pop(); // closed-curve sampling duplicates the start point
+    }
+    const shape = new THREE.Shape(outline.map((v) => new THREE.Vector2(v.x, v.y)));
     const geometry = new THREE.ExtrudeGeometry(shape, {
       depth,
       bevelEnabled: true,

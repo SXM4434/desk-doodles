@@ -1,8 +1,13 @@
-import { useState } from 'react';
-import type { CSSProperties } from 'react';
+import { Suspense, lazy, useMemo, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
 import { PILL, CTA, SECTION_LABEL } from '../../lib/chromeStyles';
+import {
+  Canvas3DProvider,
+  GEOMETRY_MODE_OPTIONS,
+  useCanvas3D,
+} from '../../state/Canvas3DContext';
 
 // CTA mixes PILL's `border` shorthand with a `borderColor` longhand — React
 // dev warns when such conflicting styles diff across renders. Collapse to a
@@ -18,11 +23,68 @@ import {
 } from '../chrome/CollapsiblePanel';
 // DrawSurface + stroke helpers extracted to DrawSurface.tsx 2026-06-11
 // (mechanical move — also hosted by the /desk DrawPanel popup).
-import { DrawSurface, type CanvasMode, type InputMode } from './DrawSurface';
+import { DrawSurface, type CanvasMode, type InputMode, type Stroke } from './DrawSurface';
 
+// ─── 3D wiring (plan §2.3) ───────────────────────────────────────────────────
+// React.lazy keeps three + drei (~600KB gz) out of the main chunk — /desk and
+// 2D-only sessions never pay it. NOTHING ELSE in this file may import from
+// canvas3d/ or geometry3d/ at module level (a static value import would pull
+// three back into the main chunk). Make watch item: lazy chunks are standard
+// Vite output but unverified in Make preview — fallback = static import.
+const Stroke3DSceneLazy = lazy(() => import('../canvas3d'));
+
+/** Mirror of canvas3d/Stroke3DScene MAX_STROKES_3D — keep in sync by hand
+ *  (importing the real constant would defeat the lazy chunk, see above). */
+const MAX_STROKES_3D = 60;
+
+/** Honest in-frame note (same register as DrawSurface's GATE_STYLE copy). */
+function FrameNote({ title, body }: { title: string; body: ReactNode }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        fontFamily: IS,
+        fontSize: 11,
+        color: 'var(--dir-text-secondary)',
+        letterSpacing: '0.04em',
+        textAlign: 'center',
+      }}
+    >
+      <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>{title}</span>
+      <span>{body}</span>
+    </div>
+  );
+}
+
+/** Provider shell — the 3D control state lives page-wide so the header pills
+ *  (chrome) and the canvas overlay read the same values, and so DrawSurface
+ *  can read useCanvas3D() directly once the main thread swaps its honesty
+ *  gate (plan §2.4 — provider here instead of App.tsx keeps /desk untouched;
+ *  useCanvas3D falls back to defaults when unprovided). */
 export function DeskDoodlesCanvas() {
+  return (
+    <Canvas3DProvider>
+      <DeskDoodlesCanvasPage />
+    </Canvas3DProvider>
+  );
+}
+
+function DeskDoodlesCanvasPage() {
   const [mode, setMode] = useState<CanvasMode>('svg');
   const [input, setInput] = useState<InputMode>('draw');
+  // CURRENT stroke pool, lifted out of DrawSurface via its onStrokesChange
+  // mirror (DrawSurface keeps ownership of capture; this is a read-only copy
+  // — the 3D scene is fed the SAME strokes the 2D surface holds, so flipping
+  // the mode tab converts exactly what's drawn).
+  const [strokes3d, setStrokes3d] = useState<Stroke[]>([]);
+  const { geometryMode, setGeometryMode } = useCanvas3D();
+  const strokePoints = useMemo(() => strokes3d.map((s) => s.points), [strokes3d]);
   const [leftOpen, toggleLeft, setLeftOpen] = usePanelOpen('canvas.left');
   const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('canvas.right');
   useMinimizeUi([
@@ -78,33 +140,70 @@ export function DeskDoodlesCanvas() {
           />
         </div>
 
-        <div
-          role="tablist"
-          aria-label="Canvas mode"
-          style={{
-            display: 'inline-flex',
-            border: '1px solid var(--dir-border)',
-            borderRadius: 999,
-            overflow: 'hidden',
-          }}
-        >
-          {(['svg', '3d'] as CanvasMode[]).map((m) => (
-            <button
-              key={m}
-              role="tab"
-              aria-selected={mode === m}
-              onClick={() => setMode(m)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div
+            role="tablist"
+            aria-label="Canvas mode"
+            style={{
+              display: 'inline-flex',
+              border: '1px solid var(--dir-border)',
+              borderRadius: 999,
+              overflow: 'hidden',
+            }}
+          >
+            {(['svg', '3d'] as CanvasMode[]).map((m) => (
+              <button
+                key={m}
+                role="tab"
+                aria-selected={mode === m}
+                onClick={() => setMode(m)}
+                style={{
+                  ...PILL,
+                  border: 'none',
+                  borderRadius: 0,
+                  background: mode === m ? 'var(--dir-accent)' : 'transparent',
+                  color: mode === m ? 'var(--dir-bg)' : 'var(--dir-text-body)',
+                }}
+              >
+                {m === 'svg' ? '2D' : '3D'}
+              </button>
+            ))}
+          </div>
+          {/* 3D geometry pills — header chrome per feedback_toggles_always_in_chrome
+              (never in the cell/design). FULL set Auto/Rod/Extrude/Inflate/Solid,
+              never trimmed (D-7 locked model + feedback_more_toggle_options_better).
+              Only mounts in 3D mode — the row appears with the mode it controls. */}
+          {mode === '3d' && (
+            <div
+              role="tablist"
+              aria-label="3D geometry"
               style={{
-                ...PILL,
-                border: 'none',
-                borderRadius: 0,
-                background: mode === m ? 'var(--dir-accent)' : 'transparent',
-                color: mode === m ? 'var(--dir-bg)' : 'var(--dir-text-body)',
+                display: 'inline-flex',
+                border: '1px solid var(--dir-border)',
+                borderRadius: 999,
+                overflow: 'hidden',
               }}
             >
-              {m === 'svg' ? '2D' : '3D'}
-            </button>
-          ))}
+              {GEOMETRY_MODE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  role="tab"
+                  aria-selected={geometryMode === opt.id}
+                  onClick={() => setGeometryMode(opt.id)}
+                  title={opt.detail}
+                  style={{
+                    ...PILL,
+                    border: 'none',
+                    borderRadius: 0,
+                    background: geometryMode === opt.id ? 'var(--dir-accent)' : 'transparent',
+                    color: geometryMode === opt.id ? 'var(--dir-bg)' : 'var(--dir-text-body)',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -217,7 +316,74 @@ export function DeskDoodlesCanvas() {
             background: 'var(--dir-bg)',
           }}
         >
-          <DrawSurface mode={mode} input={input} />
+          {/* Sizing wrapper duplicates DrawSurface's own frame constraints
+              (920 max / 4:3) so the 3D overlay can sit EXACTLY over the frame
+              without editing DrawSurface — its internal honesty gate stays
+              underneath until the main thread swaps it (plan §2.3). */}
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 920,
+              maxHeight: '100%',
+              aspectRatio: '800 / 600',
+              position: 'relative',
+            }}
+          >
+            <DrawSurface mode={mode} input={input} onStrokesChange={setStrokes3d} />
+            {mode === '3d' && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                  border: '1px solid var(--dir-border)',
+                  background: 'var(--dir-bg)',
+                }}
+              >
+                {strokePoints.length > 0 ? (
+                  <Suspense fallback={<FrameNote title="Loading 3D" body="Fetching the geometry engine…" />}>
+                    <Stroke3DSceneLazy
+                      strokes={strokePoints}
+                      geometryMode={geometryMode}
+                      style={{ width: '100%', height: '100%' }}
+                    />
+                  </Suspense>
+                ) : (
+                  <FrameNote
+                    title="Nothing to convert yet"
+                    body={
+                      <>
+                        Draw strokes in 2D first — then flip back to 3D.
+                        <br />
+                        Upload→3D is the hard path (vision router) — drawn strokes only for now.
+                      </>
+                    }
+                  />
+                )}
+                {strokePoints.length > MAX_STROKES_3D && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      bottom: 10,
+                      left: 10,
+                      fontFamily: IS,
+                      fontSize: 10,
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                      color: 'var(--dir-text-body-soft)',
+                      padding: '4px 10px',
+                      borderRadius: 999,
+                      background: 'var(--dir-raised)',
+                      border: '1px solid var(--dir-border)',
+                    }}
+                  >
+                    First {MAX_STROKES_3D} of {strokePoints.length} strokes shown
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </main>
         {/* Right chrome — Smart Hachure modifier panel from the audit/playground */}
         <CollapsiblePanel

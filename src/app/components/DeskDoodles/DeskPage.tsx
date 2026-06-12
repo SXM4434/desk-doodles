@@ -42,6 +42,7 @@ import {
   usePanelOpen,
 } from '../chrome/CollapsiblePanel';
 import { DrawPanel } from './DrawPanel';
+import { DrawerPanel } from './DrawerPanel';
 import {
   getOpenDesk,
   listDesks,
@@ -537,7 +538,19 @@ export function DeskPage() {
   const feedStatusRef = useRef(feedStatus);
   feedStatusRef.current = feedStatus;
   const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('desk.right');
-  useMinimizeUi([{ open: rightOpen, setOpen: setRightOpen }]);
+  // THE DRAWER (ratified #26-32) — left panel, "My doodles" passive cross-desk
+  // index (DrawerPanel). Defaults CLOSED: it's an index you open, not chrome
+  // every fresh session pays 300px for. ⌘\ minimize-all covers both panels.
+  const [drawerOpen, toggleDrawer, setDrawerOpen] = usePanelOpen('desk.drawer', false);
+  useMinimizeUi([
+    { open: rightOpen, setOpen: setRightOpen },
+    { open: drawerOpen, setOpen: setDrawerOpen },
+  ]);
+  // Drawer refresh signal (#29 one-record semantics): bumped when a publish or
+  // delete SETTLES so the index refetches and tracks the records — a desk
+  // delete disappears from the drawer, a Done / place-copy appears in it.
+  const [drawerNonce, setDrawerNonce] = useState(0);
+  const bumpDrawer = useCallback(() => setDrawerNonce((n) => n + 1), []);
 
   // ── HONEST CONNECTIVITY (R3/R4) ──────────────────────────────────────────
   // The ●Live chip must never lie: `feedStatus` tracks the LOAD lifecycle
@@ -916,6 +929,13 @@ export function DeskPage() {
         strokes?: [number, number, number][][];
         name?: string | null;
         why?: string | null;
+        /** DRAWER place-here COPY (#28): the SOURCE row's render_config,
+         *  carried VERBATIM into the copy (strokes and any future extras ride
+         *  through untouched) instead of snapshotting the live pen. null =
+         *  the source predates configs — the copy publishes configless too
+         *  (live-global fallback, the same look rule as its original).
+         *  Absent (undefined) = the normal pen-snapshot path. */
+        sourceConfig?: Record<string, unknown> | null;
       },
     ) => {
       const svgMarkup = normalizeSvgSize(rawMarkup, 180);
@@ -979,11 +999,25 @@ export function DeskPage() {
       // STROKES IN THE RECORD: the raw gesture rides the same snapshot
       // (optional field — absent on uploads), so the record holds the SOURCE
       // of the doodle, not just its look (the wedge: the hand survives).
-      const renderConfig: ObjectRenderConfig = {
+      //
+      // DRAWER COPY OVERRIDE (#28): when meta.sourceConfig is present (even
+      // null) this Done is a place-here COPY — the row stores the source's
+      // config BYTE-FOR-BYTE (publishConfig) and the optimistic object renders
+      // under the same parse the reload path applies (localConfig via
+      // parseRenderConfig, exactly what rowToObject would produce), so the
+      // copy's first paint == its post-reload paint.
+      const isCopy = meta !== undefined && meta.sourceConfig !== undefined;
+      const penSnapshot: ObjectRenderConfig = {
         svgStyle: penStyle,
         modifiers: penModifiers,
         ...(meta?.strokes && meta.strokes.length > 0 ? { strokes: meta.strokes } : {}),
       };
+      const publishConfig: Record<string, unknown> | null = isCopy
+        ? (meta?.sourceConfig ?? null)
+        : penSnapshot;
+      const localConfig: ObjectRenderConfig | null = isCopy
+        ? parseRenderConfig(meta?.sourceConfig)
+        : penSnapshot;
       const name = meta?.name ?? null;
       const why = meta?.why ?? null;
 
@@ -1000,7 +1034,17 @@ export function DeskPage() {
         // naming stage show up immediately if the object is opened.
         setObjects((prev) => [
           ...prev,
-          { id, svgMarkup, x, y, rotation, ownerSession: getSessionId(), renderConfig, name, why },
+          {
+            id,
+            svgMarkup,
+            x,
+            y,
+            rotation,
+            ownerSession: getSessionId(),
+            renderConfig: localConfig,
+            name,
+            why,
+          },
         ]);
       }
 
@@ -1010,8 +1054,10 @@ export function DeskPage() {
       // filled the desk). renderConfig persists the pen snapshot into
       // doodles.render_config (D-6) so every viewer renders this object under
       // the look it was MADE with.
-      publishDoodle({ svg: svgMarkup, x, y, rotation, name, why, deskId: openDeskId ?? undefined, renderConfig })
+      publishDoodle({ svg: svgMarkup, x, y, rotation, name, why, deskId: openDeskId ?? undefined, renderConfig: publishConfig })
         .then(({ row, desk: landedDesk }) => {
+          // The record exists now — the drawer index gains a row (#29).
+          bumpDrawer();
           // The desk this object actually landed on (when v2 is live).
           if (landedDesk) {
             const spawnedFresh = openDeskId != null && landedDesk.id !== openDeskId;
@@ -1040,7 +1086,34 @@ export function DeskPage() {
           console.warn('[desk] publish failed — object stays local:', err.message);
         });
     },
-    [isViewingOpenDesk, openDeskId, desk, loadDeskView, announceFreshDesk, penStyle, penModifiers],
+    [
+      isViewingOpenDesk,
+      openDeskId,
+      desk,
+      loadDeskView,
+      announceFreshDesk,
+      penStyle,
+      penModifiers,
+      bumpDrawer,
+    ],
+  );
+
+  // DRAWER "Place here" (#28: place = COPY) — publish a NEW row of the source
+  // doodle onto the current OPEN desk through the exact addObject path (same
+  // ~180px normalize, same P-1 smart placement, same optimistic add + RPC +
+  // desk-spawn handling). The original row is untouched; the copy carries the
+  // source's render_config verbatim — strokes included — so Edit on the copy
+  // re-draws the same hand. The svg is sanitized on read (anon-writable
+  // column), the same rule rowToObject applies to the feed.
+  const placeFromDrawer = useCallback(
+    (row: DoodleRow) => {
+      addObject(sanitizeSvgMarkup(row.svg), {
+        name: row.name ?? null,
+        why: row.why ?? null,
+        sourceConfig: row.render_config ?? null,
+      });
+    },
+    [addObject],
   );
 
   // Drag — same pointer-event pattern as the playground's placed items, but
@@ -1176,22 +1249,28 @@ export function DeskPage() {
   }, []);
 
   // Delete one of your own objects (Edit-mode action) — removes from the DB
-  // (session-scoped) and the desk, then closes the surface.
-  const handleDeleteObject = useCallback((obj: DeskObject) => {
-    setActiveSurface(null);
-    // Optimistic remove, but ROLL BACK if the DB delete didn't actually remove
-    // the row (not yours / failed) — never claim a delete that didn't happen.
-    setObjects((prev) => prev.filter((o) => o.id !== obj.id));
-    if (obj.dbId) {
-      const restore = () =>
-        setObjects((prev) => (prev.some((o) => o.id === obj.id) ? prev : [...prev, obj]));
-      deleteDoodle(obj.dbId)
-        .then((ok) => {
-          if (!ok) restore();
-        })
-        .catch(restore);
-    }
-  }, []);
+  // (session-scoped) and the desk, then closes the surface. ONE RECORD (#29):
+  // the drawer is a view of the same rows, so the settle bumps its refetch —
+  // a desk delete disappears from the drawer too (and a rollback reappears).
+  const handleDeleteObject = useCallback(
+    (obj: DeskObject) => {
+      setActiveSurface(null);
+      // Optimistic remove, but ROLL BACK if the DB delete didn't actually remove
+      // the row (not yours / failed) — never claim a delete that didn't happen.
+      setObjects((prev) => prev.filter((o) => o.id !== obj.id));
+      if (obj.dbId) {
+        const restore = () =>
+          setObjects((prev) => (prev.some((o) => o.id === obj.id) ? prev : [...prev, obj]));
+        deleteDoodle(obj.dbId)
+          .then((ok) => {
+            if (!ok) restore();
+          })
+          .catch(restore)
+          .finally(bumpDrawer);
+      }
+    },
+    [bumpDrawer],
+  );
 
   // Header desk readout — name + count/cap. Falls back to a neutral label on
   // the flat (pre-v2) path where there is no desk row.
@@ -1262,6 +1341,16 @@ export function DeskPage() {
           >
             Desk Doodles
           </NavLink>
+
+          {/* THE DRAWER toggle — left side of the chrome for the left panel
+              (toggles-always-in-chrome; #30 left CollapsiblePanel). */}
+          <PanelToggle
+            side="left"
+            open={drawerOpen}
+            label="Drawer"
+            onToggle={toggleDrawer}
+            controlsId="desk-drawer-panel"
+          />
 
           {/* Current desk name + object count / cap. The name comes from the
               desk row (data layer generated it via deskName); the readout is
@@ -1431,8 +1520,30 @@ export function DeskPage() {
         </div>
       </header>
 
-      {/* Body — desk surface + right Smart Hachure chrome (restyles every object) */}
+      {/* Body — drawer (left) + desk surface + right Smart Hachure chrome */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* Left chrome — THE DRAWER (#26-32): "My doodles", the passive
+            cross-desk index. Same fixed-but-collapsible system as the right
+            panel; Place-here publishes a COPY through addObject (P-1). */}
+        <CollapsiblePanel
+          side="left"
+          open={drawerOpen}
+          width={300}
+          id="desk-drawer-panel"
+          style={{
+            borderRight: '1px solid var(--dir-border)',
+            background: 'var(--dir-raised)',
+            overflowY: 'auto',
+          }}
+        >
+          <DrawerPanel
+            open={drawerOpen}
+            refreshKey={drawerNonce}
+            viewedDeskId={desk?.id ?? null}
+            onPlace={placeFromDrawer}
+          />
+        </CollapsiblePanel>
+
         {/* THE DESK — full leftover viewport, objects scattered + draggable */}
         <main
           ref={deskRef}

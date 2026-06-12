@@ -283,6 +283,26 @@ export async function listDoodlesForDesk(
 }
 
 /**
+ * DRAWER (ratified 2026-06-11 board #26-27 — "My doodles" passive cross-desk
+ * index): read THIS SESSION's doodles across ALL desks, newest-first.
+ *
+ * ADDITIVE 2026-06-12: no session-filtered cross-desk read existed before
+ * (listDoodles is the whole shared feed; listDoodlesForDesk is one desk, any
+ * maker). Same honor-system session scope as the mutation helpers — the
+ * .eq('session_id', …) where-clause, v1 trust model.
+ */
+export async function listMyDoodles(limit = 100): Promise<DoodleRow[]> {
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('*')
+    .eq('session_id', getSessionId())
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`listMyDoodles failed: ${error.message}`);
+  return (data ?? []) as DoodleRow[];
+}
+
+/**
  * M9: persist a dragged doodle's new position/rotation. Session-scoped via
  * the same v1 honor-system where-clause as deleteDoodle — only this
  * session's rows actually move; a 0-row match resolves false silently.

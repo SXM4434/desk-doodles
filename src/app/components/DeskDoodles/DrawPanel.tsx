@@ -8,10 +8,16 @@ import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { Dropdown } from '../chrome/Dropdown';
 import { Slider } from '../chrome/Slider';
 import { SLIDER_SPECS, MODIFIER_SETS_BY_STYLE, UNIVERSAL_MODIFIERS } from '../chrome/modifierSpecs';
-import { useF3SvgStyle, F3_SVG_STYLES } from '../../state/F3SvgStyleContext';
-import { useF3RoughModifiers, DEFAULT_MODIFIERS } from '../../state/F3RoughModifiersContext';
+import { useF3SvgStyle, F3_SVG_STYLES, type F3SvgStyle } from '../../state/F3SvgStyleContext';
+import { useF3RoughModifiers, DEFAULT_MODIFIERS, type F3ModifiersState } from '../../state/F3RoughModifiersContext';
 import { applyStylePreset } from '../canvas/SvgStyleTransform';
 import { SurfaceControls } from './ObjectSurface';
+import {
+  smartPickFromMarkup,
+  logSmartPickUndo,
+  type SmartPick,
+  type SmartPickResult,
+} from '../../lib/smart/smartPick';
 
 type PanelInput = 'draw' | 'upload-svg' | 'upload-image';
 
@@ -40,6 +46,70 @@ function getFocusables(root: HTMLElement): HTMLElement[] {
   ).filter(
     (el) =>
       !el.hasAttribute('disabled') && el.tabIndex !== -1 && el.getClientRects().length > 0,
+  );
+}
+
+// ─── SmartPickChip — the visible receipt (SD-2 option b) ─────────────────────
+// "smart picked sketchy + hachure — all linework, no fills" + a quiet undo.
+// Pill grammar per chromeStyles (CHIP-adjacent badge, sentence-case because
+// the receipt is a sentence, not a label); accent DOT (not an accent tint —
+// no accent-ink backgrounds per system rules) marks it as a system act.
+function SmartPickChip({ pick, onUndo }: { pick: SmartPick; onUndo: () => void }) {
+  return (
+    <div
+      role="status"
+      data-smart-pick-chip
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        borderRadius: 999,
+        border: '1px solid var(--dir-border)',
+        background: 'var(--dir-bg)',
+        padding: '6px 12px',
+        minWidth: 0,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)', flexShrink: 0 }}
+      />
+      <span
+        style={{
+          fontFamily: IS,
+          fontSize: 11,
+          color: 'var(--dir-text-body)',
+          lineHeight: 1.45,
+          minWidth: 0,
+        }}
+      >
+        smart picked{' '}
+        <strong style={{ fontWeight: 600, color: 'var(--dir-text-primary)' }}>{pick.headline}</strong>
+        {' — '}
+        {pick.reason}
+      </span>
+      <button
+        onClick={onUndo}
+        title="Put the pen back the way it was"
+        style={{
+          fontFamily: IS,
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          color: 'var(--dir-text-secondary)',
+          background: 'transparent',
+          border: 'none',
+          textDecoration: 'underline',
+          textUnderlineOffset: 2,
+          cursor: 'pointer',
+          padding: 0,
+          flexShrink: 0,
+        }}
+      >
+        undo
+      </button>
+    </div>
   );
 }
 
@@ -80,9 +150,64 @@ export function DrawPanel({
   // dropdown mirrors the chrome's preset-snap semantics exactly so picking a
   // style behaves identically from either surface.
   const { state: svgStyle, setState: setSvgStyle } = useF3SvgStyle();
-  const { state: mods, set: setMod } = useF3RoughModifiers();
+  const { state: mods, set: setMod, replace: replaceMods } = useF3RoughModifiers();
   const declared = MODIFIER_SETS_BY_STYLE[svgStyle] ?? UNIVERSAL_MODIFIERS;
   const has = (k: string) => (declared as readonly string[]).includes(k);
+
+  // ── SMART PICK (smart-system plan Phase C · SD-2/SD-3) ───────────────────
+  // Fires ONCE at ingest: upload-SVG staging, and the drawn doodle's first
+  // Done (entering the naming stage). The pick lands through the NORMAL
+  // preset-snap path — identical to the user picking the style themselves —
+  // then never touches a control again (I-1: dropdowns stay sacred). The
+  // visible chip carries the rule receipts + a quiet undo that restores the
+  // exact prior pen. Ambiguous input → no pick, no chip (smartPick logs the
+  // abstention to window.__dd_inputPickLog).
+  const [smartPick, setSmartPick] = useState<{
+    result: SmartPickResult; // result.pick is non-null when stored here
+    prior: { svgStyle: F3SvgStyle; mods: F3ModifiersState };
+  } | null>(null);
+  // Once-per-session latch for the drawn path: Back-and-Done again is NOT a
+  // new ingest — the pen must not re-move (SD-3 once-at-ingest).
+  const drawPickEvaluatedRef = useRef(false);
+
+  function applySmartPick(result: SmartPickResult) {
+    const pick = result.pick;
+    if (!pick) {
+      // Abstained — clear any stale chip from a previous ingest so the
+      // receipts never describe a different input than the one staged.
+      setSmartPick(null);
+      return;
+    }
+    const prior = { svgStyle, mods };
+    // The style pick = the user's own style-change gesture: setSvgStyle +
+    // preset snap (EXACTLY the onStyle handler below). Confident secondary
+    // axes then land as ordinary dropdown moves on top of the preset.
+    setSvgStyle(pick.axes.svgStyle);
+    const snapped = applyStylePreset(mods, pick.axes.svgStyle);
+    const next: F3ModifiersState = {
+      ...snapped,
+      ...(pick.axes.fillStyle !== undefined && { fillStyle: pick.axes.fillStyle }),
+      ...(pick.axes.texture !== undefined && { texture: pick.axes.texture }),
+      ...(pick.axes.penTip !== undefined && { penTip: pick.axes.penTip }),
+      ...(pick.axes.multiStroke !== undefined && { multiStroke: pick.axes.multiStroke }),
+      ...(pick.axes.sketchingStyle !== undefined && { sketchingStyle: pick.axes.sketchingStyle }),
+    };
+    (Object.keys(next) as (keyof typeof next)[]).forEach((k) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setMod(k, (next as any)[k]);
+    });
+    setSmartPick({ result, prior });
+  }
+
+  function undoSmartPick() {
+    if (!smartPick) return;
+    // Restore the EXACT prior pen (style + every modifier) — the snapshot
+    // taken right before the pick applied. Logged as a rejection receipt.
+    setSvgStyle(smartPick.prior.svgStyle);
+    replaceMods(smartPick.prior.mods);
+    logSmartPickUndo(smartPick.result);
+    setSmartPick(null);
+  }
 
   // Escape cancels — standard dialog convention. Bubble phase on window, so
   // an open Dropdown popover (capture-phase document listener that stops
@@ -161,7 +286,17 @@ export function DrawPanel({
 
   function handleDone() {
     if (input === 'draw' && strokes.length > 0) {
-      setStaged({ markup: strokesToObjectMarkup(strokes), strokes: capStrokes(strokes) });
+      const markup = strokesToObjectMarkup(strokes);
+      // SMART PICK — drawn ingest: first Done (entering the naming stage) is
+      // THE ingest moment for a drawn doodle. Latched per panel session so
+      // Back-and-Done never re-fires (SD-3). Picks only when the gesture
+      // rules are confident — sparse squiggles abstain silently.
+      if (!drawPickEvaluatedRef.current) {
+        drawPickEvaluatedRef.current = true;
+        const evaluated = smartPickFromMarkup(markup, 'draw');
+        if (evaluated) applySmartPick(evaluated);
+      }
+      setStaged({ markup, strokes: capStrokes(strokes) });
     } else if (input === 'upload-svg' && upload) {
       setStaged({ markup: upload.markup });
     }
@@ -184,6 +319,12 @@ export function DrawPanel({
     if (result.ok) {
       setUpload({ name: result.name, markup: result.markup });
       setUploadError(null);
+      // SMART PICK — upload ingest: every picked file is one ingest, and
+      // staging (the preview appearing) is the moment. Runs the signal
+      // extractor over the sanitized markup; confident → pen set through
+      // the preset-snap path + chip; ambiguous → nothing moves.
+      const evaluated = smartPickFromMarkup(result.markup, 'upload-svg');
+      if (evaluated) applySmartPick(evaluated);
     } else {
       setUpload(null);
       setUploadError(result.error);
@@ -480,6 +621,13 @@ export function DrawPanel({
               </span>
             </div>
 
+            {/* SMART PICK receipt — visible right where the pen lives, so the
+                "why did the controls just move" question is answered before
+                it's asked. Undo restores the exact prior pen. */}
+            {smartPick?.result.pick && (
+              <SmartPickChip pick={smartPick.result.pick} onUndo={undoSmartPick} />
+            )}
+
             {/* FULL per-style control set (feedback_never_trim_control_sets —
                 Sebs hit "missing toggles" 3x before this stuck): the SAME
                 generic spec-table renderer the Edit/Sandbox popups use. The
@@ -548,6 +696,14 @@ export function DrawPanel({
                 dangerouslySetInnerHTML={{ __html: normalizeSvgSize(staged.markup, 230) }}
               />
             </div>
+            {/* SMART PICK receipt in the naming stage too — the drawn-path
+                pick fires at Done, and this overlay covers the pen column,
+                so the chip must be visible HERE for that ingest. */}
+            {smartPick?.result.pick && (
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <SmartPickChip pick={smartPick.result.pick} onUndo={undoSmartPick} />
+              </div>
+            )}
             <div style={{ maxWidth: 460, width: '100%', alignSelf: 'center', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <input
                 autoFocus
