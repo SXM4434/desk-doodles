@@ -482,3 +482,11 @@ Pre-fork foundation work (I-11..I-14 invariants, playground-native primitives in
 - Portfolio handoff archive (Hero-8-Lab era)
 - Git history of this repo (Day 5 fork commit onward)
 - `09-LOCKED-MODEL.md` in portfolio (the contract)
+
+### Sebs feedback round 2026-06-11 ~18:30 (screenshots) — QUEUE ELEVATIONS
+- **Endless paper FIXED by main thread** (oversized grain layer inside camera; pool marks workspace) — verified zoomed-out.
+- **Sandbox/Edit need the FULL toggle set** (more-toggles-better): extend the restyle column to the per-style full controls (MODIFIER_SETS_BY_STYLE-driven like the chrome). → next fleet rock (ObjectSurface).
+- **Create popup should be the mini-desk too**: canvas LEFT + full pen controls RIGHT (same shared pen state as the desk panel per D-7 — two surfaces, one pen). → next fleet rock (DrawPanel, after pen-desk rock lands).
+- **EDIT-BACK-IN (restyle) unlocks with render_config** (tonight's pen-desk rock) → then Edit popup gets the same control column writing to the object's config via update RPC. **FULL draw-edit needs source-stroke retention — ELEVATED from stretch to the 06-12 grid** (Sebs has asked repeatedly; strokes currently discarded at Done).
+- **Smart placement = Phase P in smart-system plan** (P-1 anti-cover landing rides next desk slice).
+- Session limit: ALL agent rocks dead until 9:10pm ET reset (credits don't lift the window). Resume command in the section above; fire on first message after reset + launch the round-2 rocks (sandbox-full-toggles · create-mini-desk · stroke-retention · P-1 placement).

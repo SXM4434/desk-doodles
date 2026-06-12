@@ -122,3 +122,7 @@ The §8.6 headline is *"an intelligent design system that picks the right transf
 | SD-6 | Naming-as-label export | (a) ship the export join script in-makeathon (small) · (b) post | **(a) if 06-16 has slack, else (b)** — it's a receipts artifact, not a feature. |
 
 **Next move when a smart-system session opens:** confirm SD-1..SD-6 → QW-5 reliability script (no locks needed) → Phase C smartPick build in DrawPanel.
+
+## Addendum 2026-06-11 — Phase P: SMART PLACEMENT (Sebs: "another part of the system and ML is smart placement")
+
+Overlapping doodles (which you can't move when they're not yours) are a PLACEMENT problem, and placement is a smart-system decision surface like any other: **signals (existing object bboxes + density map) → classify (crowded vs clear regions) → treatment (landing spot + allowable nudge) → render (the scatter)**. Slices: P-1 anti-cover landing (new doodles land in the largest clear region near the lamp pool center, never >X% overlapped — replaces blind scatter; this was the queued "anti-cover validator"); P-2 spread relax (when a desk crowds, placement radius widens — fixes the 120-object center ink-blob finding); P-3 (post-makeathon) learned placement from how people MOVE their doodles after placing (drag-corrections are labeled data — the decision log pattern again). P-1 rides the next desk slice; it needs no schema, just the bboxes already in memory.
