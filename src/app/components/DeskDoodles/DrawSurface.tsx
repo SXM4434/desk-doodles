@@ -4,6 +4,7 @@ import { IS } from '../../lib/typography';
 import { PILL, CTA } from '../../lib/chromeStyles';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 import { prepareSvgUpload } from '../../lib/svgUpload';
+import { COVERAGE_BANDS } from '../../lib/smart/coverage';
 
 // ─── DrawSurface — pointer-event freehand capture + SvgStyleTransform render ──
 // Extracted 2026-06-11 from DeskDoodlesCanvas.tsx (mechanical move, zero
@@ -106,6 +107,149 @@ export function strokeToPolylinePath(points: StrokePoint[]): string {
     (acc, [x, y], i) => acc + (i === 0 ? `M ${x.toFixed(2)} ${y.toFixed(2)}` : ` L ${x.toFixed(2)} ${y.toFixed(2)}`),
     '',
   );
+}
+
+// ─── TONE-FILL BRUSH (the SHADE register — round 7) ──────────────────────────
+// The explicit shading input (mark-intent spec §4: "the tone-fill brush is the
+// explicit register and ALWAYS beats inference" — D2-F). The user brushes TONE
+// in the discrete 8-band ladder (`coverage.ts` COVERAGE_BANDS — one band table,
+// every renderer). Storage per conversion-semantics-addendum ch.2.1:
+// `render_config.toneFills: Array<{ id, points (brushed outline, viewBox
+// coords), band }>` — a SIBLING of strokes, band INDEX not raw alpha, never
+// only-baked-into-the-svg (the record keeps the tone editable; the svg is
+// always regenerable from strokes + toneFills, same contract as strokes).
+
+export type ToneFill = {
+  id: string;
+  /** Brushed-outline polygon (closed), draw-frame viewBox coords (800×600
+   *  space — the same space strokes are captured in). */
+  points: [number, number][];
+  /** COVERAGE_BANDS index 1–7. Band 0 (paper) is the ABSENCE of tone — it is
+   *  the erase action, never a painted patch. */
+  band: number;
+};
+
+/** sRGB transfer function (linear → gamma-encoded channel value 0..1). */
+function srgbFromLinear(lin: number): number {
+  return lin <= 0.0031308 ? 12.92 * lin : 1.055 * Math.pow(lin, 1 / 2.4) - 0.055;
+}
+
+/** Flat band-grey per COVERAGE_BANDS index — derived from the band table, not
+ *  hardcoded, so a re-banding upstream re-derives the greys (one band table).
+ *  Inverse of the signals-layer darkness read: smartHachure/signals.ts
+ *  computes darknessL = 1 − OKLab L of the fill, and for pure greys OKLab
+ *  L ≈ cbrt(linearRGB) (the LMS matrix rows each sum to ~1.0, so greys pass
+ *  through unmixed). Solving for the band's darkness MIDPOINT:
+ *  lin = (1 − dMid)³ → grey = srgbFromLinear(lin). Round-trip verified:
+ *  every hex below re-quantizes to its own band via bandIndexForDarkness.
+ *  Index 0 is null — paper is absence, the brush never paints it. */
+export const TONE_BAND_HEX: readonly (string | null)[] = COVERAGE_BANDS.map((b, i) => {
+  if (i === 0) return null; // paper = erase, never painted
+  const dMid = (b.darknessMin + b.darknessMax) / 2;
+  const lin = Math.pow(1 - dMid, 3);
+  const g = Math.max(0, Math.min(255, Math.round(srgbFromLinear(lin) * 255)));
+  const h = g.toString(16).padStart(2, '0');
+  return `#${h}${h}${h}`;
+});
+
+// Brush sweep options — pressure-flat (a tone brush has no thinning; the
+// radius slider IS the width), deterministic for the same input points.
+const TONE_BRUSH_OPTS = {
+  thinning: 0,
+  smoothing: 0.5,
+  streamline: 0.5,
+  simulatePressure: false,
+  easing: (t: number) => t,
+};
+
+// Per-patch outline resolution cap — keeps the toneFills record small (the
+// outline is a soft region mask, not ink; 64 anchors hold the shape).
+const TONE_OUTLINE_MAX_PTS = 64;
+// Whole-record budget for render_config.toneFills (sibling of the ~45KB
+// strokes budget — tone is the smaller passenger by design).
+const TONE_FILLS_JSON_BUDGET = 24000;
+
+/** Sweep a brush centerline into the patch's closed outline polygon —
+ *  perfect-freehand with size = 2×radius (the capsule-swept "soft region").
+ *  Decimated to ≤ TONE_OUTLINE_MAX_PTS and rounded to 0.1px so the stored
+ *  geometry is compact and deterministic. */
+export function toneOutline(centerline: [number, number][], radius: number): [number, number][] {
+  if (centerline.length === 0) return [];
+  const swept = getStroke(
+    centerline.map(([x, y]) => [x, y, 0.5]),
+    { ...TONE_BRUSH_OPTS, size: Math.max(2, radius * 2) },
+  );
+  let pts = swept.map(
+    ([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as [number, number],
+  );
+  while (pts.length > TONE_OUTLINE_MAX_PTS) {
+    pts = pts.filter((_, i) => i % 2 === 0);
+  }
+  return pts;
+}
+
+/** Size-guard the toneFills record (mirror of capStrokes): round coords, then
+ *  halve outline density (floor 12 pts — the patch must stay a region) until
+ *  the JSON fits the budget. Never drops a patch — band statements are user
+ *  data; only their outline resolution softens. */
+export function capToneFills(raw: ToneFill[]): ToneFill[] {
+  let fills: ToneFill[] = raw.map((f) => ({
+    id: f.id,
+    band: f.band,
+    points: f.points.map(
+      ([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as [number, number],
+    ),
+  }));
+  while (JSON.stringify(fills).length > TONE_FILLS_JSON_BUDGET) {
+    const before = JSON.stringify(fills).length;
+    fills = fills.map((f) =>
+      f.points.length > 12 ? { ...f, points: f.points.filter((_, i) => i % 2 === 0) } : f,
+    );
+    if (JSON.stringify(fills).length >= before) break;
+  }
+  return fills;
+}
+
+/** Closed polygon d-string for a patch outline. */
+function tonePathD(points: [number, number][]): string {
+  return (
+    points.reduce(
+      (acc, [x, y], i) =>
+        acc + (i === 0 ? `M ${x.toFixed(2)} ${y.toFixed(2)}` : ` L ${x.toFixed(2)} ${y.toFixed(2)}`),
+      '',
+    ) + ' Z'
+  );
+}
+
+/** Stable paint order for patches: band ASCENDING (darker paints over
+ *  lighter), creation order within a band (Array.sort is stable). Flat per
+ *  band — overlap inside one band never compounds, so the render never mints
+ *  a band the user didn't brush (addendum ch.2.3 "never average"). */
+export function sortedToneFills(toneFills: ToneFill[]): ToneFill[] {
+  return [...toneFills].sort((a, b) => a.band - b.band);
+}
+
+/** Markup for the patches as they enter the STYLE PIPELINE: flat solid
+ *  band-grey fills, stroke="none" (mapPaletteColor passes 'none' through →
+ *  the smartHachure outline pass renders invisibly; only fill MARKS show),
+ *  each patch its own region. The pipeline's signals layer reads the grey →
+ *  darknessL → the classifier's tonal roles → fillStyle marks at band
+ *  density (coverage.ts math) — the I-2 wedge: brushed band 5 and inferred
+ *  band 5 are indistinguishable downstream. `data-tone-band` tags the patch
+ *  for downstream consumers (3D re-bind, audits) without re-deriving from
+ *  the grey. */
+function toneFillsMarkup(
+  toneFills: ToneFill[],
+  mapPt?: (pt: [number, number]) => [number, number],
+): string {
+  return sortedToneFills(toneFills)
+    .map((f) => {
+      const hex = TONE_BAND_HEX[f.band];
+      if (!hex || f.points.length < 3) return '';
+      const pts = mapPt ? f.points.map(mapPt) : f.points;
+      return `<path d="${tonePathD(pts)}" fill="${hex}" stroke="none" data-tone-band="${f.band}"/>`;
+    })
+    .join('');
 }
 
 // ─── UPLOAD BACKDROP (draw-over parity, ROUND 6) ──────────────────────────────

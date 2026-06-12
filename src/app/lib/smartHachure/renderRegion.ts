@@ -15,7 +15,14 @@
 import rough from 'roughjs';
 import type { Options as RoughOptions } from 'roughjs/bin/core';
 import type { Treatment } from './types';
-import { coverageToParams, paramsToCoverage, isCoverageFillStyle } from '../smart/coverage';
+import {
+  COVERAGE_BANDS,
+  bandIndexForDarkness,
+  coverageToParams,
+  darknessToCoverage,
+  paramsToCoverage,
+  isCoverageFillStyle,
+} from '../smart/coverage';
 
 // ─── PUBLIC ENTRY POINT ───────────────────────────────────────────────────
 
@@ -29,6 +36,17 @@ export type RenderContext = {
   baseSeed: number;
   /** Ink color for marks (resolved CSS color string). */
   inkColor: string;
+  /** Region's source darkness (the classifier's `darknessL` signal, 0 = paper
+   *  · 1 = ink). When present, density is RECALIBRATED from it: darkness →
+   *  Murray-Davies coverage → 8-band quantization → per-fillStyle inverse
+   *  (smart-system-build-plan Phase A row — THE visible change). Absent →
+   *  behavior-preserving round-trip of the treatment's own calibration. */
+  sourceDarkness?: number;
+  /** User hachureGap-slider bias ratio (slider ÷ its default 4). Multiplies
+   *  the darkness-solved gap so the slider stays live as bias-within-band
+   *  (I-3: all sliders stay; smart owns the center, the user owns the lean).
+   *  1 = neutral (default slider position). Only read by the darkness branch. */
+  gapBias?: number;
 };
 
 /**
@@ -67,7 +85,7 @@ function renderHachureFamily(
 
   // Density math routes through the shared coverage module (smart Phase A —
   // one math, two renderers). See resolveDensity below.
-  const density = resolveDensity(treatment);
+  const density = resolveDensity(treatment, ctx);
 
   // Build rough.js options from the treatment.
   // Map our biasMode → rough.js hachure angle variation:
@@ -102,6 +120,10 @@ function renderHachureFamily(
   // Apply treatment opacity at the group level — preserves per-stroke
   // alpha for downstream filters (texture grain, etc.)
   hachureGroup.setAttribute('opacity', String(treatment.opacity));
+  // Density receipts — the RENDERED numbers (post-recalibration), stamped
+  // here because resolveDensity is where truth lives now; index.ts stamps
+  // role/confidence provenance, never density.
+  stampDensity(hachureGroup, density);
 
   // If layerCount > 1, generate additional layers offset slightly so they
   // accumulate tonal density without overlapping perfectly.
@@ -127,33 +149,63 @@ function renderHachureFamily(
     if (layerGroup) {
       layerGroup.setAttribute('data-smart-hachure', `tonal-layer-${i}`);
       layerGroup.setAttribute('opacity', String(treatment.opacity));
+      stampDensity(layerGroup, density);
       out.push(layerGroup);
     }
   }
   return out;
 }
 
+/** Stamp the rendered density numbers for DevTools / harness receipts. */
+function stampDensity(
+  el: SVGElement,
+  density: { gap: number; weight: number; layers: number; band: number | null; coverage: number | null },
+): void {
+  el.setAttribute('data-smart-gap', density.gap.toFixed(2));
+  el.setAttribute('data-smart-weight', density.weight.toFixed(2));
+  el.setAttribute('data-smart-layers', String(density.layers));
+  if (density.band !== null) el.setAttribute('data-smart-band', String(density.band));
+  if (density.coverage !== null) el.setAttribute('data-smart-coverage', density.coverage.toFixed(3));
+}
+
 // ─── DENSITY RESOLUTION — ONE MATH, TWO RENDERERS (smart Phase A) ─────────
 //
-// The treatment's (gap, weight, layerCount) IS today's blessed calibration
-// (techniqueMap role table × user sliders). Phase A swaps this renderer's
-// density math to route through the shared coverage module
-// (`lib/smart/coverage.ts` — the same math + 8-band table that will drive
-// the M8 screen-space hatch shader uniforms): derive the treatment's implied
-// ink coverage with the forward model, then invert through coverageToParams
-// anchored on the same weight + layer count. The inverse is the exact
-// algebraic inverse of the forward model, so defaults stay byte-identical
-// (golden-gated per feedback_never_declare_fixed_without_regression_check);
-// the snap below only strips ≤1-ulp float-division residue.
+// RECALIBRATED (Phase A row, smart-system-build-plan — THE visible change):
+// when the render context carries the region's source darkness, density is
+// driven by it — NOT by the role table's legacy gap heuristics:
 //
-// RECALIBRATION — driving targetCoverage from source darkness
-// (darknessToCoverage + the 8-band quantization) instead of from the
-// treatment — is the later, visible-change step that Sebs eyeballs
-// separately. See docs/design/smart-system-build-plan.md Phase A row.
+//   darknessL ──bandIndexForDarkness──► band (0..7, Praun TAM cell)
+//   band midpoint darkness ──darknessToCoverage──► target ink coverage
+//        (Murray-Davies inverse — 21-research §4; quantized so every region
+//         inside one band renders IDENTICAL density: I-2's 8-level identity)
+//   target ──coverageToParams (per-fillStyle inverse, weight-anchored)──► gap
+//   layers = band's tamLayers column (cross-hatch keeps layerCount 1 —
+//        rough.js stacks its 2nd direction internally and renderHachureFamily
+//        never adds extra passes for it; the forward model already accounts)
+//
+// The user's sliders all stay live (I-3 bias-within-band):
+//   strokeWidth · fillDensity → the anchored weight (via techniqueMap)
+//   hachureGap → ctx.gapBias multiplies the solved gap (1 = neutral default)
+//   hachureAngle / fillOpacity / inkIntensity → angle + opacity, untouched
+//
+// Render policy (Agent 5 — same locked bounds techniqueMap enforces on its
+// own gap): solved gap clamps to [1.5, 12] px, weight caps at 0.7 × gap so
+// lines never merge to solid. Where the bounds bind, delivered coverage
+// honestly saturates — the bound is the locked perceptual contract.
+//
+// FALLBACK (no sourceDarkness in ctx — e.g. a direct renderRegion caller):
+// behavior-preserving round-trip of the treatment's own calibration through
+// the same module (forward → inverse, exact by construction; snapToAnchor
+// strips ≤1-ulp float residue and UNMASKS any larger disagreement).
+
+const POLICY_GAP_FLOOR = 1.5; // px — lines never optically blend (Agent 5)
+const POLICY_GAP_CAP = 12; // px — beyond this, lines read as strokes not tone
+const POLICY_WEIGHT_RATIO = 0.7; // weight ≤ 0.7 × gap — never merge to solid
 
 function resolveDensity(
   treatment: Treatment,
-): { gap: number; weight: number; layers: number } {
+  ctx: RenderContext,
+): { gap: number; weight: number; layers: number; band: number | null; coverage: number | null } {
   const { fillStyle } = treatment;
   // 'solid' has no density axes (coverage ≡ 1); degenerate gap/weight (≤ 0
   // or non-finite) can't carry coverage — pass both through untouched.
@@ -164,9 +216,41 @@ function resolveDensity(
     treatment.gap <= 0 ||
     treatment.weight <= 0
   ) {
-    return { gap: treatment.gap, weight: treatment.weight, layers: treatment.layerCount };
+    return {
+      gap: treatment.gap,
+      weight: treatment.weight,
+      layers: treatment.layerCount,
+      band: null,
+      coverage: null,
+    };
   }
 
+  // ── RECALIBRATION BRANCH — source darkness drives density ──
+  const d = ctx.sourceDarkness;
+  if (d !== undefined && Number.isFinite(d)) {
+    const band = bandIndexForDarkness(d);
+    const bandDef = COVERAGE_BANDS[band];
+    // Band midpoint = the quantized tone for every region in this band.
+    const dQuant = (bandDef.darknessMin + bandDef.darknessMax) / 2;
+    const targetCoverage = darknessToCoverage(dQuant);
+    const layers =
+      fillStyle === 'cross-hatch'
+        ? Math.max(1, treatment.layerCount)
+        : Math.max(1, bandDef.tamLayers || 1);
+    const solved = coverageToParams(targetCoverage, fillStyle, {
+      weight: treatment.weight,
+      layers,
+    });
+    const gapBias =
+      ctx.gapBias !== undefined && Number.isFinite(ctx.gapBias) && ctx.gapBias > 0
+        ? ctx.gapBias
+        : 1;
+    const gap = Math.max(POLICY_GAP_FLOOR, Math.min(POLICY_GAP_CAP, solved.gap * gapBias));
+    const weight = Math.min(solved.weight, gap * POLICY_WEIGHT_RATIO);
+    return { gap, weight, layers, band, coverage: targetCoverage };
+  }
+
+  // ── FALLBACK — behavior-preserving round-trip of the treatment ──
   const layers = Math.max(1, treatment.layerCount);
   const targetCoverage = paramsToCoverage(
     { gap: treatment.gap, weight: treatment.weight, layers },
@@ -180,6 +264,8 @@ function resolveDensity(
     gap: snapToAnchor(params.gap, treatment.gap),
     weight: snapToAnchor(params.weight, treatment.weight),
     layers: params.layers,
+    band: null,
+    coverage: targetCoverage,
   };
 }
 

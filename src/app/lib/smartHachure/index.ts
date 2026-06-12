@@ -30,6 +30,22 @@ import type {
 // improvements §7.1 QW-1) — write-only from the render path, read by the
 // audit harness. Zero behavior change: nothing in the pipeline reads it.
 
+/** G-10 provenance tag — WHICH surface produced a decision-log entry.
+ *  Without it, training exports mix canonical record renders with transient
+ *  desk-lens sweeps / pen previews → duplicate contradictory labels per
+ *  svgHash (docs/design/smart-system-gaps.md §G-10). `null` = host surface
+ *  not yet wired — export scripts must treat null as "exclude or triage",
+ *  never guess. */
+export type DecisionSurface = 'record' | 'desk-lens' | 'pen-preview' | 'sandbox' | 'audit';
+
+const DECISION_SURFACES: ReadonlySet<string> = new Set([
+  'record',
+  'desk-lens',
+  'pen-preview',
+  'sandbox',
+  'audit',
+]);
+
 export type DecisionLogEntry = {
   svgHash: string;
   regionPath: string;
@@ -42,6 +58,8 @@ export type DecisionLogEntry = {
   darknessL: number;
   area: number;
   fillStyle: Treatment['fillStyle'];
+  /** G-10: which surface this decision was rendered for (null = unwired host). */
+  surface: DecisionSurface | null;
 };
 
 // FIFO cap — a 681-pattern sweep × handful of regions stays well under this;
@@ -66,14 +84,65 @@ export function clearDecisionLog(): void {
   decisionLog.length = 0;
 }
 
+// ─── G-10 SURFACE TAG (ambient) ───────────────────────────────────────────
+//
+// Three ways a render acquires its surface tag, strongest first:
+//   1. `opts.surface` on the renderSmartHachure call (per-call, exact);
+//   2. a `data-dd-surface="…"` attribute on ANY DOM ancestor of the svg being
+//      rendered (per-instance — hosts tag their wrapper once and every render
+//      inside it, including interleaved popups, tags itself correctly);
+//   3. this module-level ambient tag via `setDecisionLogSurface` (coarse —
+//      single-surface pages and headless harnesses).
+// None present → entries carry `surface: null` (honest "unwired").
+//
+// HOST WIRING (additive, one line per surface — the G-10 retrofit):
+//   DeskPage desk container:   data-dd-surface={deskLensOn ? 'desk-lens' : 'record'}
+//   DrawPanel popup wrapper:   data-dd-surface="pen-preview"
+//   ObjectSurface (sandbox/edit popup): data-dd-surface="sandbox"
+//   /audit page root:          data-dd-surface="audit"
+
+let ambientSurfaceTag: DecisionSurface | null = null;
+
+/** Set the ambient surface tag for subsequent renders (null clears). */
+export function setDecisionLogSurface(surface: DecisionSurface | null): void {
+  ambientSurfaceTag = surface;
+}
+
+/** Current ambient surface tag (harness introspection). */
+export function getDecisionLogSurface(): DecisionSurface | null {
+  return ambientSurfaceTag;
+}
+
+/** Resolve the tag for one render: opts > DOM ancestor attr > ambient > null. */
+function resolveDecisionSurface(
+  svgRoot: SVGSVGElement,
+  optsSurface: DecisionSurface | undefined,
+): DecisionSurface | null {
+  if (optsSurface !== undefined) return optsSurface;
+  // `closest` walks the live ancestor chain; detached roots simply miss.
+  const tagged =
+    typeof svgRoot.closest === 'function' ? svgRoot.closest('[data-dd-surface]') : null;
+  const attr = tagged?.getAttribute('data-dd-surface') ?? null;
+  if (attr !== null && DECISION_SURFACES.has(attr)) return attr as DecisionSurface;
+  return ambientSurfaceTag;
+}
+
 // Harness access from DevTools / playwright — same window-flag idiom as
 // `__dd_diag` in SvgStyleTransform.tsx.
 if (typeof window !== 'undefined') {
   (
     window as {
-      __dd_decisionLog?: { get: () => DecisionLogEntry[]; clear: () => void };
+      __dd_decisionLog?: {
+        get: () => DecisionLogEntry[];
+        clear: () => void;
+        setSurface: (s: DecisionSurface | null) => void;
+      };
     }
-  ).__dd_decisionLog = { get: getDecisionLog, clear: clearDecisionLog };
+  ).__dd_decisionLog = {
+    get: getDecisionLog,
+    clear: clearDecisionLog,
+    setSurface: setDecisionLogSurface,
+  };
 }
 
 // ─── PUBLIC API ───────────────────────────────────────────────────────────
@@ -95,6 +164,10 @@ export type SmartHachureOpts = {
     classification: Classification,
     treatment: Treatment,
   ) => void;
+  /** G-10: per-call surface tag for decision-log entries. When absent, the
+   *  tag resolves from a `data-dd-surface` DOM ancestor, then the ambient
+   *  `setDecisionLogSurface` value, then null. */
+  surface?: DecisionSurface;
 };
 
 /**

@@ -94,8 +94,11 @@ export function ObjectCard({
     aspectRatio: '1 / 1',
     backgroundColor: 'var(--dir-bg)',
     backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
-    border: '1px solid var(--dir-border)',
-    borderRadius: 10,
+    // mini (drawer) cards: NO inner frame — a rounded box inside the card's
+    // own rounded frame read as a double-frame (Sebs: "rounded square in a
+    // regular square… no craft"). The art sits directly on the card paper.
+    border: mini ? 'none' : '1px solid var(--dir-border)',
+    borderRadius: mini ? 6 : 10,
     overflow: 'hidden',
     display: 'flex',
     alignItems: 'center',

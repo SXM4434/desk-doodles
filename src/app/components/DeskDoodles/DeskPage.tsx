@@ -638,6 +638,11 @@ export function DeskPage() {
   // delete SETTLES so the index refetches and tracks the records — a desk
   // delete disappears from the drawer, a Done / place-copy appears in it.
   const [drawerNonce, setDrawerNonce] = useState(0);
+  // A drawer card click opens the FULL detailed view (Edit surface) for that
+  // row — including rows living on OTHER desks (they aren't in `objects`, so
+  // they get their own surface slot; the one-surface rule still holds because
+  // opening this closes activeSurface and vice versa).
+  const [drawerRow, setDrawerRow] = useState<DoodleRow | null>(null);
   const bumpDrawer = useCallback(() => setDrawerNonce((n) => n + 1), []);
 
   // ── DOUBLE-PUBLISH GUARD (UX-audit fix 2) ────────────────────────────────
@@ -1840,6 +1845,10 @@ export function DeskPage() {
             refreshKey={drawerNonce}
             viewedDeskId={desk?.id ?? null}
             onPlace={placeFromDrawer}
+            onOpenDoodle={(row) => {
+              setActiveSurface(null); // one surface at a time
+              setDrawerRow(row);
+            }}
           />
         </CollapsiblePanel>
 
@@ -1903,9 +1912,11 @@ export function DeskPage() {
               willChange: 'transform',
             }}
           >
-            {/* The LAMP POOL + vignette stay camera-space, sized to the
-                working area — on an endless sheet, the light marks WHERE the
-                desk is (and the R2 pan leash keeps it reachable). */}
+            {/* The LAMP POOL + vignette — camera-space so the light marks the
+                working area, but FADED as you zoom out: at far zoom the pool's
+                hard ellipse edge + inset shadow read as a floating box (Sebs
+                2026-06-12 "wtf is this" at 25%). Light pools when you're at
+                the desk; leaning far back you just see endless paper. */}
             <div
               aria-hidden="true"
               style={{
@@ -1913,6 +1924,7 @@ export function DeskPage() {
                 inset: 0,
                 backgroundImage: `${WARM_POOL}, radial-gradient(ellipse at 50% 38%, transparent 48%, rgba(60,50,40,0.07) 100%)`,
                 boxShadow: 'inset 0 0 160px rgba(60,50,40,0.05)',
+                opacity: Math.max(0, Math.min(1, (camera.zoom - 0.35) / 0.45)),
                 pointerEvents: 'none',
               }}
             />
@@ -2131,6 +2143,63 @@ export function DeskPage() {
             />
           );
         })()}
+
+      {/* Drawer-card detailed view — full Edit surface for ANY of your rows,
+          including ones on other desks. Saves/deletes refresh the drawer. */}
+      {drawerRow && (
+        <ObjectSurface
+          mode="edit"
+          object={{
+            svgMarkup: sanitizeSvgMarkup(drawerRow.svg),
+            name: drawerRow.name ?? null,
+            why: drawerRow.why ?? null,
+            owner: 'you',
+            createdAt: drawerRow.created_at ?? null,
+            id: drawerRow.id,
+            renderConfig: drawerRow.render_config ?? null,
+          }}
+          onClose={() => setDrawerRow(null)}
+          onDelete={() => {
+            const id = drawerRow.id;
+            setDrawerRow(null);
+            // Remove from the visible desk too if it lives here (one record).
+            setObjects((prev) => prev.filter((o) => o.dbId !== id));
+            deleteDoodle(id)
+              .catch(() => {})
+              .finally(() => setDrawerNonce((n) => n + 1));
+          }}
+          onSave={(name, why) => {
+            updateDoodleMeta(drawerRow.id, name, why)
+              .catch(() => {})
+              .finally(() => setDrawerNonce((n) => n + 1));
+            setObjects((prev) =>
+              prev.map((o) => (o.dbId === drawerRow.id ? { ...o, name, why } : o)),
+            );
+          }}
+          onConfigSave={(config) => {
+            setObjects((prev) =>
+              prev.map((o) =>
+                o.dbId === drawerRow.id
+                  ? { ...o, renderConfig: parseRenderConfig(config) }
+                  : o,
+              ),
+            );
+            setDrawerNonce((n) => n + 1);
+          }}
+          onObjectUpdate={(svgMarkup, config) => {
+            setObjects((prev) =>
+              prev.map((o) =>
+                o.dbId === drawerRow.id
+                  ? { ...o, svgMarkup, renderConfig: parseRenderConfig(config) }
+                  : o,
+              ),
+            );
+            setDrawerNonce((n) => n + 1);
+          }}
+          rightInset={rightOpen ? 360 : 0}
+          leftInset={drawerOpen ? 300 : 0}
+        />
+      )}
     </div>
   );
 }

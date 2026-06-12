@@ -1,6 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { IS } from '../../lib/typography';
 import { PILL, SECTION_LABEL } from '../../lib/chromeStyles';
+
+// Hover-reveal for the per-card Place pill (Sebs: 8 identical pills = noise).
+// Drag is the primary path; the pill appears on hover/focus-within for the
+// keyboard + fallback path. Injected once, id-guarded.
+const DRAWER_CSS_ID = 'dd-drawer-style';
+function ensureDrawerCss() {
+  if (document.getElementById(DRAWER_CSS_ID)) return;
+  const el = document.createElement('style');
+  el.id = DRAWER_CSS_ID;
+  el.textContent = `
+.dd-drawer-card .dd-place-pill { opacity: 0; transition: opacity 0.15s; }
+.dd-drawer-card:hover .dd-place-pill,
+.dd-drawer-card:focus-within .dd-place-pill { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .dd-drawer-card .dd-place-pill { transition: none; } }
+`;
+  document.head.appendChild(el);
+}
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { listDesks, listMyDoodles, type DoodleRow } from '../../lib/publish';
 import { sanitizeSvgMarkup } from '../../lib/svgUpload';
@@ -80,6 +97,7 @@ export function DrawerPanel({
    *  Optional: while unwired, cards are draggable but not clickable. */
   onOpenDoodle?: (row: DoodleRow) => void;
 }) {
+  useEffect(() => { ensureDrawerCss(); }, []);
   const [state, setState] = useState<DrawerState>({ phase: 'loading' });
   // Manual retry for the error state — a passive index doesn't poll.
   const [retryNonce, setRetryNonce] = useState(0);
@@ -327,6 +345,7 @@ function DrawerCard({
 
   return (
     <div
+      className="dd-drawer-card"
       data-dd-drawer-card={row.id}
       draggable
       onDragStart={handleDragStart}
@@ -385,6 +404,7 @@ function DrawerCard({
         }}
         disabled={placed}
         title="Place a copy of this doodle on the current desk — the original stays put"
+        className="dd-place-pill"
         style={{
           ...PILL,
           alignSelf: 'flex-start',

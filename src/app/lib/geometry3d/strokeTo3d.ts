@@ -57,6 +57,10 @@ export interface RodGeometryResult {
 export interface ExtrudeGeometryResult {
   kind: 'extrude';
   geometry: THREE.ExtrudeGeometry;
+  /** Donut-parity holes cut into the slab (conversion-semantics D2-B —
+   *  nested drawn loops at odd containment depth become Shape.holes).
+   *  0 for the plain single-outline path. */
+  holesCut: number;
 }
 
 export interface InflateGeometryResult {
@@ -174,9 +178,19 @@ export const SOLID_MIN_LOOP_AREA = 2;
  *  drawn circle reads as a circle, not a 14-gon. */
 export const SOLID_RDP_EPSILON_CELLS = 0.6;
 
-/** Closed-stroke endpoint gap thresholds (plan §1.1 isClosedStroke). */
+/** Closed-stroke endpoint gap thresholds (plan §1.1 isClosedStroke). These
+ *  are the LOOSE bounds of the 3-state closure below — kept as the outer
+ *  edge of the solid family per the conversion-semantics RED-TEAM AMENDMENT. */
 export const CLOSE_GAP_PX = 24;
 export const CLOSE_GAP_BBOX_RATIO = 0.08;
+/** TIGHT closure bounds (conversion-semantics addendum §1.1, decision A-1):
+ *  gap < max(8px, 2.5% bbox diag) → unambiguously closed (the heart stays a
+ *  silent slab). Between tight and loose → 'treated-as-closed' (solid family
+ *  + honesty chip — Sebs's arrow repro lands here). Both are CALIBRATION
+ *  CONSTANTS (same standing as K_ZIGZAG in coverage.ts): sweep + chip-flip
+ *  corrections tune them before any freeze. */
+export const CLOSE_GAP_TIGHT_PX = 8;
+export const CLOSE_GAP_TIGHT_BBOX_RATIO = 0.025;
 
 /** Shoelace-area floor (world units²) below which a "closed" stroke is
  *  treated as degenerate (collinear scribble) and falls back to Rod.
@@ -226,10 +240,18 @@ export function rdpPoints<P extends StrokeInputPoint>(
 
 // ─── Closure detection + mode pick ───────────────────────────────────────────
 
-/** Closed iff the endpoint gap < max(24 viewBox px, 8% of the stroke's bbox
- *  diagonal). Drives the auto Rod/Extrude pick (plan §1.1). */
-export function isClosedStroke(points: StrokeInputPoint[]): boolean {
-  if (points.length < 3) return false;
+/** 3-state closure (conversion-semantics RED-TEAM AMENDMENT, ratified
+ *  2026-06-12 + addendum §1.1 — replaces the grabby boolean threshold that
+ *  was root cause #1 of the arrow-slab):
+ *    'closed'            gap < max(8px, 2.5% diag)  → solid family, silent
+ *    'treated-as-closed' gap ∈ [tight, max(24px, 8% diag)) → solid family,
+ *                        FLAGGED (the "Treated as closed" chip — rock 1
+ *                        renders it from ConversionReceipt.treatedAsClosed)
+ *    'open'              gap ≥ loose bound → rod */
+export type ClosureState = 'closed' | 'treated-as-closed' | 'open';
+
+export function closureStateOf(points: StrokeInputPoint[]): ClosureState {
+  if (points.length < 3) return 'open';
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -244,7 +266,18 @@ export function isClosedStroke(points: StrokeInputPoint[]): boolean {
   const [fx, fy] = points[0];
   const [lx, ly] = points[points.length - 1];
   const gap = Math.hypot(lx - fx, ly - fy);
-  return gap < Math.max(CLOSE_GAP_PX, diag * CLOSE_GAP_BBOX_RATIO);
+  if (gap < Math.max(CLOSE_GAP_TIGHT_PX, diag * CLOSE_GAP_TIGHT_BBOX_RATIO)) return 'closed';
+  if (gap < Math.max(CLOSE_GAP_PX, diag * CLOSE_GAP_BBOX_RATIO)) return 'treated-as-closed';
+  return 'open';
+}
+
+/** Closed iff the endpoint gap < max(24 viewBox px, 8% of the stroke's bbox
+ *  diagonal). Drives the auto Rod/Extrude pick (plan §1.1). UNCHANGED
+ *  SEMANTICS: the solid family = 'closed' ∪ 'treated-as-closed' — exactly the
+ *  old boolean, so every existing caller renders identically; the 3-state
+ *  split only adds the honesty flag. */
+export function isClosedStroke(points: StrokeInputPoint[]): boolean {
+  return closureStateOf(points) !== 'open';
 }
 
 /** Auto pick: closed → Extrude, open → Rod (§5b Phase-D auto-pick; the user
@@ -482,6 +515,35 @@ export const EXTRUDE_SMOOTH_MIN_ANCHORS = 9;
 const EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR = 8;
 const EXTRUDE_SMOOTH_MAX_SAMPLES = 256;
 
+/** Dedupe one closed loop + drop the duplicated closing point (THREE.Shape
+ *  closes implicitly). Returns null when degenerate (collinear / near-zero
+ *  area) — callers fall back honestly. */
+function dedupeClosedLoop(world: THREE.Vector3[]): THREE.Vector3[] | null {
+  const pts = dedupeConsecutive(world);
+  if (pts.length > 1 && pts[0].distanceToSquared(pts[pts.length - 1]) < 1e-12) pts.pop();
+  if (pts.length < 3 || Math.abs(shoelaceArea(pts)) < MIN_EXTRUDE_AREA) return null;
+  return pts;
+}
+
+/** 2D-parity outline dispatch on a deduped closed loop: ≤8 anchors =
+ *  polygonal intent (straight edges, sharp corners, untouched); 9+ anchors =
+ *  curve intent — sample a CLOSED centripetal Catmull-Rom through the anchors
+ *  so the outline is the same smooth family the 2D render shows. Shared by
+ *  the plain extrude AND the donut-parity holes so outer wall and hole rim
+ *  keep the same shape family. May throw on pathological input — callers run
+ *  it inside their honest-degradation try. */
+function smoothClosedOutline(pts: THREE.Vector3[]): THREE.Vector3[] {
+  if (pts.length < EXTRUDE_SMOOTH_MIN_ANCHORS) return pts;
+  const loop = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
+  const divisions = Math.min(
+    pts.length * EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR,
+    EXTRUDE_SMOOTH_MAX_SAMPLES,
+  );
+  const outline = loop.getPoints(divisions);
+  outline.pop(); // closed-curve sampling duplicates the start point
+  return outline;
+}
+
 /** Closed-stroke Extrude: THREE.Shape + ExtrudeGeometry (plan §1.1).
  *  Degenerate (collinear / near-zero area) inputs fall back to Rod
  *  PROACTIVELY; triangulation throws / NaN output fall back in the catch —
@@ -491,32 +553,37 @@ export function buildExtrudeGeometry(
   world: THREE.Vector3[],
   opts: { depth?: number; rodRadius?: number } = {},
 ): StrokeGeometryResult {
+  return buildExtrudeGeometryWithHoles(world, [], opts);
+}
+
+/** Extrude with donut-parity holes (conversion-semantics §4 hole row +
+ *  addendum §1.2 — the parity tree the Solid mode already proves, applied to
+ *  Extrude via THREE.Shape.holes). `holeWorlds` are nested drawn loops at odd
+ *  containment depth (the caller — convertStrokePool — runs the parity walk).
+ *  Degenerate holes are SKIPPED (logged via holesCut), never crash the slab;
+ *  a degenerate OUTER falls back to Rod exactly like the plain path. */
+export function buildExtrudeGeometryWithHoles(
+  world: THREE.Vector3[],
+  holeWorlds: THREE.Vector3[][],
+  opts: { depth?: number; rodRadius?: number } = {},
+): StrokeGeometryResult {
   const depth = opts.depth ?? EXTRUDE_DEPTH;
-  const pts = dedupeConsecutive(world);
-
-  // Drop an exactly-duplicated closing point; THREE.Shape closes implicitly.
-  if (pts.length > 1 && pts[0].distanceToSquared(pts[pts.length - 1]) < 1e-12) pts.pop();
-
-  if (pts.length < 3 || Math.abs(shoelaceArea(pts)) < MIN_EXTRUDE_AREA) {
+  const pts = dedupeClosedLoop(world);
+  if (!pts) {
     return buildRodGeometry(world, { radius: opts.rodRadius });
   }
 
   try {
-    // 9+ anchors = curve intent (2D dispatch parity): sample a CLOSED
-    // centripetal Catmull-Rom through the anchors so the outline is the same
-    // smooth family the 2D render shows. ≤8 anchors = polygonal intent —
-    // straight edges, sharp corners, untouched.
-    let outline = pts;
-    if (pts.length >= EXTRUDE_SMOOTH_MIN_ANCHORS) {
-      const loop = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
-      const divisions = Math.min(
-        pts.length * EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR,
-        EXTRUDE_SMOOTH_MAX_SAMPLES,
-      );
-      outline = loop.getPoints(divisions);
-      outline.pop(); // closed-curve sampling duplicates the start point
-    }
+    const outline = smoothClosedOutline(pts);
     const shape = new THREE.Shape(outline.map((v) => new THREE.Vector2(v.x, v.y)));
+    let holesCut = 0;
+    for (const holeWorld of holeWorlds) {
+      const holePts = dedupeClosedLoop(holeWorld);
+      if (!holePts) continue; // degenerate hole — skip, never crash
+      const holeOutline = smoothClosedOutline(holePts);
+      shape.holes.push(new THREE.Path(holeOutline.map((v) => new THREE.Vector2(v.x, v.y))));
+      holesCut++;
+    }
     const geometry = new THREE.ExtrudeGeometry(shape, {
       depth,
       bevelEnabled: true,
@@ -531,7 +598,7 @@ export function buildExtrudeGeometry(
       throw new Error('extrude produced non-finite positions');
     }
     geometry.translate(0, 0, -depth / 2);
-    return { kind: 'extrude', geometry };
+    return { kind: 'extrude', geometry, holesCut };
   } catch {
     return buildRodGeometry(world, { radius: opts.rodRadius, closed: true });
   }
@@ -973,8 +1040,10 @@ function chaikinClosed(loop: Array<[number, number]>): Array<[number, number]> {
   return out;
 }
 
-/** Even-odd ray-cast point-in-polygon ([x, y] loops, sample units). */
-function pointInLoop(x: number, y: number, loop: Array<[number, number]>): boolean {
+/** Even-odd ray-cast point-in-polygon ([x, y] loops, any consistent units).
+ *  Exported: the drawn-register conversion layer (convert.ts) runs the same
+ *  containment tests on drawn loop polygons. */
+export function pointInLoop(x: number, y: number, loop: Array<[number, number]>): boolean {
   let inside = false;
   for (let i = 0; i < loop.length; i++) {
     const [ax, ay] = loop[i];
@@ -982,6 +1051,23 @@ function pointInLoop(x: number, y: number, loop: Array<[number, number]>): boole
     if (ay > y !== by > y && x < ax + ((y - ay) / (by - ay)) * (bx - ax)) inside = !inside;
   }
   return inside;
+}
+
+/** Containment-depth walk — THE donut-parity machinery (even = outer mass,
+ *  odd = hole), generalized out of the Solid pipeline (conversion-semantics
+ *  addendum §1.2: "the containment-parity walk feeds every mode"). Each
+ *  loop's depth = how many OTHER loops contain its first point. Deterministic:
+ *  pure function of the loop arrays. Units don't matter as long as all loops
+ *  share them (grid samples for Solid, viewBox px for drawn-loop parity). */
+export function containmentDepths(loops: Array<Array<[number, number]>>): number[] {
+  return loops.map((loop, i) => {
+    const [x, y] = loop[0];
+    let d = 0;
+    for (let j = 0; j < loops.length; j++) {
+      if (j !== i && pointInLoop(x, y, loops[j])) d++;
+    }
+    return d;
+  });
 }
 
 /** Solid: rasterize ALL strokes into one binary grid (closed interiors
@@ -1013,53 +1099,9 @@ export function buildSolidGeometry(
   if (pool.length === 0) return fallback();
 
   try {
-    // ── Grid spec: pool bbox + margin so the border stays empty ──
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const s of pool) {
-      for (const p of s) {
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
-      }
-    }
-    const spanX = Math.max(maxX - minX, 1e-6);
-    const spanY = Math.max(maxY - minY, 1e-6);
-    const cell = Math.max(spanX, spanY) / resolution;
-    const margin = inkRadius + 2 * cell;
-    const originX = minX - margin;
-    const originY = minY - margin;
-    const w = Math.ceil((spanX + 2 * margin) / cell) + 1;
-    const h = Math.ceil((spanY + 2 * margin) / cell) + 1;
-    const grid = new Uint8Array(w * h);
-
-    // ── Rasterize: closed interiors (scanline) + ink bodies (stamp) ──
-    for (let i = 0; i < pool.length; i++) {
-      const closed = opts.closedFlags?.[i] ?? isClosedWorldLoop(pool[i]);
-      if (closed) scanlineFillPolygon(grid, w, h, originX, originY, cell, pool[i]);
-      stampInkBody(grid, w, h, originX, originY, cell, pool[i], inkRadius);
-    }
-
-    // ── Contours → classify → simplify → shapes ──
-    const rawLoops = marchingSquaresLoops(grid, w, h).filter(
-      (l) => loopArea(l) >= SOLID_MIN_LOOP_AREA,
-    );
-    if (rawLoops.length === 0) return fallback();
-
-    // Containment depth: even = outer contour, odd = hole of its innermost
-    // even-depth container. Loop points never coincide across loops (each
-    // boundary midpoint has degree exactly 2), so the ray-cast is safe.
-    const depths = rawLoops.map((loop, i) => {
-      const [x, y] = loop[0];
-      let d = 0;
-      for (let j = 0; j < rawLoops.length; j++) {
-        if (j !== i && pointInLoop(x, y, rawLoops[j])) d++;
-      }
-      return d;
-    });
+    const raster = rasterizePoolLoops(pool, inkRadius, resolution, opts.closedFlags);
+    if (!raster) return fallback();
+    const { rawLoops, depths, originX, originY, cell } = raster;
 
     const simplify = (loop: Array<[number, number]>): THREE.Vector2[] => {
       const open = [...loop, loop[0]] as Array<[number, number]>;

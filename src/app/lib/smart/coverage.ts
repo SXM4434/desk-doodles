@@ -280,14 +280,25 @@ export function paramsToCoverage(
 
 // ─── PUBLIC INVERSE — THE PHASE A FUNCTION ────────────────────────────────
 
-// Below this coverage, the region is paper — no marks at all.
+// Solve floor. A target coverage of EXACTLY zero is the paper register (no
+// marks); any nonzero target — however small — solves at or above this floor
+// so marks get sparse, never silently vanish (verifier-flagged latent: dots
+// treatments whose forward coverage dipped under the old "< MIN → zero
+// params" early-return rendered fillWeight 0 → invisible dots. Mark grammars
+// degrade to sparse, they don't disappear — D-3's never-skip law applied to
+// density math).
 const MIN_COVERAGE = 1e-4;
 // Above this, the inverse would push gap → weight (lines merging to solid);
 // clamp so outputs stay bounded. The perceptual "lines never merge" cap
-// (weight ≤ 0.7 × gap, Agent 5) stays in techniqueMap — render policy, not
-// math. 0.999 sits ABOVE the largest coverage any cap-respecting treatment
-// can produce (zigzag at w = 0.7g → a₁ = √2 × 0.7 ≈ 0.98995), so the
-// behavior-preserving round-trip in renderRegion is never clamp-distorted.
+// (weight ≤ 0.7 × gap, Agent 5) stays in techniqueMap/renderRegion — render
+// policy, not math. 0.999 sits ABOVE the largest SINGLE-LAYER coverage any
+// cap-respecting treatment can produce (zigzag at w = 0.7g → a₁ = √2 × 0.7
+// ≈ 0.98995). The clamp is applied in PER-LAYER space (after de-stacking) —
+// clamping the stacked total would distort the round-trip at layers ≥ 2
+// (verifier-flagged latent: zigzag at the 0.7 cap × 2 layers stacks to
+// ≈ 0.9999 total; the old total-space clamp pulled it to 0.999 and the
+// de-stack then solved a ~2% wrong gap. Per-layer clamping keeps the
+// round-trip exact for every cap-respecting treatment at ANY layer count).
 const MAX_COVERAGE = 0.999;
 // Anchor weight when the caller provides no bias (1 px nominal pen line).
 const DEFAULT_WEIGHT_PX = 1;
@@ -310,8 +321,11 @@ const DEFAULT_WEIGHT_PX = 1;
  *     band table instead, a layer jump at a band edge legitimately re-widens
  *     gap — each pass gets sparser while TOTAL coverage stays on target);
  *   - weight likewise strictly increasing when gap-anchored;
- *   - exact round-trip: paramsToCoverage(coverageToParams(a, s), s) ≡ a
- *     for a ∈ [MIN_COVERAGE, MAX_COVERAGE].
+ *   - exact round-trip: paramsToCoverage(coverageToParams(a, s, bias), s) ≡ a
+ *     whenever the de-stacked per-layer coverage lands in
+ *     [MIN_COVERAGE, MAX_COVERAGE] — at any layer count (per-layer clamp);
+ *   - marks never vanish for a nonzero target: 0 < a < MIN_COVERAGE solves
+ *     AT the floor (sparse marks) instead of returning the paper sentinel.
  */
 export function coverageToParams(
   targetCoverage: number,
@@ -321,15 +335,17 @@ export function coverageToParams(
   const aRaw = clamp01(targetCoverage);
   const band = bandIndexForCoverage(aRaw);
 
-  // Paper register — no marks.
-  if (aRaw < MIN_COVERAGE) {
+  // Paper register — exactly zero coverage means no marks. (Nonzero-but-tiny
+  // targets fall through and solve at the MIN_COVERAGE floor — see note.)
+  if (aRaw <= 0) {
     return { gap: 0, weight: 0, layers: 0, band };
   }
 
-  const a = Math.min(aRaw, MAX_COVERAGE);
+  const a = Math.max(aRaw, MIN_COVERAGE);
   const layers = Math.max(1, Math.floor(bias?.layers ?? (COVERAGE_BANDS[band].tamLayers || 1)));
   // De-stack: per-layer coverage that compounds to the target across L passes.
-  const aL = layers === 1 ? a : 1 - Math.pow(1 - a, 1 / layers);
+  // MAX clamp happens HERE, in per-layer space — see the MAX_COVERAGE note.
+  const aL = Math.min(layers === 1 ? a : 1 - Math.pow(1 - a, 1 / layers), MAX_COVERAGE);
   const density = bias?.density ?? 1;
 
   if (bias?.gap !== undefined && bias.weight === undefined) {
