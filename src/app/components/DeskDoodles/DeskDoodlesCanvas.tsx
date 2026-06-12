@@ -1,7 +1,14 @@
 import { useState } from 'react';
+import type { CSSProperties } from 'react';
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
 import { PILL, CTA, SECTION_LABEL } from '../../lib/chromeStyles';
+
+// CTA mixes PILL's `border` shorthand with a `borderColor` longhand — React
+// dev warns when such conflicting styles diff across renders. Collapse to a
+// single shorthand at this call site (chromeStyles is shared, owned elsewhere).
+const { borderColor: _ctaBorderColor, ...CTA_REST } = CTA;
+const CTA_PILL: CSSProperties = { ...CTA_REST, border: `1px solid ${String(_ctaBorderColor)}` };
 import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
 import {
   CollapsiblePanel,
@@ -112,7 +119,7 @@ export function DeskDoodlesCanvas() {
             disabled
             title="Publishing lives on /desk — this page is the test surface"
             style={{
-              ...CTA,
+              ...CTA_PILL,
               cursor: 'not-allowed',
               opacity: 0.5,
             }}
@@ -166,7 +173,9 @@ export function DeskDoodlesCanvas() {
                     padding: '10px 14px',
                     background: input === key ? 'var(--dir-bg)' : 'transparent',
                     color: 'var(--dir-text-primary)',
-                    borderColor: input === key ? 'var(--dir-accent)' : 'var(--dir-border)',
+                    // Full shorthand (not borderColor) so the selected-state
+                    // swap never mixes shorthand + longhand (React dev warning).
+                    border: input === key ? '1px solid var(--dir-accent)' : '1px solid var(--dir-border)',
                   }}
                 >
                   {label}
@@ -189,8 +198,7 @@ export function DeskDoodlesCanvas() {
                 lineHeight: 1.5,
               }}
             >
-              Style picker + Smart Hachure controls wire in Day 7. Engine is already in repo
-              (lib/smartHachure/, lib/f3HandFeel.ts).
+              Style + Smart Hachure controls live in the Controls panel on the right.
             </p>
           </section>
         </CollapsiblePanel>

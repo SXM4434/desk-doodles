@@ -60,6 +60,33 @@ const FRAME_PILL = {
   background: 'var(--dir-bg)',
 };
 
+// CTA mixes PILL's `border` shorthand with a `borderColor` longhand — React
+// dev warns when such conflicting styles diff across renders (the Done↔Edit
+// button swap reuses the same DOM node, so the diff is live here). Collapse
+// to a single shorthand at this call site (chromeStyles is shared, owned
+// elsewhere).
+const { borderColor: _ctaBorderColor, ...CTA_REST } = CTA;
+const CTA_PILL = { ...CTA_REST, border: `1px solid ${String(_ctaBorderColor)}` };
+
+// Shared copy block for the honesty gates (3D mode + image upload) — an
+// opaque cover over the live 2D surface so a not-yet-real mode never shows
+// dead-looking controls. State underneath stays intact.
+const GATE_STYLE = {
+  position: 'absolute' as const,
+  inset: 0,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  background: 'var(--dir-bg)',
+  fontFamily: IS,
+  fontSize: 11,
+  color: 'var(--dir-text-secondary)',
+  letterSpacing: '0.04em',
+  textAlign: 'center' as const,
+};
+
 export function DrawSurface({
   mode,
   input,
@@ -309,8 +336,9 @@ export function DrawSurface({
           />
         )}
       </svg>
-      {/* Empty-state hint — DRAW mode: prompt to draw. UPLOAD mode: prompt to pick file. */}
-      {((!isUpload && allStrokes.length === 0) || (isUpload && !uploadedSvg)) && (
+      {/* Empty-state hint — DRAW mode: prompt to draw. UPLOAD-SVG mode: prompt
+          to pick a file. Upload-image is covered by its honesty gate below. */}
+      {((input === 'draw' && allStrokes.length === 0) || (isUpload && !uploadedSvg)) && (
         <div
           style={{
             position: 'absolute',
@@ -337,8 +365,10 @@ export function DrawSurface({
                   padding: '10px 22px',
                   background: 'var(--dir-bg)',
                   // Heavier primary-ink border is the empty-state affordance —
-                  // this is THE action in an otherwise blank frame.
-                  borderColor: 'var(--dir-text-primary)',
+                  // this is THE action in an otherwise blank frame. Full
+                  // shorthand, never borderColor over PILL's shorthand
+                  // (React dev warns on shorthand/longhand style conflicts).
+                  border: '1px solid var(--dir-text-primary)',
                 }}
               >
                 Pick an .svg file
@@ -350,7 +380,7 @@ export function DrawSurface({
               )}
             </>
           ) : (
-            <>Draw on the canvas · mode = {mode === 'svg' ? '2D' : '3D'} · input = {input}</>
+            <>Draw on the canvas</>
           )}
         </div>
       )}
@@ -372,7 +402,7 @@ export function DrawSurface({
             <button
               onClick={commitDrawing}
               style={{
-                ...CTA,
+                ...CTA_PILL,
                 padding: '6px 16px',
                 fontSize: 10,
                 letterSpacing: '0.06em',
@@ -424,29 +454,27 @@ export function DrawSurface({
           </button>
         </div>
       )}
+      {/* IMAGE-UPLOAD HONESTY GATE — same treatment as the 3D gate: an opaque
+          cover instead of a dead canvas (no file picker, no inert controls).
+          The autotrace path (stretch S1) is what makes image→object real;
+          until then SVG upload is the working route. State underneath stays
+          intact; switching input restores it. */}
+      {input === 'upload-image' && (
+        <div style={GATE_STYLE}>
+          <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>
+            Image upload lands later this week
+          </span>
+          <span>SVG upload works today — switch input to Upload SVG.</span>
+        </div>
+      )}
       {/* 3D HONESTY GATE — opaque placeholder covers the live 2D surface so the
           toggle doesn't lie. Strokes/upload state stay intact underneath; flipping
-          back to 2D restores everything. Real 3D (Rod + Extrude) lands Day 11. */}
+          back to 2D restores everything. Rendered LAST so it wins over the
+          image-upload gate if both apply. */}
       {mode === '3d' && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 8,
-            background: 'var(--dir-bg)',
-            fontFamily: IS,
-            fontSize: 11,
-            color: 'var(--dir-text-secondary)',
-            letterSpacing: '0.04em',
-            textAlign: 'center',
-          }}
-        >
-          <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>3D mode lands Day 11</span>
-          <span>Rod &amp; Extrude geometry built from your strokes — coming 06-12.</span>
+        <div style={GATE_STYLE}>
+          <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>3D mode is being wired</span>
+          <span>Rod &amp; Extrude geometry built from your strokes — landing soon.</span>
         </div>
       )}
     </div>

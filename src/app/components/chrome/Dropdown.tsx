@@ -8,6 +8,31 @@ import { IS } from '../../lib/typography';
 // headers, current-value marker. Inline popover (not modal) since this
 // is a toolbar control, not a ⌘K palette.
 
+// ─── Trigger focus ring (keyboard only) ──────────────────────────────────────
+// Inline styles can't express :focus-visible, so the trigger's focus treatment
+// lives in ONE injected stylesheet (id-guarded — many Dropdown instances share
+// it). :focus-visible only matches keyboard/AT focus, so mouse clicks never
+// show a ring; the plain :focus rule keeps the old no-ring look for pointer
+// focus. Ring is token-based (accent ink over paper) and follows the pill's
+// border-radius via outline-offset.
+const TRIGGER_FOCUS_CLASS = 'dd-dropdown-trigger';
+const TRIGGER_FOCUS_STYLE_ID = 'dd-dropdown-trigger-focus-style';
+const TRIGGER_FOCUS_CSS = `
+.${TRIGGER_FOCUS_CLASS}:focus { outline: none; }
+.${TRIGGER_FOCUS_CLASS}:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dir-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+`;
+
+function ensureTriggerFocusStyle() {
+  if (document.getElementById(TRIGGER_FOCUS_STYLE_ID)) return;
+  const el = document.createElement('style');
+  el.id = TRIGGER_FOCUS_STYLE_ID;
+  el.textContent = TRIGGER_FOCUS_CSS;
+  document.head.appendChild(el);
+}
+
 export type DropdownOption = {
   value: string;
   label: string;
@@ -96,6 +121,11 @@ export function Dropdown({
       ? active.label
       : (placeholder ?? '—');
 
+  // One shared stylesheet for the keyboard focus ring (see top of file).
+  useEffect(() => {
+    ensureTriggerFocusStyle();
+  }, []);
+
   useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
@@ -103,13 +133,22 @@ export function Dropdown({
       if (!rootRef.current.contains(e.target as Node)) setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key !== 'Escape') return;
+      // ESCAPE LAYERING: when the popover is open, Escape closes ONLY the
+      // popover — the top layer. Host modals (DrawPanel / ObjectSurface) close
+      // on bubble-phase window keydown, so this listener runs in the CAPTURE
+      // phase on document (fires first regardless of registration order) and
+      // stops propagation so the event never reaches the modal. One press,
+      // one layer; the next press reaches the modal because this listener is
+      // only attached while the popover is open.
+      e.stopPropagation();
+      setOpen(false);
     }
     document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     return () => {
       document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
     };
   }, [open]);
 
@@ -139,6 +178,7 @@ export function Dropdown({
       </span>
       <button
         type="button"
+        className={TRIGGER_FOCUS_CLASS}
         onClick={toggleOpen}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -149,12 +189,16 @@ export function Dropdown({
           fontWeight: 500,
           color: 'var(--dir-text-primary)',
           backgroundColor: 'var(--dir-bg)',
+          // Single border shorthand — never mix with borderColor longhand
+          // (React dev warns on shorthand/longhand style conflicts). The
+          // hover handlers below set the full shorthand for the same reason.
           border: '1px solid var(--dir-border)',
           borderRadius: 999,
           padding: '10px 36px 10px 16px',
           cursor: 'pointer',
           appearance: 'none',
-          outline: 'none',
+          // No inline outline:none — focus treatment lives in the injected
+          // .dd-dropdown-trigger rules (keyboard :focus-visible ring only).
           lineHeight: 1.4,
           textAlign: 'left',
           width: '100%',
@@ -163,8 +207,8 @@ export function Dropdown({
           textOverflow: 'ellipsis',
           transition: 'border-color 0.15s, background 0.15s',
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--dir-text-secondary)')}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--dir-border)')}
+        onMouseEnter={(e) => (e.currentTarget.style.border = '1px solid var(--dir-text-secondary)')}
+        onMouseLeave={(e) => (e.currentTarget.style.border = '1px solid var(--dir-border)')}
       >
         {triggerText}
         {/* Chevron in its own span: icon ink is text-secondary (the trigger
