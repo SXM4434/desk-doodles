@@ -146,14 +146,23 @@ export function PanelToggle({
   onToggle: () => void;
   controlsId?: string;
 }) {
-  const text =
-    side === 'left'
-      ? open
-        ? `◀ ${label}`
-        : `${label} ▶`
-      : open
-        ? `${label} ▶`
-        : `◀ ${label}`;
+  // Stroked chevron — the SAME mark grammar as the Dropdown chevron (one
+  // chevron family app-wide; the old filled ▶/◀ text triangles read as a
+  // different, heavier species). Points toward the edge the panel collapses
+  // into; flips when collapsed.
+  const pointsLeft = side === 'left' ? open : !open;
+  const chevron = (
+    <svg width="6" height="10" viewBox="0 0 6 10" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path
+        d={pointsLeft ? 'M5 1L1 5l4 4' : 'M1 1l4 4-4 4'}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
   const isMac =
     typeof navigator !== 'undefined' &&
     navigator.platform.toUpperCase().includes('MAC');
@@ -165,9 +174,11 @@ export function PanelToggle({
       aria-expanded={open}
       aria-controls={controlsId}
       title={`${open ? 'Hide' : 'Show'} ${label} panel (${shortcut})`}
-      style={TOGGLE}
+      style={{ ...TOGGLE, display: 'inline-flex', alignItems: 'center', gap: 7 }}
     >
-      {text}
+      {pointsLeft && chevron}
+      {label}
+      {!pointsLeft && chevron}
     </button>
   );
 }
