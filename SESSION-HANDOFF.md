@@ -6,6 +6,14 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 ---
 
+### ROUND 7 SPEC ADDITIONS (Sebs 2026-06-12 ~11:56, from 3D testing screenshots — ALL ratified direction)
+- 3D CHROME SPLIT (locked rule: separate Style dropdowns per renderer): in 3D mode the right panel shows 3D controls ONLY — 3D STYLE dropdown (Native / Hatch / SVG-port) + per-geometry param sets. The 2D SVG chrome appears ONLY under the SVG-port style (it then drives the ported treatment). Today the 2D panel shows in 3D doing nothing = reads broken.
+- PER-MODE FULL PARAM TOGGLES (never trim): Rod (radius/caps/joint blobs), Extrude (width/depth — PORT free-stroke's tuned param+perceptual-slider system), Inflate (base/tip radius, pressure influence — constants exported), Solid (ink radius/fill). 
+- SVG-PORT style option = the M8 port (not built; round 7).
+- TONE-FILL/SHADE-BRUSH input (the fill stuff — fell off the grid, Sebs asked): second draw register brushing discrete darkness levels; feeds source-darkness -> all renderers. Round 7.
+- Desk 3D = lens + shared Hatch + auto geometry; hatch uniforms from the Shading sliders (uses coverage.ts bands — one math two renderers).
+- ROUND 8 NOTE (Sebs): hard path (AI mesh) becomes the DEFAULT 3D when available; local geometry modes stay as options + fallback ladder.
+
 ### QUEUED ROUND 6 — HEADER CRAFT PASS (Sebs 2026-06-12 ~11:43: "chrome lacking proper spacing and alignment, doesn't scream craft and care")
 DeskPage header relayout spec: ONE baseline for wordmark / desk name / count (currently three ad-hoc baselines); consistent 12px gap rhythm inside clusters + 20px between clusters; the zoom cluster (- % + FIT) groups as ONE visual unit (shared bounding treatment or tighter internal gaps); Pen|Desk caption ("styling your next doodle") aligns under its pills, never floats; LIVE chip vertically centers with the pill row; DRAWER toggle sits with the identity cluster (wordmark side) with breathing room. Chevron-grammar fix DONE (committed). Files: DeskPage (wave-5 owns; fire after).
 
@@ -16,15 +24,23 @@ DeskPage header relayout spec: ONE baseline for wordmark / desk name / count (cu
 4. CLICK-TO-OPEN: drawer card click opens the SAME Edit ObjectSurface (one surface everywhere; drawer cards are always yours).
 Files: DrawerPanel + DeskPage (wave-5 rock A owns them; fire after it lands).
 
-### QUEUED ROUND 6 — UPLOAD PARITY (Sebs 2026-06-12 ~11:33 + screenshot): uploads get the draw-mode experience
-- Upload pane today: raw unstyled preview, dead space, no Sketch|Style, untouchable. FIX: (a) Sketch|Style pills work on uploads (Style = upload rendered through the pen via SvgStyleTransform, live); (b) DRAW-OVER: upload as backdrop layer + normal pen strokes on top, Done merges into one object (added strokes recorded -> Re-draw reopens them over the backdrop); (c) STRETCH, honest: convert stroke-like upload paths into editable pen strokes (the path sampler exists); complex fills fall back to backdrop mode, never pretend. (d) layout: preview fills the pane like draw mode.
-- Files: DrawPanel/DrawSurface (wave-5 smart-pick owns DrawPanel; fire after).
+### ROCK B LANDED 2026-06-12 — CREATE-SURFACE BATCH (DrawPanel + DrawSurface only; tsc+build clean; every flow playwright-driven + screenshots READ)
+1. **STYLED NAMING PREVIEW** ✓ — minting card renders staged art through nested F3 providers + StagedRenderScope (local mirror of ObjectSurface SurfaceRenderScope — not exported there) + SvgStyleTransform under the live pen. Verified: rough-handdrawn doubled ink in the well, never raw 3px hairlines; works for drawn, plain-upload AND merged draw-over staging.
+2. **ESCAPE = ONE LAYER / SCRIM SAFETY** ✓ — naming→Back (strokes intact); compose+strokes → first Esc ARMS visible footer confirm ("press Esc again…", 3s disarm), second closes; compose empty → close; scrim-click w/ strokes = arms (non-destructive), staged = no-op, empty = close. All verified incl. true-scrim coordinates.
+3. **SIZE-CAP HONESTY** ✓ — Place measures normalizeSvgSize(staged,180).length vs 65536 (the publish_to_open_desk/harden cap); over-cap → honest accent note (~NNKB) + popup STAYS + **real "Shrink to fit" pill** (point decimation on a copy; live strokes keep full fidelity) + receipt; exhausted/no-stroke variants honest. NOTE: copy says shrink-to-fit NOT "Simplify" — the Simplify slider is render-time only and does NOT shrink the stored svg (the suggested copy would've been a false claim).
+4. **UPLOAD PARITY** ✓ (a) Sketch|Style pills shared with uploads — Style renders upload through the pen live; (b) DRAW-OVER: upload letterboxes into the 800×600 frame as backdrop, strokes on top; Done merges via **inverse-mapping strokes into the upload's local coords, flat, NO transforms** — a `<g transform>` merge rendered tiny/broken through smartHachure (row-9 getCTM flatten deferred — caught by screenshot, fixed); (d) preview fills the pane; un-embeddable files (no viewBox/size) get an honest no-draw-over fallback. Input switching never destroys strokes (DrawSurface stays mounted; upload states are opaque covers). **(c) STRETCH path-to-stroke conversion NOT built** — sampler lives in SvgStyleTransform (other rock's file) + needs imperative stroke injection; queued.
+   - **MERGED OBJECTS RECORD NO STROKES (deliberate):** ObjectSurface Re-draw Done rebuilds svg from strokes ALONE → would destroy the upload half. Until Re-draw is backdrop-aware (ObjectSurface rock), merged objects take the honest legacy note instead of a data-loss path. Flip: record capStrokes in DrawPanel handleDone upload branch once safe.
+5. **NARROW-VIEWPORT CLAMP** ✓ — DrawPanel scrim paddingRight/Left clamp ≥640px popup floor (ObjectSurface pattern); verified 1440/1100/900px. `leftInset` prop interface landed (cross-rock with DeskPage).
+- Sanctioned live cycle done: published "rock-b verify" → Edit → Delete via UI, desk back to baseline. /canvas + plain-upload regressions screenshot-verified clean.
 
 ### UX-AUDIT FIX BATCH (fires with the mega-sweep when wave-5 frees DeskPage/DrawPanel)
 1. LEGACY-ROW FREEZE (DeskPage): null render_config rows pin to a DEFAULT snapshot at load, so Pen-scope slider moves stop restyling the (mostly-legacy) live desk — makes the Pen|Desk pill legible (D-7 contradiction found by audit). Optional later: one-time backfill SQL.
-2. NAMING-STAGE STYLED PREVIEW (DrawPanel): the minting card currently shows RAW 3px polylines — wrap staged art in the nested-provider + SvgStyleTransform scope (pattern at ObjectSurface ~758) so the ceremony shows the doodle the user actually styled.
-3. ESCAPE/SCRIM SAFETY (DrawPanel): Escape during naming = Back (not destroy); scrim-click with strokes present = non-destructive. Also consider collapsing the desk panel while the popup is open (audit: two identical pen columns on screen; the familiar one is a discard trap).
+2. ~~NAMING-STAGE STYLED PREVIEW (DrawPanel)~~ DONE by rock B (see ROCK B LANDED above).
+3. ~~ESCAPE/SCRIM SAFETY (DrawPanel)~~ DONE by rock B. STILL OPEN from this item: consider collapsing the desk panel while the popup is open (audit: two identical pen columns on screen; the familiar one is a discard trap).
 DONE ALREADY: in-flight stroke full-ink (37c73cc) - honest save-note copy - re-draw persistence (v5 pasted + RPC-verified live).
+
+### QUEUED: FULL-CATALOG 3D SWEEP (Sebs 2026-06-12: "we have a lot of objects, using ALL of them would be good")
+The round-6 3D rock builds the harness + sweeps >=40 representative shapes. The moment it lands, fire the FULL run: ALL 197 catalog shapes x 5 geometry modes (985 renders) through its harness, per-item table, auto-flags (empty/blob/NaN), contact sheets read. Also queued: 3d-mode-controls-spec.md (research in flight) feeds round 7's per-mode toggle build; test-gap audit report -> next sweep priorities.
 
 ### QUEUED: MEGA IMAGE-SWEEP (Sebs 2026-06-12 — fire the MOMENT wave-5 lands)
 Debug + edge testing, IMAGE-CHECKING heavy (every claim = screenshot READ): all 5 geometry pills visually distinct at 2+ orbit angles · 2D↔3D flip integrity · Sketch|Style at every stage · drawer copy round-trips · smart-pick chips · regression baselines for desk/popup/gallery. v4+v5 PASTED + RPC-verified (strokes survive). SVG→3D style-port toggle = M8, not built — sweep establishes its baselines.

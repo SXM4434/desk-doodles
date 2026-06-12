@@ -474,6 +474,7 @@ export function ObjectSurface({
   onSave,
   onConfigSave,
   rightInset = 0,
+  leftInset = 0,
 }: {
   mode: ObjectSurfaceMode;
   object: ObjectSurfaceData;
@@ -494,6 +495,10 @@ export function ObjectSurface({
    *  much padding on the right so the modal centers over the DESK working area,
    *  not behind the open panel. 0 (default) = center over the raw viewport. */
   rightInset?: number;
+  /** px width of the desk's open LEFT drawer — rightInset's mirror (UX-audit
+   *  fix 4): the scrim reserves the drawer's width on the left so the modal
+   *  centers over the VISIBLE desk. Same narrow-viewport clamp. Default 0. */
+  leftInset?: number;
 }) {
   const isSandbox = mode === 'sandbox';
   // Local editable copy of name/why for Edit mode.
@@ -725,6 +730,12 @@ export function ObjectSurface({
     paddingRight:
       rightInset > 0
         ? `max(32px, min(${32 + rightInset}px, calc(100vw - 384px)))`
+        : 32,
+    // The drawer's mirror (UX-audit fix 4) — same clamp, so drawer + controls
+    // open together still leave the popup its ~352px floor.
+    paddingLeft:
+      leftInset > 0
+        ? `max(32px, min(${32 + leftInset}px, calc(100vw - 384px)))`
         : 32,
   };
 

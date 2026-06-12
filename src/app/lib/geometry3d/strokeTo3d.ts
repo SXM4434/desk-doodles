@@ -136,6 +136,14 @@ export const DEDUPE_MIN_DIST = 0.001 * (8 / 3);
 export const ROD_RESAMPLE_SPACING = 0.04;
 
 export const EXTRUDE_DEPTH = 0.5;
+/** Rounded extrude edge (2026-06-12 look pass): the old 0.02 hairline bevel
+ *  left the camera-facing face meeting the side wall at a hard 90° — under
+ *  any rig the face reads as a flat cut-out. A fatter 3-segment bevel gives
+ *  the rim a curved band that catches the key light and carries the form
+ *  (the "pressed cookie" read). Shared by Extrude + Solid. */
+export const EXTRUDE_BEVEL_SIZE = 0.05;
+export const EXTRUDE_BEVEL_THICKNESS = 0.05;
+export const EXTRUDE_BEVEL_SEGMENTS = 3;
 
 /** Inflate-Lite (swept capsule, research §5b "Free Stroke heuristic" — true
  *  Teddy chordal-axis inflation is explicitly OUT of scope). */
@@ -512,9 +520,9 @@ export function buildExtrudeGeometry(
     const geometry = new THREE.ExtrudeGeometry(shape, {
       depth,
       bevelEnabled: true,
-      bevelSize: 0.02,
-      bevelThickness: 0.02,
-      bevelSegments: 2,
+      bevelSize: EXTRUDE_BEVEL_SIZE,
+      bevelThickness: EXTRUDE_BEVEL_THICKNESS,
+      bevelSegments: EXTRUDE_BEVEL_SEGMENTS,
       curveSegments: 12,
       steps: 1,
     });
@@ -1101,9 +1109,9 @@ export function buildSolidGeometry(
     const geometry = new THREE.ExtrudeGeometry(shapes, {
       depth,
       bevelEnabled: true,
-      bevelSize: 0.02,
-      bevelThickness: 0.02,
-      bevelSegments: 2,
+      bevelSize: EXTRUDE_BEVEL_SIZE,
+      bevelThickness: EXTRUDE_BEVEL_THICKNESS,
+      bevelSegments: EXTRUDE_BEVEL_SEGMENTS,
       curveSegments: 12,
       steps: 1,
     });

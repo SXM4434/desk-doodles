@@ -23,8 +23,16 @@ export type ObjectCardProps = {
   owner?: string | null;
   /** ISO timestamp; shown as a quiet date in the footer if present. */
   createdAt?: string | null;
-  /** Mini density for the drawer/binder grid (art + name only). */
+  /** Mini density for the drawer/binder grid — the TCG frame at small scale:
+   *  name banner + the one marks stat + art well. Drops why/footer. Width is
+   *  100% so the grid cell owns sizing. */
   mini?: boolean;
+  /** Plain art injection — the art well renders the given markup AS-IS
+   *  (caller sanitizes + sizes it) instead of through the live
+   *  SvgStyleTransform pen pipeline. The drawer's mini cards use this:
+   *  deterministic + cheap, and the binder never re-renders on pen tweaks
+   *  (records rule, D-7). Desk/popup cards keep the live pipeline. */
+  plainArt?: boolean;
   /** Embedded — drop the card's own shell because it already lives inside a
    *  card-like container (e.g. the ObjectSurface modal IS the card). Prevents
    *  a card-inside-a-card. The art well stays (it's the doodle's frame). */
@@ -44,12 +52,15 @@ export function ObjectCard({
   owner,
   createdAt,
   mini = false,
+  plainArt = false,
   embedded = false,
   editable = false,
   onNameChange,
   onWhyChange,
 }: ObjectCardProps) {
-  const width = embedded ? '100%' : mini ? 168 : CARD_W;
+  // Embedded + mini both fill their container (modal panel / drawer grid
+  // cell respectively); only the standalone full card carries its own width.
+  const width = embedded || mini ? '100%' : CARD_W;
 
   // Embedded drops the shell (no second card around the modal); standalone
   // keeps the full collectible-card surface (drawer/binder use).
@@ -127,7 +138,9 @@ export function ObjectCard({
               minWidth: 0,
               fontFamily: ISe,
               fontVariationSettings: '"SOFT" 60, "WONK" 1',
-              fontSize: mini ? 14 : 20,
+              // 13 at mini (on-ladder, and the banner shares its row with the
+              // stat in a ~130px grid cell — every character counts).
+              fontSize: mini ? 13 : 20,
               letterSpacing: '-0.01em',
               color: name ? 'var(--dir-text-primary)' : 'var(--dir-text-body-soft)',
               whiteSpace: 'nowrap',
@@ -138,13 +151,13 @@ export function ObjectCard({
             {name || 'Untitled doodle'}
           </div>
         )}
-        {!mini && marks > 0 && (
+        {marks > 0 && (
           <span
             title="Marks — how many strokes make up this doodle"
             style={{
               flexShrink: 0,
               fontFamily: IS,
-              fontSize: 10,
+              fontSize: mini ? 9 : 10,
               fontWeight: 600,
               letterSpacing: '0.08em',
               textTransform: 'uppercase',
@@ -160,7 +173,9 @@ export function ObjectCard({
       {/* The art — the doodle itself, rendered through the live style. When
           the record has no drawable marks (empty/broken markup), a quiet
           dashed-circle placeholder keeps the well from reading as a hole. */}
-      <div style={artWell}>
+      {/* data-dd-card-art tags the well so a drag source (the drawer) can use
+          the ART as the drag image — the doodle is what lands on the desk. */}
+      <div style={artWell} data-dd-card-art="">
         {marks === 0 ? (
           <svg
             width="48"
@@ -180,6 +195,14 @@ export function ObjectCard({
               strokeLinecap="round"
             />
           </svg>
+        ) : plainArt ? (
+          // Plain injection — the record's stored marks, no live pipeline.
+          // Caller owns sanitize + sizing (the drawer normalizes + stretches
+          // the root svg to 100% so the well box scales it).
+          <div
+            style={{ width: '76%', height: '76%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            dangerouslySetInnerHTML={{ __html: svgMarkup }}
+          />
         ) : (
           <div style={{ width: '76%', height: '76%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <SvgStyleTransform wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}>
@@ -192,7 +215,8 @@ export function ObjectCard({
         )}
       </div>
 
-      {/* Mini cards stop here — art + name is enough for the binder grid. */}
+      {/* Mini cards stop here — name banner + the one stat + art is the full
+          TCG frame at binder-grid density; why/footer stay full-card only. */}
       {!mini && (
         <>
           {/* Why-line — the maker's one line, the IKEA-effect attachment hook. */}

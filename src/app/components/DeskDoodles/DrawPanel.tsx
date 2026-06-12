@@ -1,16 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IS, ISe } from '../../lib/typography';
 import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
 import { PILL, CTA, SECTION_LABEL, RAISED_SHADOW } from '../../lib/chromeStyles';
-import { DrawSurface, strokesToObjectMarkup, capStrokes, type Stroke, type StrokePoint } from './DrawSurface';
+import {
+  DrawSurface,
+  strokesToObjectMarkup,
+  capStrokes,
+  prepareBackdrop,
+  composeBackdropAndStrokes,
+  type BackdropFrame,
+  type Stroke,
+  type StrokePoint,
+} from './DrawSurface';
 import { prepareSvgUpload } from '../../lib/svgUpload';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { Dropdown } from '../chrome/Dropdown';
 import { Slider } from '../chrome/Slider';
 import { SLIDER_SPECS, MODIFIER_SETS_BY_STYLE, UNIVERSAL_MODIFIERS } from '../chrome/modifierSpecs';
-import { useF3SvgStyle, F3_SVG_STYLES, type F3SvgStyle } from '../../state/F3SvgStyleContext';
-import { useF3RoughModifiers, DEFAULT_MODIFIERS, type F3ModifiersState } from '../../state/F3RoughModifiersContext';
-import { applyStylePreset } from '../canvas/SvgStyleTransform';
+import {
+  F3SvgStyleProvider,
+  useF3SvgStyle,
+  F3_SVG_STYLES,
+  type F3SvgStyle,
+} from '../../state/F3SvgStyleContext';
+import {
+  F3RoughModifiersProvider,
+  useF3RoughModifiers,
+  DEFAULT_MODIFIERS,
+  type F3ModifiersState,
+} from '../../state/F3RoughModifiersContext';
+import { applyStylePreset, SvgStyleTransform } from '../canvas/SvgStyleTransform';
 import { SurfaceControls } from './ObjectSurface';
 import {
   smartPickFromMarkup,
@@ -113,10 +132,64 @@ function SmartPickChip({ pick, onUndo }: { pick: SmartPick; onUndo: () => void }
   );
 }
 
+// ─── Size-cap honesty ─────────────────────────────────────────────────────────
+// The server INSERT path enforces char_length(svg) ≤ 65536 (publish_to_open_desk
+// + harden-v1: 64KB). Place checks the staged markup against the same number so
+// an over-cap doodle is never silently dropped by the database — the user gets
+// the honest note + a real Shrink-to-fit lever and STAYS in the popup.
+const SVG_CHAR_CAP = 65536;
+
+/** Sync bridge between the panel's live pen values and the NESTED providers
+ *  wrapping the staged minting preview — the SurfaceRenderScope pattern from
+ *  ObjectSurface.tsx (~line 149). Mirrored, not imported: it isn't exported
+ *  there and that file belongs to another work rock. Runs INSIDE the nested
+ *  scope, so setState/replace touch only the preview's shadowed context —
+ *  never the global pen. useLayoutEffect lands the sync before paint (no
+ *  flash of provider-default style); the !== guards settle in one pass
+ *  (replace stores the same object reference). */
+function StagedRenderScope({
+  svgStyle,
+  mods,
+  children,
+}: {
+  svgStyle: F3SvgStyle;
+  mods: F3ModifiersState;
+  children: ReactNode;
+}) {
+  const styleCtx = useF3SvgStyle();
+  const modsCtx = useF3RoughModifiers();
+  useLayoutEffect(() => {
+    if (styleCtx.state !== svgStyle) styleCtx.setState(svgStyle);
+  }, [styleCtx, svgStyle]);
+  useLayoutEffect(() => {
+    if (modsCtx.state !== mods) modsCtx.replace(mods);
+  }, [modsCtx, mods]);
+  return <>{children}</>;
+}
+
+// Opaque cover for the canvas pane — the gate idiom (DrawSurface's honesty
+// gates): upload picker / un-embeddable fallback / image stub all sit OVER the
+// always-mounted DrawSurface, so switching input never unmounts (= never
+// destroys) an in-progress sketch.
+const PANE_OVERLAY: React.CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 12,
+  padding: 24,
+  background: 'var(--dir-bg)',
+  borderRadius: 6,
+  textAlign: 'center',
+};
+
 export function DrawPanel({
   onDone,
   onCancel,
   rightInset = 0,
+  leftInset = 0,
 }: {
   /** Receives the markup for the ONE object this session made, plus the
    *  naming-stage meta: source strokes (the record keeps the hand — wedge
@@ -130,6 +203,10 @@ export function DrawPanel({
    *  this on the right so the modal centers over the desk working area, not
    *  behind the panel. Default 0 — /canvas (no such panel) is unaffected. */
   rightInset?: number;
+  /** px width of an open LEFT drawer panel — rightInset's mirror (UX-audit
+   *  fix 4): the scrim reserves the drawer's width on the left so the modal
+   *  centers over the VISIBLE desk. Same narrow-viewport clamp. Default 0. */
+  leftInset?: number;
 }) {
   // Live mirror of DrawSurface's preview-stroke pool — setState is a stable
   // callback, so the mirror effect in DrawSurface doesn't re-fire on renders.
@@ -142,6 +219,15 @@ export function DrawPanel({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+
+  // UPLOAD PARITY (ROUND 6): the picked file prepared as a draw-over backdrop
+  // — letterboxed into the same frame space the strokes live in. null with an
+  // upload present = the file hides its size (no viewBox, no width/height);
+  // the pane shows the honest non-draw-over fallback instead of pretending.
+  const backdropFrame = useMemo(
+    () => (upload ? prepareBackdrop(upload.markup) : null),
+    [upload],
+  );
 
   // ── THE PEN (shared state — D-7) ──────────────────────────────────────────
   // Same contexts the desk panel's SmartHachureChrome reads/writes. The popup
@@ -209,16 +295,32 @@ export function DrawPanel({
     setSmartPick(null);
   }
 
-  // Escape cancels — standard dialog convention. Bubble phase on window, so
-  // an open Dropdown popover (capture-phase document listener that stops
-  // propagation) closes itself first: one press, one layer.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  // ── ESCAPE = ONE LAYER PER PRESS (safety pass, ROUND 6/7) ─────────────────
+  // Bubble phase on window, so an open Dropdown popover (capture-phase
+  // document listener that stops propagation) closes itself first — that IS
+  // the topmost layer. Then, per press:
+  //   · naming stage → BACK to compose (strokes intact), never popup-close;
+  //   · compose with strokes → first press ARMS a visible confirm (footer
+  //     note), second press within 3s closes — never silent destruction;
+  //   · compose with nothing drawn → plain close.
+  const [escapeArmed, setEscapeArmed] = useState(false);
+  const escapeArmedRef = useRef(false);
+  const escapeTimerRef = useRef<number | null>(null);
+  const armEscape = useCallback(() => {
+    escapeArmedRef.current = true;
+    setEscapeArmed(true);
+    if (escapeTimerRef.current) window.clearTimeout(escapeTimerRef.current);
+    escapeTimerRef.current = window.setTimeout(() => {
+      escapeArmedRef.current = false;
+      setEscapeArmed(false);
+    }, 3000);
+  }, []);
+  useEffect(
+    () => () => {
+      if (escapeTimerRef.current) window.clearTimeout(escapeTimerRef.current);
+    },
+    [],
+  );
 
   // ── FOCUS: initial move-in + restore-to-opener ───────────────────────────
   // On open, focus the first control (the Draw pill — aria-modal demands
@@ -282,9 +384,47 @@ export function DrawPanel({
   const [composeMode, setComposeMode] = useState<'draw' | 'style'>('draw');
   const [stageName, setStageName] = useState('');
   const [stageWhy, setStageWhy] = useState('');
+  // SIZE-CAP HONESTY: set when Place measured the staged svg over the 64KB
+  // server cap. The popup STAYS OPEN — nothing is lost. `exhausted` = the
+  // shrink lever ran out of detail to smooth and it still doesn't fit.
+  const [capNote, setCapNote] = useState<{ kb: number; exhausted?: boolean } | null>(null);
+  // Receipt after a successful Shrink-to-fit (the staged markup was rebuilt
+  // from decimated points; the live strokes stay full-fidelity — Back keeps
+  // every point the user drew).
+  const [shrunk, setShrunk] = useState(false);
 
+  // The layered Escape handler (state machine documented at armEscape above).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (staged) {
+        // Naming stage → Back. One layer per press; strokes + fields intact.
+        setStaged(null);
+        setCapNote(null);
+        setShrunk(false);
+        return;
+      }
+      if (strokes.length > 0) {
+        if (escapeArmedRef.current) onCancel();
+        else armEscape();
+        return;
+      }
+      onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [staged, strokes.length, onCancel, armEscape]);
+
+  // The minting preview's art, sized once per staging (230px long axis inside
+  // the 280px well) — memoized so name/why keystrokes don't re-run DOMParser.
+  const stagedPreviewMarkup = useMemo(
+    () => (staged ? normalizeSvgSize(staged.markup, 230) : ''),
+    [staged],
+  );
 
   function handleDone() {
+    setCapNote(null);
+    setShrunk(false);
     if (input === 'draw' && strokes.length > 0) {
       const markup = strokesToObjectMarkup(strokes);
       // SMART PICK — drawn ingest: first Done (entering the naming stage) is
@@ -298,17 +438,78 @@ export function DrawPanel({
       }
       setStaged({ markup, strokes: capStrokes(strokes) });
     } else if (input === 'upload-svg' && upload) {
-      setStaged({ markup: upload.markup });
+      if (backdropFrame && strokes.length > 0) {
+        // DRAW-OVER MERGE (ROUND 6): backdrop + strokes become ONE object in
+        // one shared coordinate space — the same composed markup the Style
+        // layer previews live. The added strokes are NOT put in the record
+        // yet: ObjectSurface's Re-draw Done rebuilds the svg from strokes
+        // ALONE (strokesToObjectMarkup), which would silently DESTROY the
+        // upload half of a merged object. Until Re-draw is backdrop-aware
+        // (queued, ObjectSurface rock), merged objects take the honest
+        // "drawn before re-editing existed" path instead of a data-loss one.
+        setStaged({
+          markup: composeBackdropAndStrokes(backdropFrame, strokes, { tight: true }),
+        });
+      } else {
+        setStaged({ markup: upload.markup });
+      }
     }
   }
 
   function handlePlace() {
     if (!staged) return;
+    // SIZE-CAP HONESTY: measure what actually gets published — DeskPage sends
+    // normalizeSvgSize(markup, 180) to publish_to_open_desk, whose INSERT
+    // rejects char_length(svg) > 64KB. Refuse with the honest note instead of
+    // letting the row vanish server-side; the popup stays open, nothing lost.
+    const finalLength = normalizeSvgSize(staged.markup, 180).length;
+    if (finalLength > SVG_CHAR_CAP) {
+      setCapNote({ kb: Math.ceil(finalLength / 1024) });
+      return;
+    }
     onDone(staged.markup, {
       strokes: staged.strokes,
       name: stageName.trim() || null,
       why: stageWhy.trim() || null,
     });
+  }
+
+  /** Shrink-to-fit — the REAL lever behind the size-cap note: halve point
+   *  density (keeping endpoints, same decimation move capStrokes uses) until
+   *  the rebuilt markup fits the cap. Works on a COPY — the live strokes keep
+   *  full fidelity, so Back returns the drawing exactly as drawn. Pure-upload
+   *  overflow has no stroke detail to smooth → the note says so instead. */
+  function handleShrinkToFit() {
+    if (strokes.length === 0) return;
+    const build = (sts: Stroke[]) =>
+      input === 'upload-svg' && backdropFrame
+        ? composeBackdropAndStrokes(backdropFrame, sts, { tight: true })
+        : strokesToObjectMarkup(sts);
+    let pts = strokes;
+    for (let pass = 0; pass < 10; pass++) {
+      const next = pts.map((st) =>
+        st.points.length > 8
+          ? { ...st, points: st.points.filter((_, i) => i % 2 === 0 || i === st.points.length - 1) }
+          : st,
+      );
+      const flatBefore = pts.reduce((n, st) => n + st.points.length, 0);
+      const flatAfter = next.reduce((n, st) => n + st.points.length, 0);
+      pts = next;
+      const markup = build(pts);
+      if (normalizeSvgSize(markup, 180).length <= SVG_CHAR_CAP) {
+        setStaged({
+          markup,
+          // The record's gesture follows the shrink (it IS the new source).
+          // Merged draw-over objects record no strokes (see handleDone note).
+          strokes: input === 'draw' ? capStrokes(pts) : undefined,
+        });
+        setCapNote(null);
+        setShrunk(true);
+        return;
+      }
+      if (flatAfter >= flatBefore) break; // no detail left to smooth
+    }
+    setCapNote((prev) => (prev ? { ...prev, exhausted: true } : prev));
   }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -332,9 +533,19 @@ export function DrawPanel({
   }
 
   return (
-    // Overlay scrim — click outside the panel cancels.
+    // Overlay scrim — click outside the panel closes ONLY when nothing is
+    // drawn. With strokes present (or in the naming stage) the click is
+    // NON-DESTRUCTIVE: it arms the same visible Esc-confirm hint instead of
+    // eating the sketch (safety pass, ROUND 6/7).
     <div
-      onClick={onCancel}
+      onClick={() => {
+        if (staged) return; // staging = work definitely present — no-op
+        if (strokes.length > 0) {
+          armEscape();
+          return;
+        }
+        onCancel();
+      }}
       style={{
         position: 'fixed',
         inset: 0,
@@ -344,9 +555,23 @@ export function DrawPanel({
         alignItems: 'center',
         justifyContent: 'center',
         padding: 32,
-        // Reserve an open right controls panel's width so the modal centers over
-        // the desk area, not behind it. Default 0 (e.g. on /canvas).
-        paddingRight: 32 + rightInset,
+        // Reserve an open right controls panel's width so the modal centers
+        // over the desk area, not behind it. Default 0 (e.g. on /canvas).
+        // The inner min() CLAMPS the reservation on narrow viewports (the
+        // ObjectSurface scrim pattern): unclamped 32+360px right padding
+        // crushed the popup to a sliver once the viewport shrank. The mini-
+        // desk row needs ~640px (320 canvas + 220 controls + gaps/padding),
+        // so the popup keeps ≥640px and slides under the panel instead.
+        paddingRight:
+          rightInset > 0
+            ? `max(32px, min(${32 + rightInset}px, calc(100vw - 672px)))`
+            : 32,
+        // The drawer's mirror (UX-audit fix 4) — same clamp so drawer +
+        // controls open together can't crush the popup on narrow viewports.
+        paddingLeft:
+          leftInset > 0
+            ? `max(32px, min(${32 + leftInset}px, calc(100vw - 672px)))`
+            : 32,
       }}
     >
       {/* Centered panel — W1 raised surface, popover radius 16 (chromeStyles
@@ -395,7 +620,13 @@ export function DrawPanel({
                 ? 'Each Done adds one object'
                 : `${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`
               : input === 'upload-svg'
-                ? (upload?.name ?? 'Pick a file')
+                ? upload
+                  ? `${upload.name}${
+                      strokes.length > 0
+                        ? ` · ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} over`
+                        : ''
+                    }`
+                  : 'Pick a file'
                 : 'Coming with autotrace'}
           </span>
         </header>
@@ -447,139 +678,166 @@ export function DrawPanel({
               flexDirection: 'column',
             }}
           >
-            {input === 'draw' && (
-              /* DrawSurface in draw mode — in-frame Done/Edit/Clear pills hidden;
-                 the panel's own Done/Cancel below are the commit chrome. */
-              <>
-                {/* Draw | Style — the canvas's own mode pills (the Pen|Desk
-                    grammar, one level down). */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  {(['draw', 'style'] as const).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setComposeMode(m)}
-                      aria-pressed={composeMode === m}
-                      style={{
-                        ...PILL,
-                        padding: '6px 14px',
-                        background: composeMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
-                        color: composeMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
-                      }}
-                    >
-                      {m === 'draw' ? 'Sketch' : 'Style'}
-                    </button>
-                  ))}
-                  <span
+            {/* Hidden file input — dialog-level so both the picker overlay and
+                the Replace pill reach it. display:none keeps it out of the
+                focus trap (zero client rects). */}
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".svg,image/svg+xml"
+              onChange={handleFileChange}
+              style={{ display: 'none' }}
+            />
+
+            {/* Sketch | Style — the canvas's own mode pills (the Pen|Desk
+                grammar, one level down). UPLOAD PARITY (ROUND 6): the same
+                pills work on uploads — Style renders the upload through the
+                pen live. Hidden only behind the image stub. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              {(['draw', 'style'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setComposeMode(m)}
+                  aria-pressed={composeMode === m}
+                  style={{
+                    ...PILL,
+                    padding: '6px 14px',
+                    background: composeMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+                    color: composeMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+                  }}
+                >
+                  {m === 'draw' ? 'Sketch' : 'Style'}
+                </button>
+              ))}
+              <span
+                style={{
+                  fontFamily: IS,
+                  fontSize: 10,
+                  fontStyle: 'italic',
+                  color: 'var(--dir-text-body-soft)',
+                  minWidth: 0,
+                }}
+              >
+                {composeMode === 'draw'
+                  ? input === 'upload-svg' && backdropFrame
+                    ? 'raw ink over your upload — keep sketching'
+                    : 'raw ink — keep sketching'
+                  : input === 'upload-svg' && backdropFrame
+                    ? 'styled — the pen renders your upload live'
+                    : 'styled — play with the pen, flip back to keep drawing'}
+              </span>
+              {input === 'upload-svg' && upload && (
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    style={{ ...PILL, padding: '5px 12px', background: 'var(--dir-bg)' }}
+                  >
+                    Replace file
+                  </button>
+                  <button
+                    onClick={() => {
+                      setUpload(null);
+                      setUploadError(null);
+                    }}
+                    title="Remove the file — your strokes stay"
                     style={{
-                      fontFamily: IS,
-                      fontSize: 10,
-                      fontStyle: 'italic',
+                      ...PILL,
+                      padding: '5px 12px',
+                      background: 'transparent',
                       color: 'var(--dir-text-body-soft)',
                     }}
                   >
-                    {composeMode === 'draw'
-                      ? 'raw ink — keep sketching'
-                      : 'styled — play with the pen, flip back to keep drawing'}
-                  </span>
-                </div>
-                <DrawSurface
-                  mode="svg"
-                  input="draw"
-                  hideActions
-                  fill
-                  styled={composeMode === 'style'}
-                  onStrokesChange={setStrokes}
-                />
-              </>
-            )}
+                    Remove
+                  </button>
+                </span>
+              )}
+            </div>
 
-            {input === 'upload-svg' && (
-              <div
-                style={{
-                  minHeight: 260,
-                  border: '1px solid var(--dir-border)',
-                  borderRadius: 6,
-                  background: 'var(--dir-bg)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 12,
-                  padding: 24,
-                }}
-              >
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".svg,image/svg+xml"
-                  onChange={handleFileChange}
-                  style={{ display: 'none' }}
-                />
-                {upload ? (
-                  /* Preview the picked file at thumbnail scale — the desk's add
-                     boundary does the real ~180px normalization on Done. */
+            {/* THE PANE — DrawSurface stays mounted across ALL input modes
+                (switching input never destroys a sketch); upload states sit
+                OVER it as opaque covers (the gate idiom). With a file picked,
+                the upload letterboxes in as a draw-over backdrop and the
+                preview FILLS THE PANE like draw mode (ROUND 6 spec d). */}
+            <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+              <DrawSurface
+                mode="svg"
+                input="draw"
+                hideActions
+                fill
+                styled={composeMode === 'style'}
+                backdrop={input === 'upload-svg' ? backdropFrame : undefined}
+                onStrokesChange={setStrokes}
+              />
+
+              {/* Upload picker — no file yet. */}
+              {input === 'upload-svg' && !upload && (
+                <div style={PANE_OVERLAY}>
+                  <p style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', margin: 0 }}>
+                    The file becomes one desk object — style it with the pen,
+                    draw over it, size handled automatically.
+                  </p>
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    // Heavier border = empty-state affordance (canvas dock precedent).
+                    style={{
+                      ...PILL,
+                      padding: '10px 22px',
+                      background: 'var(--dir-bg)',
+                      border: '1px solid var(--dir-text-primary)',
+                    }}
+                  >
+                    Pick an .svg file
+                  </button>
+                  {uploadError && (
+                    <p style={{ fontFamily: IS, fontSize: 12, color: 'var(--dir-accent)', margin: 0 }}>
+                      {uploadError}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Un-embeddable upload — the file carries no size info (no
+                  viewBox, no width/height), so frame-space draw-over can't
+                  letterbox it honestly. Thumbnail preview + plain placement
+                  still work; no fake draw-over. */}
+              {input === 'upload-svg' && upload && !backdropFrame && (
+                <div style={PANE_OVERLAY}>
                   <div
                     style={{ width: 180, height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     dangerouslySetInnerHTML={{
-                      // normalizeSvgSize derives a viewBox from width/height when one
-                      // is missing and sizes the longest axis to 180px — fixes the
-                      // no-viewBox preview clip the gap sweep flagged. Markup is
-                      // already DOMPurify-sanitized by prepareSvgUpload upstream, so
-                      // this is purely a sizing improvement.
+                      // normalizeSvgSize derives sizing where possible; markup is
+                      // DOMPurify-sanitized upstream by prepareSvgUpload.
                       __html: normalizeSvgSize(upload.markup, 180),
                     }}
                   />
-                ) : (
-                  <p style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', margin: 0 }}>
-                    The file becomes one desk object, sized to the desk automatically.
+                  <p style={{ fontFamily: IS, fontSize: 12, color: 'var(--dir-text-body-soft)', margin: 0, maxWidth: 360, lineHeight: 1.5 }}>
+                    This file hides its size, so drawing over it is off — it
+                    still places on the desk just fine.
                   </p>
-                )}
-                <button
-                  onClick={() => fileRef.current?.click()}
-                  // Heavier border = empty-state affordance (canvas dock precedent).
-                  style={{ ...PILL, padding: '10px 22px', background: 'var(--dir-bg)', borderColor: 'var(--dir-text-primary)' }}
-                >
-                  {upload ? 'Pick a different file' : 'Pick an .svg file'}
-                </button>
-                {uploadError && (
-                  <p style={{ fontFamily: IS, fontSize: 12, color: 'var(--dir-accent)', margin: 0 }}>
-                    {uploadError}
-                  </p>
-                )}
-              </div>
-            )}
+                </div>
+              )}
 
-            {input === 'upload-image' && (
-              /* Honest stub — image→object needs the autotrace path (stretch S1);
-                 no fake controls. No time commitments in the copy either. */
-              <div
-                style={{
-                  minHeight: 260,
-                  border: '1px solid var(--dir-border)',
-                  borderRadius: 6,
-                  background: 'var(--dir-bg)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 24,
-                }}
-              >
-                <p
-                  style={{
-                    fontFamily: IS,
-                    fontSize: 13,
-                    color: 'var(--dir-text-body-soft)',
-                    margin: 0,
-                    textAlign: 'center',
-                    lineHeight: 1.5,
-                    maxWidth: 380,
-                  }}
-                >
-                  Image upload is coming — it will trace your picture into
-                  desk-ready linework. For now, draw it or upload an SVG.
-                </p>
-              </div>
-            )}
+              {/* Honest image stub — image→object needs the autotrace path
+                  (stretch S1); no fake controls, no time commitments. */}
+              {input === 'upload-image' && (
+                <div style={PANE_OVERLAY}>
+                  <p
+                    style={{
+                      fontFamily: IS,
+                      fontSize: 13,
+                      color: 'var(--dir-text-body-soft)',
+                      margin: 0,
+                      textAlign: 'center',
+                      lineHeight: 1.5,
+                      maxWidth: 380,
+                    }}
+                  >
+                    Image upload is coming — it will trace your picture into
+                    desk-ready linework. For now, draw it or upload an SVG.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* PEN CONTROLS COLUMN — the desk panel's pen, second face. Style
@@ -692,10 +950,84 @@ export function DrawPanel({
                   borderRadius: 10,
                   backgroundColor: 'var(--dir-bg)',
                   backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
+                  overflow: 'hidden',
                 }}
-                dangerouslySetInnerHTML={{ __html: normalizeSvgSize(staged.markup, 230) }}
-              />
+              >
+                {/* STYLED MINTING PREVIEW (ROUND 6): the staged art renders
+                    through the SAME nested-provider + SvgStyleTransform scope
+                    the desk uses (ObjectSurface SurfaceRenderScope pattern),
+                    synced to the CURRENT pen — the ceremony shows the doodle
+                    the user actually styled, never raw 3px hairlines. The
+                    nested providers shadow the global pen for this subtree
+                    only; pen moves (and smart-pick undo) re-render it live. */}
+                <F3SvgStyleProvider>
+                  <F3RoughModifiersProvider>
+                    <StagedRenderScope svgStyle={svgStyle} mods={mods}>
+                      <SvgStyleTransform>
+                        <div aria-hidden dangerouslySetInnerHTML={{ __html: stagedPreviewMarkup }} />
+                      </SvgStyleTransform>
+                    </StagedRenderScope>
+                  </F3RoughModifiersProvider>
+                </F3SvgStyleProvider>
+              </div>
             </div>
+
+            {/* SIZE-CAP HONESTY (ROUND 6): Place measured the staged svg over
+                the 64KB server cap. Say so, keep the popup open, and offer the
+                real lever — Shrink to fit smooths point density; the live
+                strokes keep full fidelity so Back loses nothing. */}
+            {capNote && (
+              <div
+                role="alert"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: IS,
+                    fontSize: 12,
+                    color: 'var(--dir-accent)',
+                    lineHeight: 1.5,
+                    textAlign: 'center',
+                    maxWidth: 520,
+                  }}
+                >
+                  {capNote.exhausted
+                    ? `Still too detailed after smoothing — the desk caps doodles at 64KB (this one is ~${capNote.kb}KB). Go Back and try fewer strokes${input === 'upload-svg' ? ' or a simpler file' : ''}.`
+                    : strokes.length > 0
+                      ? `Too detailed to save — the desk caps doodles at 64KB (this one is ~${capNote.kb}KB). Nothing is lost: shrink it to fit, or go Back and edit.`
+                      : `Too detailed to save — the desk caps doodles at 64KB (this file is ~${capNote.kb}KB). Nothing is lost: go Back and try a simpler file.`}
+                </span>
+                {strokes.length > 0 && !capNote.exhausted && (
+                  <button
+                    onClick={handleShrinkToFit}
+                    title="Smooth the finest point detail until the doodle fits"
+                    style={{ ...PILL, padding: '6px 14px', background: 'var(--dir-bg)', flexShrink: 0 }}
+                  >
+                    Shrink to fit
+                  </button>
+                )}
+              </div>
+            )}
+            {shrunk && !capNote && (
+              <span
+                role="status"
+                style={{
+                  fontFamily: IS,
+                  fontSize: 11,
+                  fontStyle: 'italic',
+                  color: 'var(--dir-text-body-soft)',
+                  textAlign: 'center',
+                }}
+              >
+                smoothed the finest detail to fit the desk&rsquo;s 64KB cap
+              </span>
+            )}
             {/* SMART PICK receipt in the naming stage too — the drawn-path
                 pick fires at Done, and this overlay covers the pen column,
                 so the chip must be visible HERE for that ingest. */}
@@ -743,13 +1075,41 @@ export function DrawPanel({
               />
             </div>
             <footer style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <button onClick={() => setStaged(null)} style={PILL}>Back</button>
+              <button
+                onClick={() => {
+                  // Back = one layer down, strokes + fields intact (Escape
+                  // lands here too). Cap state clears — re-staging re-measures.
+                  setStaged(null);
+                  setCapNote(null);
+                  setShrunk(false);
+                }}
+                style={PILL}
+              >
+                Back
+              </button>
               <button onClick={handlePlace} style={CTA}>Place on desk</button>
             </footer>
           </div>
         )}
 
-        <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <footer style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8 }}>
+          {/* The armed Esc-confirm hint — visible feedback for the guarded
+              close paths (Esc with strokes, scrim-click with strokes).
+              Disarms itself after 3s; a second Esc while armed closes. */}
+          {escapeArmed && (
+            <span
+              role="status"
+              style={{
+                fontFamily: IS,
+                fontSize: 11,
+                fontStyle: 'italic',
+                color: 'var(--dir-accent)',
+                marginRight: 'auto',
+              }}
+            >
+              your sketch is unsaved — press Esc again (or Cancel) to discard it
+            </span>
+          )}
           <button onClick={onCancel} style={PILL}>
             Cancel
           </button>

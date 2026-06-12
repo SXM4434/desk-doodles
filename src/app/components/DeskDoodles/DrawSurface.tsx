@@ -16,6 +16,12 @@ export type Stroke = { id: string; points: StrokePoint[] };
 export type CanvasMode = 'svg' | '3d';
 export type InputMode = 'draw' | 'upload-svg' | 'upload-image';
 
+// The draw frame's coordinate space — every stroke is captured in these
+// viewBox units (module-scope so the backdrop compose helpers below share
+// the exact same space as the component's capture svg).
+export const VIEWBOX_W = 800;
+export const VIEWBOX_H = 600;
+
 export const STROKE_OPTS = {
   size: 4,
   thinning: 0.5,
@@ -102,6 +108,151 @@ export function strokeToPolylinePath(points: StrokePoint[]): string {
   );
 }
 
+// ─── UPLOAD BACKDROP (draw-over parity, ROUND 6) ──────────────────────────────
+// An uploaded SVG becomes a BACKDROP layer inside the draw frame: it letterboxes
+// into the same 800×600 viewBox space the strokes are captured in, so pen
+// strokes land visually ON the upload. Done merges both into ONE object — by
+// INVERSE-MAPPING the stroke points into the UPLOAD's local coordinate space
+// and appending them flat (no <g transform>, no nested <svg>): the style
+// pipeline's mark placement doesn't honor ancestor transforms yet (the
+// deferred row-9 getCTM flatten, 18-scope-audit), verified live 2026-06-12 —
+// a transform-wrapped merge rendered the upload tiny at raw local coords. The
+// flat merge is exactly the input shape /canvas uploads already exercise.
+
+export type BackdropFrame = {
+  /** Inner markup of the upload's root <svg> (DOMPurify-sanitized upstream —
+   *  prepareSvgUpload is the only producer of markup that reaches here). */
+  inner: string;
+  /** Root <svg> attributes minus sizing (width/height/viewBox/x/y), re-emitted
+   *  on merged output so root-level fill/stroke/class context survives. */
+  rootAttrs: string;
+  vbX: number;
+  vbY: number;
+  vbW: number;
+  vbH: number;
+};
+
+/** Parse sanitized upload markup into a BackdropFrame. Returns null when the
+ *  svg has no usable size info (no viewBox AND no positive width/height) —
+ *  the host falls back to a non-draw-over preview honestly. */
+export function prepareBackdrop(markup: string): BackdropFrame | null {
+  const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
+  if (doc.querySelector('parsererror')) return null;
+  const svg = doc.documentElement;
+  if (svg.tagName.toLowerCase() !== 'svg') return null;
+  let vbX = 0;
+  let vbY = 0;
+  let vbW = 0;
+  let vbH = 0;
+  const vb = svg.getAttribute('viewBox');
+  if (vb) {
+    const parts = vb.trim().split(/[\s,]+/).map(Number);
+    if (parts.length === 4 && parts.every(Number.isFinite)) {
+      [vbX, vbY, vbW, vbH] = parts;
+    }
+  }
+  if (!(vbW > 0 && vbH > 0)) {
+    // No viewBox — derive from width/height attrs (parseFloat drops "px").
+    const w = parseFloat(svg.getAttribute('width') ?? '');
+    const h = parseFloat(svg.getAttribute('height') ?? '');
+    if (w > 0 && h > 0) {
+      vbX = 0;
+      vbY = 0;
+      vbW = w;
+      vbH = h;
+    }
+  }
+  if (!(vbW > 0 && vbH > 0)) return null;
+  let inner = '';
+  const ser = new XMLSerializer();
+  for (const child of Array.from(svg.childNodes)) inner += ser.serializeToString(child);
+  let rootAttrs = '';
+  for (const attr of Array.from(svg.attributes)) {
+    const n = attr.name.toLowerCase();
+    if (n === 'width' || n === 'height' || n === 'viewbox' || n === 'x' || n === 'y' || n === 'xmlns') continue;
+    rootAttrs += ` ${attr.name}="${attr.value.replace(/"/g, '&quot;')}"`;
+  }
+  return { inner, rootAttrs, vbX, vbY, vbW, vbH };
+}
+
+/** Letterbox mapping of a backdrop into the 800×600 draw frame —
+ *  preserveAspectRatio xMidYMid meet, expressed as translate+scale. */
+function backdropMapping(f: BackdropFrame): { s: number; ox: number; oy: number } {
+  const s = Math.min(VIEWBOX_W / f.vbW, VIEWBOX_H / f.vbH);
+  const ox = (VIEWBOX_W - f.vbW * s) / 2 - f.vbX * s;
+  const oy = (VIEWBOX_H - f.vbH * s) / 2 - f.vbY * s;
+  return { s, ox, oy };
+}
+
+const rnd = (v: number) => (Math.round(v * 100) / 100).toString();
+
+/** The backdrop's <g transform> wrap in frame space — shared by the raw
+ *  Sketch layer and the merged Done markup so they are pixel-coherent. */
+function backdropGroupMarkup(f: BackdropFrame): string {
+  const { s, ox, oy } = backdropMapping(f);
+  return `<g transform="translate(${rnd(ox)} ${rnd(oy)}) scale(${(Math.round(s * 10000) / 10000).toString()})">${f.inner}</g>`;
+}
+
+/** Full-frame display markup for the raw (Sketch-mode) backdrop layer. */
+export function backdropDisplayMarkup(f: BackdropFrame): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${VIEWBOX_W} ${VIEWBOX_H}" width="100%" height="100%">${backdropGroupMarkup(f)}</svg>`;
+}
+
+/** Merge the upload backdrop + drawn-over strokes into ONE svg — FLAT, in the
+ *  UPLOAD's local coordinate space: the upload geometry rides untouched and
+ *  the stroke points are inverse-mapped through the letterbox (frame→local),
+ *  stroke-width scaled to keep the drawn visual weight. No transforms in the
+ *  output, so the style pipeline treats it exactly like a plain upload.
+ *  `tight: true` (the Done path) sets the viewBox to the union of the
+ *  upload's viewBox and the mapped strokes' bbox so the desk's ~180px
+ *  normalization scales the DOODLE. `tight: false` (the live Style-mode
+ *  layer) sets the viewBox to the inverse-mapped FULL FRAME rect, so the
+ *  styled render letterboxes pixel-coherently with the raw layers under it. */
+export function composeBackdropAndStrokes(
+  f: BackdropFrame,
+  strokes: Stroke[],
+  opts: { tight?: boolean } = {},
+): string {
+  const { s, ox, oy } = backdropMapping(f);
+  const toLocal = ([x, y]: StrokePoint): [number, number] => [(x - ox) / s, (y - oy) / s];
+  const localWidth = Math.max(0.05, Math.round((3 / s) * 100) / 100);
+  const paths = strokes
+    .map((stroke) => {
+      const d = stroke.points.reduce((acc, pt, i) => {
+        const [lx, ly] = toLocal(pt);
+        return acc + (i === 0 ? `M ${lx.toFixed(2)} ${ly.toFixed(2)}` : ` L ${lx.toFixed(2)} ${ly.toFixed(2)}`);
+      }, '');
+      return `<path d="${d}" fill="none" stroke="var(--dir-text-primary)" stroke-width="${localWidth}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    })
+    .join('');
+  let vb: string;
+  if (opts.tight) {
+    // Union of the upload's viewBox and the mapped strokes' bbox (+pad).
+    let minX = f.vbX;
+    let minY = f.vbY;
+    let maxX = f.vbX + f.vbW;
+    let maxY = f.vbY + f.vbH;
+    for (const stroke of strokes) {
+      for (const pt of stroke.points) {
+        const [lx, ly] = toLocal(pt);
+        if (lx < minX) minX = lx;
+        if (ly < minY) minY = ly;
+        if (lx > maxX) maxX = lx;
+        if (ly > maxY) maxY = ly;
+      }
+    }
+    const pad = 6 / s;
+    vb = `${rnd(minX - pad)} ${rnd(minY - pad)} ${rnd(maxX - minX + pad * 2)} ${rnd(maxY - minY + pad * 2)}`;
+  } else {
+    // The whole 800×600 frame, expressed in local units — same letterbox as
+    // the raw Sketch layers (display parity), explicit 100% sizing for the
+    // injected-markup render path.
+    vb = `${rnd((0 - ox) / s)} ${rnd((0 - oy) / s)} ${rnd(VIEWBOX_W / s)} ${rnd(VIEWBOX_H / s)}`;
+  }
+  const sizing = opts.tight ? '' : ' width="100%" height="100%"';
+  return `<svg xmlns="http://www.w3.org/2000/svg"${f.rootAttrs} viewBox="${vb}"${sizing}>${f.inner}${paths}</svg>`;
+}
+
 // In-frame action pill — PILL at the smaller in-canvas scale, on paper so the
 // buttons read over strokes. Shared by Edit / Clear / Replace.
 const FRAME_PILL = {
@@ -146,6 +297,7 @@ export function DrawSurface({
   fill,
   styled,
   initialStrokes,
+  backdrop,
 }: {
   mode: CanvasMode;
   input: InputMode;
@@ -172,6 +324,13 @@ export function DrawSurface({
   /** Preload the canvas with stored strokes (Re-draw: the object's recorded
    *  gesture comes back editable — the record keeps the hand). */
   initialStrokes?: StrokePoint[][];
+  /** UPLOAD-AS-BACKDROP (draw-over parity, ROUND 6): the prepared upload
+   *  letterboxes into the frame as the bottom layer; pen strokes draw on top.
+   *  Sketch mode shows it raw; Style mode renders backdrop + strokes MERGED
+   *  through ONE SvgStyleTransform (the same composed markup Done stages, so
+   *  the live preview == the published object). Host (DrawPanel) owns the
+   *  file pick; /canvas leaves this unset. */
+  backdrop?: BackdropFrame | null;
 }) {
   // PREVIEW strokes — gestures the user has finished pen-up on but hasn't
   // committed yet. While in this state they render as raw perfect-freehand
@@ -305,8 +464,6 @@ export function DrawSurface({
   }
 
   const allStrokes = current ? [...strokes, current] : strokes;
-  const VIEWBOX_W = 800;
-  const VIEWBOX_H = 600;
   const isUpload = input === 'upload-svg';
 
   return (
@@ -345,10 +502,41 @@ export function DrawSurface({
           </SvgStyleTransform>
         </div>
       )}
+      {/* Layer 0 — UPLOAD BACKDROP, raw (Sketch mode). Letterboxed into the
+          same 800×600 frame space the strokes live in, so draw-over lands
+          where the eye says it does. Hidden in Style mode — the merged layer
+          below renders backdrop + strokes together instead. */}
+      {backdrop && !styled && (
+        <div
+          style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+          aria-hidden
+          dangerouslySetInnerHTML={{ __html: backdropDisplayMarkup(backdrop) }}
+        />
+      )}
+      {/* Layer 0s — UPLOAD BACKDROP + strokes, MERGED, in Style mode: ONE
+          SvgStyleTransform over the SAME composed markup Done stages (full-
+          frame viewBox so it letterboxes exactly like the raw layers). The
+          live preview IS the published render — upload parity, ROUND 6. */}
+      {backdrop && styled && (
+        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          <SvgStyleTransform
+            wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}
+          >
+            <div
+              style={{ width: '100%', height: '100%' }}
+              aria-hidden
+              dangerouslySetInnerHTML={{
+                __html: composeBackdropAndStrokes(backdrop, strokes, { tight: false }),
+              }}
+            />
+          </SvgStyleTransform>
+        </div>
+      )}
       {/* Layer 1a — when COMMITTED (or the host's Style mode is on), strokes
           flow through SvgStyleTransform so they pick up the active style and
-          re-render live as the pen controls change. */}
-      {(committed || styled) && strokes.length > 0 && (
+          re-render live as the pen controls change. (With a backdrop the
+          merged layer above already carries the strokes — skip.) */}
+      {(committed || styled) && strokes.length > 0 && !backdrop && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <SvgStyleTransform
             wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}
@@ -425,7 +613,7 @@ export function DrawSurface({
       {/* Empty-state hint — DRAW mode: warm sentence-case invitation (was
           shouty uppercase; warmth pass 2026-06-11). UPLOAD-SVG mode: prompt
           to pick a file. Upload-image is covered by its honesty gate below. */}
-      {((input === 'draw' && allStrokes.length === 0) || (isUpload && !uploadedSvg)) && (
+      {((input === 'draw' && allStrokes.length === 0 && !backdrop) || (isUpload && !uploadedSvg)) && (
         <div
           style={{
             position: 'absolute',

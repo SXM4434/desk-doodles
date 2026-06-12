@@ -155,6 +155,34 @@ function parseRenderConfig(raw: unknown): ObjectRenderConfig | null {
   return { ...rec, svgStyle: style as F3SvgStyle, modifiers };
 }
 
+// ─── LEGACY-ROW FREEZE (UX-audit fix 1, D-7) ────────────────────────────────
+// Rows with NO render_config (pre-D-7 legacy rows — most of the live desk)
+// used to fall back to the LIVE global context, so every Pen-scope slider
+// move restyled the placed desk — flatly contradicting the Pen|Desk pill's
+// promise that Pen touches NOTHING placed (audit finding). They now pin to
+// this frozen DEFAULT snapshot at load: rough-handdrawn + DEFAULT_MODIFIERS
+// is exactly what an untouched pen renders, so a fresh /desk visit looks
+// byte-identical to before — the freeze only shows when the pen MOVES (and
+// the desk now correctly doesn't). One module-level object so the reference
+// is stable for the memoized render path (DeskObjectArt keys on it). The
+// Desk lens still sweeps frozen rows — the lens slot renders straight off
+// the live context regardless of config.
+const LEGACY_FREEZE_CONFIG: ObjectRenderConfig = {
+  svgStyle: 'rough-handdrawn',
+  modifiers: DEFAULT_MODIFIERS,
+};
+
+/** Drag-to-place (DRAWER v2 item 2) — the drag payload MIME type. The drawer
+ *  (drag source) sets JSON {svg, name, why, renderConfig} under this type;
+ *  the desk below is the drop target and places a COPY at the drop point
+ *  through the exact addObject sourceConfig path Place-here uses. */
+const DD_DOODLE_MIME = 'application/x-dd-doodle';
+
+/** Publish retry backoff (UX-audit fix 3): attempt 1 fails → wait 2s →
+ *  attempt 2 → 6s → attempt 3. Three strikes = permanent failure (honest
+ *  note on the object; it stays desk-local for this session). */
+const PUBLISH_RETRY_DELAYS_MS = [2000, 6000];
+
 type DeskObject = {
   id: string;
   /** Supabase row id once published/loaded — undefined only for the brief
@@ -172,9 +200,17 @@ type DeskObject = {
   why?: string | null;
   ownerSession?: string | null;
   createdAt?: string | null;
-  /** The pen snapshot this object was made under (D-6). null = pre-config
-   *  row → renders under the live global state (legacy fallback). */
+  /** The pen snapshot this object was made under (D-6). Legacy pre-config
+   *  rows arrive pinned to LEGACY_FREEZE_CONFIG at the row→object boundary,
+   *  so by the time an object is on the desk this is never null in practice
+   *  (the null branch survives as a render-path safety only). */
   renderConfig?: ObjectRenderConfig | null;
+  /** PUBLISH HONESTY (UX-audit fix 3): undefined = saved (or first attempt
+   *  in flight — quiet, the common case resolves in well under a second);
+   *  'retrying' = a publish attempt failed and a backoff retry is scheduled;
+   *  'failed' = all attempts failed — the object stays desk-local, and the
+   *  badge says so instead of silently pretending it published. */
+  saveState?: 'retrying' | 'failed';
 };
 
 /** Sync bridge between an object's stored render config and the NESTED
@@ -356,27 +392,48 @@ const DeskObjectView = memo(function DeskObjectView({
   obj,
   dragging,
   nudged,
+  landing,
   deskLens,
   onPointerDown,
   onNudgeEnd,
+  onLandEnd,
 }: {
   obj: DeskObject;
   dragging: boolean;
   /** Foreign-drag feedback — plays the nudge-and-settle keyframe. */
   nudged: boolean;
+  /** Fresh arrival — plays the ratified doodle-lands spring (scale-in
+   *  0.92→1 slight overshoot + sit-shadow fade; 25-research motion table).
+   *  Done-mints and drag-to-place drops share this ONE moment — no third
+   *  motion family. Interruptible: pointer events stay live throughout. */
+  landing: boolean;
   deskLens: boolean;
   onPointerDown: (e: React.PointerEvent, obj: DeskObject) => void;
   onNudgeEnd: () => void;
+  onLandEnd: (id: string) => void;
 }) {
   return (
     <div
       onPointerDown={(e) => onPointerDown(e, obj)}
-      onAnimationEnd={nudged ? onNudgeEnd : undefined}
-      // The nudge rides a CLASS (not an inline animation) so the page's
-      // prefers-reduced-motion media query can swap the keyframe — inline
-      // styles can't be overridden by a media query (R5). Both keyframes fire
-      // animationend, so onNudgeEnd always clears the state.
-      className={nudged ? 'dd-nudge' : undefined}
+      // Route by animationName — nudge and land (and their reduced-motion
+      // twins) both fire animationend, and each clears only its own state.
+      onAnimationEnd={
+        nudged || landing
+          ? (e) => {
+              if (e.animationName.startsWith('dd-land')) onLandEnd(obj.id);
+              else if (nudged) onNudgeEnd();
+            }
+          : undefined
+      }
+      // Both moments ride CLASSES (not inline animations) so the page's
+      // prefers-reduced-motion media query can swap the keyframes — inline
+      // styles can't be overridden by a media query (R5). All keyframes fire
+      // animationend, so the states always clear. (An object can't be nudged
+      // and landing at once — nudge is foreign-only, landing is own-only.)
+      className={
+        [nudged ? 'dd-nudge' : '', landing ? 'dd-land' : ''].filter(Boolean).join(' ') ||
+        undefined
+      }
       style={{
         position: 'absolute',
         left: obj.x,
@@ -396,6 +453,36 @@ const DeskObjectView = memo(function DeskObjectView({
         renderConfig={obj.renderConfig ?? null}
         deskLens={deskLens}
       />
+      {/* PUBLISH HONESTY badge (UX-audit fix 3) — quiet, under the object,
+          only while a publish is retrying or has permanently failed. Faint
+          paper backing so it reads over the grain; pointer-transparent so
+          drag/click behave exactly as without it. */}
+      {obj.saveState && (
+        <span
+          role="status"
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            marginTop: 4,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            fontFamily: IS,
+            fontSize: 9,
+            fontStyle: 'italic',
+            letterSpacing: '0.02em',
+            color: 'var(--dir-text-body-soft)',
+            background: 'color-mix(in srgb, var(--dir-bg) 82%, transparent)',
+            borderRadius: 999,
+            padding: '2px 8px',
+          }}
+        >
+          {obj.saveState === 'retrying'
+            ? 'not saved — retrying'
+            : 'couldn’t save — kept on your desk'}
+        </span>
+      )}
     </div>
   );
 });
@@ -490,9 +577,10 @@ function rowToObject(r: DoodleRow): DeskObject {
     ownerSession: r.session_id ?? null,
     createdAt: r.created_at ?? null,
     // The pen snapshot (D-6) — parsed ONCE here so the object's config is
-    // referentially stable for the memoized render path. null on pre-config
-    // rows → live-global fallback.
-    renderConfig: parseRenderConfig(r.render_config),
+    // referentially stable for the memoized render path. Pre-config legacy
+    // rows pin to the frozen DEFAULT snapshot (UX-audit fix 1) so the Pen
+    // scope touches nothing placed; the Desk lens still sweeps them.
+    renderConfig: parseRenderConfig(r.render_config) ?? LEGACY_FREEZE_CONFIG,
   };
 }
 
@@ -551,6 +639,42 @@ export function DeskPage() {
   // delete disappears from the drawer, a Done / place-copy appears in it.
   const [drawerNonce, setDrawerNonce] = useState(0);
   const bumpDrawer = useCallback(() => setDrawerNonce((n) => n + 1), []);
+
+  // ── DOUBLE-PUBLISH GUARD (UX-audit fix 2) ────────────────────────────────
+  // Staged markups whose publish hasn't settled yet. The naming-stage Place
+  // double-fire (double-click / Enter+click racing) re-enters addObject with
+  // the SAME staged markup before the first publish resolves — re-entries
+  // are ignored until that publish settles (success or permanent failure),
+  // so one Done mints exactly one object + one row.
+  const inFlightPublishRef = useRef<Set<string>>(new Set());
+  // PUBLISH RETRY timers (UX-audit fix 3) — per-object so unmount cancels
+  // every pending backoff instead of letting a late retry fire into a
+  // torn-down page.
+  const retryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  useEffect(
+    () => () => {
+      retryTimersRef.current.forEach(clearTimeout);
+      retryTimersRef.current.clear();
+    },
+    [],
+  );
+
+  // ── THE DOODLE-LANDS MOMENT (ratified, 25-research motion table) ─────────
+  // ids currently playing the landing spring. Done-mints, Place-here copies
+  // and drag-to-place drops ALL mark their optimistic add here — one shared
+  // moment, reused, never a new motion family. Cleared by animationend.
+  const [landingIds, setLandingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const markLanding = useCallback((id: string) => {
+    setLandingIds((prev) => new Set(prev).add(id));
+  }, []);
+  const clearLanding = useCallback((id: string) => {
+    setLandingIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
 
   // ── HONEST CONNECTIVITY (R3/R4) ──────────────────────────────────────────
   // The ●Live chip must never lie: `feedStatus` tracks the LOAD lifecycle
@@ -933,11 +1057,21 @@ export function DeskPage() {
          *  carried VERBATIM into the copy (strokes and any future extras ride
          *  through untouched) instead of snapshotting the live pen. null =
          *  the source predates configs — the copy publishes configless too
-         *  (live-global fallback, the same look rule as its original).
-         *  Absent (undefined) = the normal pen-snapshot path. */
+         *  (the row stays legacy; renders freeze on read, same rule as its
+         *  original). Absent (undefined) = the normal pen-snapshot path. */
         sourceConfig?: Record<string, unknown> | null;
+        /** DRAG-TO-PLACE (DRAWER v2 item 2): desk coordinates of the drop
+         *  point. Present = the user CHOSE the spot — the object centers on
+         *  it and P-1 smart placement stays out of the way. Absent = the
+         *  normal scatter + anti-cover placement. */
+        at?: { x: number; y: number };
       },
     ) => {
+      // DOUBLE-PUBLISH GUARD (UX-audit fix 2): ignore re-entry while a
+      // publish for this same staged markup is in flight (the naming-stage
+      // Place double-fire) — released when that publish settles.
+      if (inFlightPublishRef.current.has(rawMarkup)) return;
+      inFlightPublishRef.current.add(rawMarkup);
       const svgMarkup = normalizeSvgSize(rawMarkup, 180);
       counterRef.current += 1;
       const id = `doodle-${counterRef.current}`;
@@ -956,38 +1090,48 @@ export function DeskPage() {
       const dx = (((h & 0xff) / 255) - 0.5) * 160; // ±80px
       const dy = ((((h >> 8) & 0xff) / 255) - 0.5) * 120; // ±60px
       const rotation = ((((h >> 16) & 0xff) / 255) - 0.5) * 16; // ±8°
-      // P-1 SMART PLACEMENT (anti-cover — smart-system plan Phase P): score a
-      // deterministic candidate set (hash spot first, then rings widening from
-      // the view center) against existing objects' footprints and land on the
-      // least-covered spot. Clear desk → hash spot wins (old behavior intact);
-      // crowded desk → the doodle finds open paper instead of piling on.
-      const FOOT = 190; // ~180px object + breathing room
-      const candidates: Array<[number, number]> = [[cx + dx, cy + dy]];
-      for (let ring = 1; ring <= 4; ring++) {
-        for (let k = 0; k < 8; k++) {
-          const ang = (((h % 8) + k) / 8) * Math.PI * 2 + ring * 0.39;
-          const r = ring * 110;
-          candidates.push([cx + Math.cos(ang) * r, cy + Math.sin(ang) * r * 0.72]);
+      let x: number;
+      let y: number;
+      if (meta?.at) {
+        // DRAG-TO-PLACE: land exactly where dropped — the ~180px object
+        // centers on the drop point. The user chose this spot with their
+        // hand; P-1 smart placement only owns the choice when nobody made one.
+        x = meta.at.x - 90;
+        y = meta.at.y - 90;
+      } else {
+        // P-1 SMART PLACEMENT (anti-cover — smart-system plan Phase P): score a
+        // deterministic candidate set (hash spot first, then rings widening from
+        // the view center) against existing objects' footprints and land on the
+        // least-covered spot. Clear desk → hash spot wins (old behavior intact);
+        // crowded desk → the doodle finds open paper instead of piling on.
+        const FOOT = 190; // ~180px object + breathing room
+        const candidates: Array<[number, number]> = [[cx + dx, cy + dy]];
+        for (let ring = 1; ring <= 4; ring++) {
+          for (let k = 0; k < 8; k++) {
+            const ang = (((h % 8) + k) / 8) * Math.PI * 2 + ring * 0.39;
+            const r = ring * 110;
+            candidates.push([cx + Math.cos(ang) * r, cy + Math.sin(ang) * r * 0.72]);
+          }
         }
-      }
-      const overlapScore = (px: number, py: number) => {
-        let s = 0;
-        for (const o of objectsRef.current) {
-          const ix = Math.max(0, FOOT - Math.abs(px - o.x));
-          const iy = Math.max(0, FOOT - Math.abs(py - o.y));
-          s += ix * iy;
-        }
-        return s;
-      };
-      let x = candidates[0][0];
-      let y = candidates[0][1];
-      let bestScore = overlapScore(x, y);
-      for (let i = 1; i < candidates.length && bestScore > 0; i++) {
-        const s = overlapScore(candidates[i][0], candidates[i][1]);
-        if (s < bestScore - 1) {
-          bestScore = s;
-          x = candidates[i][0];
-          y = candidates[i][1];
+        const overlapScore = (px: number, py: number) => {
+          let s = 0;
+          for (const o of objectsRef.current) {
+            const ix = Math.max(0, FOOT - Math.abs(px - o.x));
+            const iy = Math.max(0, FOOT - Math.abs(py - o.y));
+            s += ix * iy;
+          }
+          return s;
+        };
+        x = candidates[0][0];
+        y = candidates[0][1];
+        let bestScore = overlapScore(x, y);
+        for (let i = 1; i < candidates.length && bestScore > 0; i++) {
+          const s = overlapScore(candidates[i][0], candidates[i][1]);
+          if (s < bestScore - 1) {
+            bestScore = s;
+            x = candidates[i][0];
+            y = candidates[i][1];
+          }
         }
       }
       setDrawOpen(false);
@@ -1015,8 +1159,10 @@ export function DeskPage() {
       const publishConfig: Record<string, unknown> | null = isCopy
         ? (meta?.sourceConfig ?? null)
         : penSnapshot;
+      // Configless copy sources pin to the same frozen DEFAULT the reload
+      // path applies (UX-audit fix 1) — first paint == post-reload paint.
       const localConfig: ObjectRenderConfig | null = isCopy
-        ? parseRenderConfig(meta?.sourceConfig)
+        ? (parseRenderConfig(meta?.sourceConfig) ?? LEGACY_FREEZE_CONFIG)
         : penSnapshot;
       const name = meta?.name ?? null;
       const why = meta?.why ?? null;
@@ -1046,6 +1192,9 @@ export function DeskPage() {
             why,
           },
         ]);
+        // The ratified doodle-lands moment — Done-mints, Place-here copies
+        // and drag-to-place drops all arrive through here, one shared spring.
+        markLanding(id);
       }
 
       // M9 — auto-publish to the shared feed. The data layer's RPC handles the
@@ -1054,37 +1203,91 @@ export function DeskPage() {
       // filled the desk). renderConfig persists the pen snapshot into
       // doodles.render_config (D-6) so every viewer renders this object under
       // the look it was MADE with.
-      publishDoodle({ svg: svgMarkup, x, y, rotation, name, why, deskId: openDeskId ?? undefined, renderConfig: publishConfig })
-        .then(({ row, desk: landedDesk }) => {
-          // The record exists now — the drawer index gains a row (#29).
-          bumpDrawer();
-          // The desk this object actually landed on (when v2 is live).
-          if (landedDesk) {
-            const spawnedFresh = openDeskId != null && landedDesk.id !== openDeskId;
-            // The open desk may have advanced (this Done filled it and spawned
-            // the next). Track the new open desk so future draws route right.
-            setOpenDeskId(landedDesk.id);
+      //
+      // PUBLISH HONESTY (UX-audit fix 3): a rejected publish no longer fails
+      // silently — the optimistic object gets a quiet "not saved — retrying"
+      // badge and the publish auto-retries on backoff (PUBLISH_RETRY_DELAYS_MS).
+      // Success clears the badge; exhausting the attempts marks it honestly
+      // failed and the object stays desk-local for this session. The in-flight
+      // guard key is held through the retries, so a Place double-fire can't
+      // sneak a duplicate in between attempts either.
+      const payload = {
+        svg: svgMarkup,
+        x,
+        y,
+        rotation,
+        name,
+        why,
+        deskId: openDeskId ?? undefined,
+        renderConfig: publishConfig,
+      };
+      const settle = () => {
+        inFlightPublishRef.current.delete(rawMarkup);
+        const t = retryTimersRef.current.get(id);
+        if (t) clearTimeout(t);
+        retryTimersRef.current.delete(id);
+      };
+      const setSaveState = (s: DeskObject['saveState']) =>
+        setObjects((prev) => prev.map((o) => (o.id === id ? { ...o, saveState: s } : o)));
+      const attempt = (tryNo: number) => {
+        publishDoodle(payload)
+          .then(({ row, desk: landedDesk }) => {
+            settle();
+            // The record exists now — the drawer index gains a row (#29).
+            bumpDrawer();
+            // The desk this object actually landed on (when v2 is live).
+            if (landedDesk) {
+              const spawnedFresh = openDeskId != null && landedDesk.id !== openDeskId;
+              // The open desk may have advanced (this Done filled it and spawned
+              // the next). Track the new open desk so future draws route right.
+              setOpenDeskId(landedDesk.id);
 
-            const switchingView = desk == null || landedDesk.id !== desk.id;
-            if (switchingView) {
-              // Either we were viewing a closed past desk (add routes to open),
-              // or the desk just filled + spawned — show the now-open desk.
-              if (spawnedFresh) announceFreshDesk(landedDesk.name);
-              loadDeskView(landedDesk);
-              return; // loadDeskView repaints; skip the local dbId patch.
+              const switchingView = desk == null || landedDesk.id !== desk.id;
+              if (switchingView) {
+                // Either we were viewing a closed past desk (add routes to open),
+                // or the desk just filled + spawned — show the now-open desk.
+                if (spawnedFresh) announceFreshDesk(landedDesk.name);
+                loadDeskView(landedDesk);
+                return; // loadDeskView repaints; skip the local dbId patch.
+              }
             }
-          }
-          // Same desk still in view — attach the row id (drag/delete target)
-          // + the server timestamp so the card shows a real date.
-          setObjects((prev) =>
-            prev.map((o) =>
-              o.id === id ? { ...o, dbId: row.id, createdAt: row.created_at ?? o.createdAt } : o,
-            ),
-          );
-        })
-        .catch((err) => {
-          console.warn('[desk] publish failed — object stays local:', err.message);
-        });
+            // Same desk still in view — attach the row id (drag/delete target)
+            // + the server timestamp so the card shows a real date; clear any
+            // retry badge (a late success after a failed first attempt).
+            setObjects((prev) =>
+              prev.map((o) =>
+                o.id === id
+                  ? {
+                      ...o,
+                      dbId: row.id,
+                      createdAt: row.created_at ?? o.createdAt,
+                      saveState: undefined,
+                    }
+                  : o,
+              ),
+            );
+          })
+          .catch((err) => {
+            const delay = PUBLISH_RETRY_DELAYS_MS[tryNo - 1];
+            if (delay != null) {
+              console.warn(
+                `[desk] publish attempt ${tryNo} failed — retrying in ${delay}ms:`,
+                err.message,
+              );
+              setSaveState('retrying');
+              const t = setTimeout(() => {
+                retryTimersRef.current.delete(id);
+                attempt(tryNo + 1);
+              }, delay);
+              retryTimersRef.current.set(id, t);
+            } else {
+              console.warn('[desk] publish failed permanently — object stays local:', err.message);
+              settle();
+              setSaveState('failed');
+            }
+          });
+      };
+      attempt(1);
     },
     [
       isViewingOpenDesk,
@@ -1095,6 +1298,7 @@ export function DeskPage() {
       penStyle,
       penModifiers,
       bumpDrawer,
+      markLanding,
     ],
   );
 
@@ -1114,6 +1318,51 @@ export function DeskPage() {
       });
     },
     [addObject],
+  );
+
+  // ── DRAG-TO-PLACE drop target (DRAWER v2 item 2) ─────────────────────────
+  // The desk accepts drags carrying the DD_DOODLE_MIME payload (the drawer's
+  // mini cards are the drag source). Drop = a COPY published at the drop
+  // point through the exact addObject sourceConfig path Place-here uses
+  // (same ~180px normalize, same optimistic add + RPC + desk-spawn handling,
+  // same doodle-lands moment) — the keyboard/fallback Place-here pill stays.
+  const handleDeskDragOver = useCallback((e: React.DragEvent) => {
+    // dataTransfer VALUES are protected until drop — only the type list is
+    // readable here, which is exactly enough to accept or ignore the drag.
+    if (Array.from(e.dataTransfer.types).includes(DD_DOODLE_MIME)) {
+      e.preventDefault(); // accept — without this the drop event never fires
+      e.dataTransfer.dropEffect = 'copy'; // place = COPY (#28); the cursor says so
+    }
+  }, []);
+
+  const handleDeskDrop = useCallback(
+    (e: React.DragEvent) => {
+      const raw = e.dataTransfer.getData(DD_DOODLE_MIME);
+      if (!raw) return; // not ours — leave the event alone
+      e.preventDefault();
+      // Defensive parse — the payload crosses a string boundary, so it gets
+      // the same treatment as a DB read: parse, type-check, sanitize.
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      const svg = payload.svg;
+      if (typeof svg !== 'string' || svg.trim() === '') return;
+      const rc = payload.renderConfig;
+      // The drop point in DESK coordinates (camera-aware, any zoom/pan).
+      const p = screenToDesk(e.clientX, e.clientY);
+      addObject(sanitizeSvgMarkup(svg), {
+        name: typeof payload.name === 'string' && payload.name ? payload.name : null,
+        why: typeof payload.why === 'string' && payload.why ? payload.why : null,
+        // sourceConfig present (even null) marks this Done a COPY — the
+        // source's config rides verbatim, strokes included (#28).
+        sourceConfig: rc && typeof rc === 'object' ? (rc as Record<string, unknown>) : null,
+        at: p,
+      });
+    },
+    [addObject, screenToDesk],
   );
 
   // Drag — same pointer-event pattern as the playground's placed items, but
@@ -1314,8 +1563,35 @@ export function DeskPage() {
       .dd-nudge { animation: dd-foreign-nudge 280ms ease-out; }
       @media (prefers-reduced-motion: reduce) {
         .dd-nudge { animation: dd-foreign-nudge-dim 280ms ease-out; }
+      }
+      /* THE DOODLE-LANDS MOMENT (ratified, 25-research motion table): ONE
+         spring — scale-in 0.92→1 with slight overshoot; the opacity ramp
+         fades the ink AND its sit-shadow in together (the filter lives on
+         the same subtree). Animates the standalone scale property so it
+         composes with the wrapper's rotate — and stays interruptible
+         (pointer events live throughout; a mid-spring grab just works).
+         Done-mints and drag-to-place drops share this one moment — no
+         third motion family. Reduced motion keeps the fade, drops the
+         spring; both fire animationend so the landing state always clears. */
+      @keyframes dd-land {
+        0% { scale: 0.92; opacity: 0; }
+        62% { scale: 1.015; opacity: 1; }
+        100% { scale: 1; opacity: 1; }
+      }
+      @keyframes dd-land-dim {
+        0% { opacity: 0; }
+        100% { opacity: 1; }
+      }
+      .dd-land { animation: dd-land 360ms cubic-bezier(0.22, 1, 0.36, 1); }
+      @media (prefers-reduced-motion: reduce) {
+        .dd-land { animation: dd-land-dim 360ms ease-out; }
       }`}</style>
-      {/* Top chrome — brand + desk readout left, Add doodle center, controls toggle + Live right */}
+      {/* Top chrome — HEADER CRAFT PASS (ROUND 6 spec): one shared control
+          row; 12px gaps INSIDE clusters, 20px BETWEEN clusters; wordmark /
+          desk name / count sit on ONE baseline; the zoom cluster reads as
+          one unit; the Pen|Desk caption hangs under its pills without
+          pushing them off the row axis; the LIVE chip centers with the
+          pill row because everything centers on the same single row. */}
       <header
         style={{
           padding: '16px 24px',
@@ -1323,39 +1599,32 @@ export function DeskPage() {
           display: 'grid',
           gridTemplateColumns: '1fr auto 1fr',
           alignItems: 'center',
-          gap: 24,
+          gap: 20,
           background: 'var(--dir-bg)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
-          <NavLink
-            to="/"
-            style={{
-              fontFamily: ISe,
-              fontSize: 18,
-              letterSpacing: '-0.01em',
-              color: 'var(--dir-text-primary)',
-              textDecoration: 'none',
-              flexShrink: 0,
-            }}
-          >
-            Desk Doodles
-          </NavLink>
-
-          {/* THE DRAWER toggle — left side of the chrome for the left panel
-              (toggles-always-in-chrome; #30 left CollapsiblePanel). */}
-          <PanelToggle
-            side="left"
-            open={drawerOpen}
-            label="Drawer"
-            onToggle={toggleDrawer}
-            controlsId="desk-drawer-panel"
-          />
-
-          {/* Current desk name + object count / cap. The name comes from the
-              desk row (data layer generated it via deskName); the readout is
-              objects-on-this-desk / cap. */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+        {/* IDENTITY side — [wordmark · desk name · count] on one shared
+            baseline (12px intra), then the DRAWER toggle with breathing room
+            (20px inter; toggles-always-in-chrome, #30 left panel). */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
+            <NavLink
+              to="/"
+              style={{
+                fontFamily: ISe,
+                fontSize: 18,
+                letterSpacing: '-0.01em',
+                color: 'var(--dir-text-primary)',
+                textDecoration: 'none',
+                flexShrink: 0,
+              }}
+            >
+              Desk Doodles
+            </NavLink>
+            {/* Desk name from the desk row (deskName generator). overflow
+                'clip' (not 'hidden') keeps the span's text baseline alive for
+                the row's baseline alignment — a hidden-overflow flex item
+                synthesizes its baseline from the border box and drifts. */}
             <span
               title={isViewingOpenDesk ? deskTitle : `${deskTitle} (past desk — viewing)`}
               style={{
@@ -1363,8 +1632,9 @@ export function DeskPage() {
                 fontSize: 13,
                 color: 'var(--dir-text-body)',
                 whiteSpace: 'nowrap',
-                overflow: 'hidden',
+                overflow: 'clip',
                 textOverflow: 'ellipsis',
+                minWidth: 0,
               }}
             >
               {deskTitle}
@@ -1372,30 +1642,35 @@ export function DeskPage() {
                 <span style={{ color: 'var(--dir-text-body-soft)' }}> · past desk</span>
               )}
             </span>
-            <span style={{ ...SECTION_LABEL, fontSize: 9 }}>{countReadout}</span>
+            {/* Objects-on-this-desk / cap — same baseline as the names. */}
+            <span style={{ ...SECTION_LABEL, fontSize: 9, flexShrink: 0 }}>{countReadout}</span>
           </div>
+          <PanelToggle
+            side="left"
+            open={drawerOpen}
+            label="Drawer"
+            onToggle={toggleDrawer}
+            controlsId="desk-drawer-panel"
+          />
         </div>
 
         <button onClick={() => setDrawOpen(true)} style={CTA}>
           Add doodle
         </button>
 
-        <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>
+        {/* CONTROL side — four clusters at the 20px inter-cluster rhythm:
+            scope gate · zoom unit · panel toggle · live chip. One row, one
+            vertical center — nothing two-line in flow. */}
+        <div style={{ justifySelf: 'end', display: 'flex', gap: 20, alignItems: 'center' }}>
           {/* THE PEN|DESK GATE (D-7 ratified) — scope is always visible, never
               implicit. Pen: the panel styles the draw popup + your NEXT doodle;
               placed records hold their own looks. Desk: the viewer-local sweep
               — the panel restyles everything you see (nobody else's view, no
               record writes; flipping back lifts the lens). The caption keeps
-              the active scope readable without opening the doc. */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 3,
-              marginRight: 8,
-            }}
-          >
+              the active scope readable without opening the doc — ABSOLUTE so
+              it hangs under the pills (centered on them, never floating off)
+              while the pill row itself stays on the shared control axis. */}
+          <div style={{ position: 'relative' }}>
             <div role="tablist" aria-label="Panel scope" style={{ display: 'flex', gap: 4 }}>
               {(
                 [
@@ -1430,6 +1705,10 @@ export function DeskPage() {
             </div>
             <span
               style={{
+                position: 'absolute',
+                top: 'calc(100% + 3px)',
+                left: '50%',
+                transform: 'translateX(-50%)',
                 fontFamily: IS,
                 fontSize: 9,
                 letterSpacing: '0.02em',
@@ -1442,20 +1721,40 @@ export function DeskPage() {
                 : 'styling your next doodle'}
             </span>
           </div>
-          {/* Desk camera controls — toggles live in chrome, never on the desk.
-              − / % / + zoom about the viewport center; Fit = full desk (⌘0). */}
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {/* DESK CAMERA — ONE visual unit: a single bordered pill wrapping
+              borderless − / % / + / Fit segments (shared bounding treatment
+              per the craft spec). Toggles live in chrome, never on the desk;
+              zoom steps about the viewport center; Fit = full desk (⌘0). */}
+          <div
+            role="group"
+            aria-label="Desk zoom"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              padding: 2,
+              border: '1px solid var(--dir-border)',
+              borderRadius: 999,
+            }}
+          >
             <button
               onClick={() => zoomBy(1 / ZOOM_STEP)}
               title="Zoom out"
               aria-label="Zoom out"
-              style={{ ...PILL, padding: '6px 10px' }}
+              style={{ ...PILL, border: 'none', padding: '4px 10px' }}
             >
               −
             </button>
             <span
               title="Desk zoom"
-              style={{ ...CHIP, minWidth: 52, justifyContent: 'center', letterSpacing: '0.02em' }}
+              style={{
+                ...CHIP,
+                border: 'none',
+                padding: '4px 2px',
+                minWidth: 44,
+                justifyContent: 'center',
+                letterSpacing: '0.02em',
+              }}
             >
               {Math.round(camera.zoom * 100)}%
             </span>
@@ -1463,7 +1762,7 @@ export function DeskPage() {
               onClick={() => zoomBy(ZOOM_STEP)}
               title="Zoom in"
               aria-label="Zoom in"
-              style={{ ...PILL, padding: '6px 10px' }}
+              style={{ ...PILL, border: 'none', padding: '4px 10px' }}
             >
               +
             </button>
@@ -1471,7 +1770,7 @@ export function DeskPage() {
               onClick={resetCamera}
               title="Fit the full desk (⌘0)"
               aria-label="Fit the full desk"
-              style={PILL}
+              style={{ ...PILL, border: 'none', padding: '4px 12px' }}
             >
               Fit
             </button>
@@ -1551,6 +1850,8 @@ export function DeskPage() {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
+          onDragOver={handleDeskDragOver}
+          onDrop={handleDeskDrop}
           style={{
             flex: 1,
             minWidth: 0,
@@ -1624,9 +1925,11 @@ export function DeskPage() {
                 obj={obj}
                 dragging={draggingId === obj.id}
                 nudged={nudgeId === obj.id}
+                landing={landingIds.has(obj.id)}
                 deskLens={deskLens}
                 onPointerDown={handlePointerDown}
                 onNudgeEnd={clearNudge}
+                onLandEnd={clearLanding}
               />
             ))}
           </div>
@@ -1745,12 +2048,14 @@ export function DeskPage() {
       </div>
 
       {/* Draw popup — unmounts on close, so each open is a fresh session.
-          rightInset centers it over the desk area when the controls panel is open. */}
+          rightInset/leftInset center it over the VISIBLE desk when the
+          controls panel and/or drawer are open (UX-audit fix 4). */}
       {drawOpen && (
         <DrawPanel
           onDone={addObject}
           onCancel={() => setDrawOpen(false)}
           rightInset={rightOpen ? 360 : 0}
+          leftInset={drawerOpen ? 300 : 0}
         />
       )}
 
@@ -1819,8 +2124,10 @@ export function DeskPage() {
                     }
                   : undefined
               }
-              // Center over the desk area, not behind the open controls panel.
+              // Center over the VISIBLE desk area — not behind the open
+              // controls panel, and not behind the open drawer either.
               rightInset={rightOpen ? 360 : 0}
+              leftInset={drawerOpen ? 300 : 0}
             />
           );
         })()}

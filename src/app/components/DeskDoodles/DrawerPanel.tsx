@@ -1,31 +1,56 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { IS, ISe } from '../../lib/typography';
-import { CHIP, PILL, SECTION_LABEL } from '../../lib/chromeStyles';
-import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
+import { IS } from '../../lib/typography';
+import { PILL, SECTION_LABEL } from '../../lib/chromeStyles';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { listDesks, listMyDoodles, type DoodleRow } from '../../lib/publish';
 import { sanitizeSvgMarkup } from '../../lib/svgUpload';
+import { ObjectCard } from './ObjectCard';
 
-// ─── DrawerPanel — "My doodles", the passive cross-desk index ───────────────
-// Sebs-ratified drawer decisions (2026-06-11 board, #26-32):
+// ─── DrawerPanel v2 — "My doodles", the collectible binder (round 6) ─────────
+// Sebs-ratified drawer decisions (2026-06-11 board #26-32 + 2026-06-12 round 6):
 //   #26 the drawer is a PASSIVE INDEX, not a stash — records live on desks;
-//       the drawer is the VIEW that groups records by owner (object-model
-//       doc's unifying frame: every feature is a VIEW of the same record).
+//       the drawer is the VIEW that groups records by owner.
 //   #27 CROSS-DESK: lists this session's doodles across ALL desks
-//       (publish.ts listMyDoodles — additive helper, 2026-06-12).
-//   #28 "Place here" = COPY: a NEW row publishes onto the current open desk
-//       through DeskPage's addObject path (same normalize, same P-1 smart
-//       placement); the original row is untouched and the copy carries the
-//       source's render_config verbatim — strokes included.
+//       (publish.ts listMyDoodles).
+//   #28 placing = COPY: a NEW row publishes onto the current open desk
+//       through DeskPage's addObject path; the original row is untouched and
+//       the copy carries the source's render_config verbatim.
 //   #29 ONE-RECORD delete semantics: deleting a doodle from a desk removes
 //       it here too — same record, two views. The footer says so honestly.
-//   #30 LEFT CollapsiblePanel, mirroring the right Controls panel (shell +
-//       PanelToggle live in DeskPage chrome — toggles-always-in-chrome).
+//   #30 LEFT CollapsiblePanel (shell + PanelToggle live in DeskPage chrome).
+//   R6.1 2-COL GRID of MINI COLLECTIBLE CARDS (ObjectCard mini — TCG frame:
+//        name banner, the one marks stat, art well). Kills the v1
+//        one-row-too-much-scrolling problem. Premium card treatment
+//        (shine/colophon) rides the 06-16 identity pass.
+//   R6.2 DRAG-TO-PLACE: every card is an HTML5 drag source (contract below);
+//        the desk is the drop side. The Place-here pill STAYS — it is the
+//        keyboard/fallback path for the same copy semantics.
+//   R6.4 CLICK-TO-OPEN: a card click opens the SAME Edit ObjectSurface the
+//        desk uses (one surface everywhere; drawer cards are always yours) —
+//        via the onOpenDoodle prop, wired by DeskPage's activeSurface flow.
 //
-// Mini art follows the DeskGallery MiniDesk precedent: stored markup is
-// normalized small + sanitized on read + injected as PLAIN inline SVG —
-// deliberately NOT the full SvgStyleTransform pipeline (cheap, deterministic,
-// and the drawer never re-renders on pen tweaks).
+// Mini art is PLAIN-injected (sanitized + normalized record markup), NOT the
+// live SvgStyleTransform pipeline: deterministic, cheap at N cards, and the
+// binder never re-renders on pen tweaks (records rule, D-7). The pipeline
+// renders the copy once it lands on the desk with the carried render_config.
+
+// ─── Drag contract (R6.2 — drawer card → desk drop) ──────────────────────────
+// The drawer side WRITES, the desk side (DeskPage, rock A) READS:
+//   dataTransfer type:  DD_DOODLE_DRAG_TYPE = 'application/x-dd-doodle'
+//   dataTransfer data:  JSON.stringify(DoodleDragPayload)
+//   effectAllowed:      'copy' (drop = copy published at the drop point, #28)
+//   drag image:         the card's art well ([data-dd-card-art])
+// The payload svg is the RAW record markup — the drop side sanitizes on read
+// (sanitizeSvgMarkup) exactly like placeFromDrawer does.
+export const DD_DOODLE_DRAG_TYPE = 'application/x-dd-doodle';
+
+/** JSON shape carried on a drawer-card drag (parse on drop). */
+export interface DoodleDragPayload {
+  svg: string;
+  name: string | null;
+  why: string | null;
+  renderConfig: Record<string, unknown> | null;
+}
 
 type DrawerState =
   | { phase: 'loading' }
@@ -37,6 +62,7 @@ export function DrawerPanel({
   refreshKey,
   viewedDeskId,
   onPlace,
+  onOpenDoodle,
 }: {
   /** Panel visibility — a closed drawer doesn't fetch. */
   open: boolean;
@@ -47,6 +73,12 @@ export function DrawerPanel({
   viewedDeskId: string | null;
   /** Place-here: DeskPage publishes a COPY via its addObject path (#28). */
   onPlace: (row: DoodleRow) => void;
+  /** CLICK-TO-OPEN (R6.4): card click opens the SAME Edit ObjectSurface the
+   *  desk objects use — DeskPage wires this into its activeSurface flow
+   *  (drawer cards are always the session's own, so Edit is the right mode;
+   *  rows not on the viewed desk need DeskPage to resolve/show the record).
+   *  Optional: while unwired, cards are draggable but not clickable. */
+  onOpenDoodle?: (row: DoodleRow) => void;
 }) {
   const [state, setState] = useState<DrawerState>({ phase: 'loading' });
   // Manual retry for the error state — a passive index doesn't poll.
@@ -136,9 +168,6 @@ export function DrawerPanel({
         style={{
           flex: 1,
           padding: '12px 12px 8px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
         }}
       >
         {state.phase === 'loading' && <DrawerNote>Opening your drawer…</DrawerNote>}
@@ -162,21 +191,33 @@ export function DrawerPanel({
           </DrawerNote>
         )}
 
-        {state.phase === 'ready' &&
-          state.rows.map((row) => (
-            <DrawerRow
-              key={row.id}
-              row={row}
-              deskLabel={
-                row.desk_id
-                  ? (state.deskNames.get(row.desk_id) ?? 'A desk')
-                  : 'Shared desk'
-              }
-              here={row.desk_id === viewedDeskId}
-              placed={placedId === row.id}
-              onPlace={() => handlePlace(row)}
-            />
-          ))}
+        {/* The binder — 2-col grid of mini collectible cards (R6.1). */}
+        {state.phase === 'ready' && state.rows.length > 0 && (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gap: 10,
+              alignItems: 'start',
+            }}
+          >
+            {state.rows.map((row) => (
+              <DrawerCard
+                key={row.id}
+                row={row}
+                deskLabel={
+                  row.desk_id
+                    ? (state.deskNames.get(row.desk_id) ?? 'A desk')
+                    : 'Shared desk'
+                }
+                here={row.desk_id === viewedDeskId}
+                placed={placedId === row.id}
+                onPlace={() => handlePlace(row)}
+                onOpen={onOpenDoodle ? () => onOpenDoodle(row) : undefined}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Honest one-record footer (#29) — only when there's something to lose. */}
@@ -192,7 +233,8 @@ export function DrawerPanel({
             color: 'var(--dir-text-body-soft)',
           }}
         >
-          Removing a doodle removes it from your drawer too.
+          Drag a card onto the desk to place a copy. Removing a doodle removes
+          it from your drawer too.
         </div>
       )}
     </div>
@@ -220,131 +262,146 @@ function DrawerNote({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** ~52px mini-doodle inside the 64px art well (MiniDesk sizing spirit). */
-const ART_PX = 52;
+/** Fallback px size for plain art when the stretch step can't run — the
+ *  normalize call's real job here is deriving a viewBox for markup without
+ *  one, so the 100%-stretched svg scales inside the card's art well. */
+const PLAIN_ART_FALLBACK_PX = 96;
 
-function DrawerRow({
+/** Prep the record markup for the mini card's plain art well: derive a
+ *  viewBox / canonical size (normalizeSvgSize), stretch the root svg to
+ *  100%×100% so the well box owns the final size, and sanitize LAST before
+ *  injection — the same read-side XSS rule the desk feed applies. */
+function plainArtMarkup(svg: string): string {
+  const normalized = normalizeSvgSize(svg, PLAIN_ART_FALLBACK_PX);
+  let stretched = normalized;
+  try {
+    const doc = new DOMParser().parseFromString(normalized, 'image/svg+xml');
+    const root = doc.documentElement;
+    if (!doc.querySelector('parsererror') && root.tagName.toLowerCase() === 'svg') {
+      root.setAttribute('width', '100%');
+      root.setAttribute('height', '100%');
+      stretched = new XMLSerializer().serializeToString(root);
+    }
+  } catch {
+    // keep the normalized px-sized markup — still renders, just fixed-size
+  }
+  return sanitizeSvgMarkup(stretched);
+}
+
+function DrawerCard({
   row,
   deskLabel,
   here,
   placed,
   onPlace,
+  onOpen,
 }: {
   row: DoodleRow;
   deskLabel: string;
   here: boolean;
   placed: boolean;
   onPlace: () => void;
+  onOpen?: () => void;
 }) {
-  // Normalize small, then sanitize on read before injection — the exact
-  // MiniDesk order + the same XSS rule the desk feed rows use.
-  const markup = useMemo(
-    () => sanitizeSvgMarkup(normalizeSvgSize(row.svg, ART_PX)),
-    [row.svg],
-  );
+  const markup = useMemo(() => plainArtMarkup(row.svg), [row.svg]);
+  const displayName = row.name || 'Untitled doodle';
+  const deskLine = here ? `${deskLabel} · here` : deskLabel;
 
-  const chipText = here ? `${deskLabel} · here` : deskLabel;
+  // R6.2 drag source — see the drag contract block at the top of this file.
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    const payload: DoodleDragPayload = {
+      svg: row.svg,
+      name: row.name ?? null,
+      why: row.why ?? null,
+      renderConfig: row.render_config ?? null,
+    };
+    e.dataTransfer.setData(DD_DOODLE_DRAG_TYPE, JSON.stringify(payload));
+    e.dataTransfer.effectAllowed = 'copy';
+    // Drag image = the card's ART well, centered under the cursor — the
+    // doodle is what lands on the desk. Fallback: browser default snapshot.
+    const art = e.currentTarget.querySelector('[data-dd-card-art]');
+    if (art instanceof HTMLElement && typeof e.dataTransfer.setDragImage === 'function') {
+      e.dataTransfer.setDragImage(art, art.offsetWidth / 2, art.offsetHeight / 2);
+    }
+  };
 
   return (
     <div
+      data-dd-drawer-card={row.id}
+      draggable
+      onDragStart={handleDragStart}
+      // R6.4 click-to-open (Enter/Space included when wired). The inner
+      // Place pill stops propagation so it never double-fires an open.
+      role={onOpen ? 'button' : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      aria-label={onOpen ? `Open “${displayName}” to edit` : undefined}
+      onClick={onOpen}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.target !== e.currentTarget) return; // pill handles itself
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpen();
+              }
+            }
+          : undefined
+      }
+      title={`${displayName} — ${deskLine}. Drag onto the desk to place a copy.`}
       style={{
         display: 'flex',
-        gap: 10,
-        padding: 10,
-        border: '1px solid var(--dir-border)',
-        borderRadius: 12,
-        background: 'var(--dir-bg)',
+        flexDirection: 'column',
+        gap: 6,
+        minWidth: 0,
+        cursor: onOpen ? 'pointer' : 'grab',
       }}
     >
-      {/* The art well — the shared warm-paper stock, mini. */}
-      <div
-        aria-hidden
-        style={{
-          flexShrink: 0,
-          width: 64,
-          height: 64,
-          borderRadius: 8,
-          border: '1px solid var(--dir-border)',
-          backgroundColor: 'var(--dir-bg)',
-          backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          overflow: 'hidden',
-        }}
-        dangerouslySetInnerHTML={{ __html: markup }}
-      />
+      {/* The collectible — ObjectCard's mini TCG frame (name banner + the one
+          marks stat + art well), plain-injected art (header comment). */}
+      <ObjectCard svgMarkup={markup} name={row.name} mini plainArt />
 
+      {/* Which desk this record lives on (+ a quiet mark when in view). */}
       <div
         style={{
-          flex: 1,
-          minWidth: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 5,
-          justifyContent: 'center',
+          fontFamily: IS,
+          fontSize: 9,
+          fontStyle: 'italic',
+          color: 'var(--dir-text-body-soft)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          padding: '0 2px',
         }}
       >
-        {/* Name — the ObjectCard register (Fraunces soft/wonk), mini scale. */}
-        <div
-          title={row.name ?? undefined}
-          style={{
-            fontFamily: ISe,
-            fontVariationSettings: '"SOFT" 60, "WONK" 1',
-            fontSize: 14,
-            letterSpacing: '-0.01em',
-            color: row.name ? 'var(--dir-text-primary)' : 'var(--dir-text-body-soft)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {row.name || 'Untitled doodle'}
-        </div>
-
-        {/* Which desk this record lives on (+ a quiet mark when in view). */}
-        <span
-          title={chipText}
-          style={{
-            ...CHIP,
-            display: 'inline-block',
-            boxSizing: 'border-box',
-            alignSelf: 'flex-start',
-            maxWidth: '100%',
-            padding: '2px 8px',
-            fontSize: 9,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            color: 'var(--dir-text-secondary)',
-          }}
-        >
-          {chipText}
-        </span>
-
-        {/* Place here = COPY (#28) — original stays put, a new row lands on
-            the open desk via DeskPage's addObject (P-1 placement). */}
-        <button
-          onClick={onPlace}
-          disabled={placed}
-          title="Place a copy of this doodle on the current desk — the original stays put"
-          style={{
-            ...PILL,
-            alignSelf: 'flex-start',
-            padding: '3px 10px',
-            fontSize: 9,
-            ...(placed
-              ? {
-                  background: 'var(--dir-raised)',
-                  borderColor: 'var(--dir-accent)',
-                  color: 'var(--dir-text-primary)',
-                  cursor: 'default',
-                }
-              : {}),
-          }}
-        >
-          {placed ? 'Placed ✓' : 'Place here'}
-        </button>
+        {deskLine}
       </div>
+
+      {/* Place here = COPY (#28) — the keyboard/fallback path beside drag;
+          original stays put, a new row lands via DeskPage's addObject. */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onPlace();
+        }}
+        disabled={placed}
+        title="Place a copy of this doodle on the current desk — the original stays put"
+        style={{
+          ...PILL,
+          alignSelf: 'flex-start',
+          padding: '3px 10px',
+          fontSize: 9,
+          ...(placed
+            ? {
+                background: 'var(--dir-raised)',
+                borderColor: 'var(--dir-accent)',
+                color: 'var(--dir-text-primary)',
+                cursor: 'default',
+              }
+            : {}),
+        }}
+      >
+        {placed ? 'Placed ✓' : 'Place here'}
+      </button>
     </div>
   );
 }

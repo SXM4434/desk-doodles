@@ -47,9 +47,10 @@ function Pane({ title, strokes, mode }: {
     <div className="pane">
       <h2>{title}</h2>
       <div className="scene">
-        {/* Lighter-than-default ink (harness only) so the screenshot can READ
-            the shading — the dark default flattens taper shading to near-black. */}
-        <Stroke3DScene strokes={strokes} geometryMode={mode} inkColor="#9c8f7a" />
+        {/* DEFAULT ink on purpose — after the 2026-06-12 rig port the default
+            warm-graphite material must read dimensional on its own; this
+            harness verifies the REAL app look, not a lightened stand-in. */}
+        <Stroke3DScene strokes={strokes} geometryMode={mode} />
       </div>
     </div>
   );
