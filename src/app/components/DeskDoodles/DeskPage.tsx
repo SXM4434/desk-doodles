@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { NavLink, useSearchParams } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
 import { CTA, PILL, SECTION_LABEL, CHIP } from '../../lib/chromeStyles';
@@ -6,6 +14,26 @@ import { PAPER_GRAIN, WARM_POOL, OBJECT_SIT_SHADOW } from '../../lib/deskCraft';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 import { SmartHachureChrome } from '../chrome/SmartHachureChrome';
+import {
+  F3SvgStyleProvider,
+  useF3SvgStyle,
+  F3_SVG_STYLES,
+  type F3SvgStyle,
+} from '../../state/F3SvgStyleContext';
+import {
+  F3RoughModifiersProvider,
+  useF3RoughModifiers,
+  DEFAULT_MODIFIERS,
+  MULTI_STROKE_STEPS,
+  FILL_STYLE_STEPS,
+  PALETTE_MODE_STEPS,
+  TEXTURE_STEPS,
+  DOT_PATTERN_STEPS,
+  ENDPOINT_BEHAVIOR_STEPS,
+  SKETCHING_STYLE_STEPS,
+  PEN_TIP_STEPS,
+  type F3ModifiersState,
+} from '../../state/F3RoughModifiersContext';
 import {
   CollapsiblePanel,
   PanelToggle,
@@ -53,6 +81,64 @@ import { ObjectSurface, type ObjectSurfaceMode } from './ObjectSurface';
 // single-desk listDoodles/subscribeDoodles/publishDoodle behavior so the app
 // still works pre-SQL-paste.
 
+// ─── THE PEN MODEL (D-6 + D-7, docs/design/global-toggles-and-mixed-3d.md) ──
+// An object's treatment is a TREATMENT-STAGE RECORD: the global style + the
+// full modifier state are snapshotted into `render_config` at the Done
+// boundary, and each placed object renders from ITS OWN config — the right
+// panel is your PEN (styles the draw popup + the NEXT doodle only). The
+// Pen|Desk gate below flips the panel into the D-1/D-2 viewer-local lens
+// (every object re-renders under the live panel state; records untouched;
+// nobody else sees it). Objects with NO config (pre-existing rows) fall back
+// to the live global state — exactly the pre-D-7 behavior, nothing breaks.
+type ObjectRenderConfig = {
+  svgStyle: F3SvgStyle;
+  modifiers: F3ModifiersState;
+};
+
+/** Discrete modifier keys → their legal enum values. parseRenderConfig checks
+ *  string fields against these (a bare typeof check would let any string —
+ *  e.g. fillStyle:"banana" from a hand-crafted row — into the render path). */
+const MODIFIER_ENUMS: Partial<Record<keyof F3ModifiersState, readonly string[]>> = {
+  multiStroke: MULTI_STROKE_STEPS,
+  fillStyle: FILL_STYLE_STEPS,
+  strokePalette: PALETTE_MODE_STEPS,
+  fillPalette: PALETTE_MODE_STEPS,
+  risoSecondaryColor: PALETTE_MODE_STEPS,
+  texture: TEXTURE_STEPS,
+  dotPattern: DOT_PATTERN_STEPS,
+  endpointBehavior: ENDPOINT_BEHAVIOR_STEPS,
+  sketchingStyle: SKETCHING_STYLE_STEPS,
+  penTip: PEN_TIP_STEPS,
+};
+
+/** Parse a doodles.render_config jsonb payload → a render config, or null.
+ *  Defensive on purpose (the column is anon-writable): the style must be a
+ *  real F3SvgStyle, and modifier values are taken key-by-key ONLY where the
+ *  type matches DEFAULT_MODIFIERS' (finite numbers; enum strings checked
+ *  against their step lists) — unknown/missing keys fall back to the
+ *  defaults, so configs stay forward-compatible as the modifier set grows. */
+function parseRenderConfig(raw: unknown): ObjectRenderConfig | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const rec = raw as Record<string, unknown>;
+  const style = rec.svgStyle;
+  if (typeof style !== 'string' || !F3_SVG_STYLES.some((s) => s.id === style)) {
+    return null;
+  }
+  const modifiers: F3ModifiersState = { ...DEFAULT_MODIFIERS };
+  const rawMods = rec.modifiers;
+  if (rawMods && typeof rawMods === 'object') {
+    for (const key of Object.keys(DEFAULT_MODIFIERS) as (keyof F3ModifiersState)[]) {
+      const v = (rawMods as Record<string, unknown>)[key];
+      if (v == null || typeof v !== typeof DEFAULT_MODIFIERS[key]) continue;
+      if (typeof v === 'number' && !Number.isFinite(v)) continue;
+      const allowed = MODIFIER_ENUMS[key];
+      if (typeof v === 'string' && allowed && !allowed.includes(v)) continue;
+      (modifiers as Record<string, unknown>)[key] = v;
+    }
+  }
+  return { svgStyle: style as F3SvgStyle, modifiers };
+}
+
 type DeskObject = {
   id: string;
   /** Supabase row id once published/loaded — undefined only for the brief
@@ -70,7 +156,177 @@ type DeskObject = {
   why?: string | null;
   ownerSession?: string | null;
   createdAt?: string | null;
+  /** The pen snapshot this object was made under (D-6). null = pre-config
+   *  row → renders under the live global state (legacy fallback). */
+  renderConfig?: ObjectRenderConfig | null;
 };
+
+/** Sync bridge between an object's stored render config and the NESTED
+ *  providers wrapping its art — the same scoping pattern as ObjectSurface's
+ *  SandboxRenderScope (nested providers shadow the app-root ones for this
+ *  subtree only; the desk around it keeps reading the global context).
+ *  One sharpening: children stay unmounted until the nested context HOLDS the
+ *  config (useLayoutEffect lands before paint), so SvgStyleTransform's
+ *  pipeline never runs at provider-default values — each object pays exactly
+ *  ONE pipeline run, with its own config, on mount. */
+function ObjectConfigScope({
+  config,
+  children,
+}: {
+  config: ObjectRenderConfig;
+  children: ReactNode;
+}) {
+  const styleCtx = useF3SvgStyle();
+  const modsCtx = useF3RoughModifiers();
+  const { svgStyle, modifiers } = config;
+  useLayoutEffect(() => {
+    if (styleCtx.state !== svgStyle) styleCtx.setState(svgStyle);
+  }, [styleCtx, svgStyle]);
+  useLayoutEffect(() => {
+    if (modsCtx.state !== modifiers) modsCtx.replace(modifiers);
+  }, [modsCtx, modifiers]);
+  // `modifiers` is referentially stable per object (parsed once at row→object
+  // mapping), so replace() settles in one pass and this stays true after it.
+  const synced = styleCtx.state === svgStyle && modsCtx.state === modifiers;
+  return synced ? <>{children}</> : null;
+}
+
+/** One desk object's ART — the expensive SvgStyleTransform subtree, memoized
+ *  on exactly (svgMarkup, renderConfig, deskLens). Position/rotation live on
+ *  the wrapper OUTSIDE this memo, so drag never re-runs the rough.js
+ *  pipeline — not even for the dragged object itself.
+ *  - PEN scope + config: nested providers pin the object to ITS OWN record
+ *    (the global context never reaches this subtree — panel tweaks skip it).
+ *  - DESK scope (the lens) or no config: renders straight off the global
+ *    context; context updates pierce React.memo by design, so the sweep and
+ *    the legacy fallback both restyle live. */
+const DeskObjectArt = memo(function DeskObjectArt({
+  svgMarkup,
+  renderConfig,
+  deskLens,
+}: {
+  svgMarkup: string;
+  renderConfig: ObjectRenderConfig | null;
+  deskLens: boolean;
+}) {
+  const art = (
+    <SvgStyleTransform>
+      <div dangerouslySetInnerHTML={{ __html: svgMarkup }} />
+    </SvgStyleTransform>
+  );
+  if (deskLens || !renderConfig) return art;
+  return (
+    <F3SvgStyleProvider>
+      <F3RoughModifiersProvider>
+        <ObjectConfigScope config={renderConfig}>{art}</ObjectConfigScope>
+      </F3RoughModifiersProvider>
+    </F3SvgStyleProvider>
+  );
+});
+
+// ─── THE LIVE PREVIEW SQUIGGLE (D-7 amendment — REQUIRED with the gate) ─────
+// In Pen mode the desk deliberately doesn't react to the panel, so without
+// feedback the controls would FEEL broken. This sample stroke at the top of
+// the panel renders through the CURRENT pen settings and re-renders the
+// instant any control changes — direct manipulation, no tween (Procreate
+// Brush Studio pattern: the brush panel never repaints the canvas; the
+// preview stroke gives the hand immediate feedback). The markup is the exact
+// commit-layer form a Done produces (fill="none" + primary-ink stroke, same
+// width), so the preview IS what the next doodle will look like. Fixed path —
+// fully deterministic, no randomness.
+const PREVIEW_SQUIGGLE = `<svg xmlns="http://www.w3.org/2000/svg" width="220" height="60" viewBox="0 0 264 72"><path d="M 14 46 C 30 14 52 12 66 34 C 80 56 100 58 116 38 C 132 18 150 16 162 34 C 170 46 164 60 152 58 C 140 56 142 40 156 30 C 178 14 206 18 222 36 C 232 47 242 50 252 44" fill="none" stroke="var(--dir-text-primary)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+/** memo with only the `deskLens` label prop: parent re-renders (drag moves,
+ *  camera pans) skip it entirely; panel changes reach SvgStyleTransform's own
+ *  context subscription directly, so the squiggle still updates instantly. */
+const PenPreview = memo(function PenPreview({ deskLens }: { deskLens: boolean }) {
+  return (
+    <div
+      style={{
+        // Pinned above the scrolling controls — the preview must stay visible
+        // while sliders deep in the panel are being dragged (that pairing IS
+        // the feedback loop).
+        position: 'sticky',
+        top: 0,
+        zIndex: 2,
+        background: 'var(--dir-raised)',
+        padding: '14px 20px 12px',
+        borderBottom: '1px solid var(--dir-border)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span style={SECTION_LABEL}>Preview</span>
+        <span
+          style={{
+            fontFamily: IS,
+            fontSize: 10,
+            fontStyle: 'italic',
+            color: 'var(--dir-text-body-soft)',
+          }}
+        >
+          {deskLens ? 'the whole desk follows' : 'your next doodle'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <SvgStyleTransform>
+          <div dangerouslySetInnerHTML={{ __html: PREVIEW_SQUIGGLE }} />
+        </SvgStyleTransform>
+      </div>
+    </div>
+  );
+});
+
+/** One desk object = cheap positioned wrapper (drag updates ONLY this div's
+ *  style) + the memoized art. React.memo here keeps the other N−1 objects
+ *  from re-rendering at all while one is dragged: setObjects preserves the
+ *  references of untouched objects, and every callback prop is stable. */
+const DeskObjectView = memo(function DeskObjectView({
+  obj,
+  dragging,
+  nudged,
+  deskLens,
+  onPointerDown,
+  onNudgeEnd,
+}: {
+  obj: DeskObject;
+  dragging: boolean;
+  /** Foreign-drag feedback — plays the nudge-and-settle keyframe. */
+  nudged: boolean;
+  deskLens: boolean;
+  onPointerDown: (e: React.PointerEvent, obj: DeskObject) => void;
+  onNudgeEnd: () => void;
+}) {
+  return (
+    <div
+      onPointerDown={(e) => onPointerDown(e, obj)}
+      onAnimationEnd={nudged ? onNudgeEnd : undefined}
+      style={{
+        position: 'absolute',
+        left: obj.x,
+        top: obj.y,
+        transform: `rotate(${obj.rotation}deg)`,
+        // Sit on the surface, not float over it (warm layered shadow).
+        filter: OBJECT_SIT_SHADOW,
+        cursor: dragging ? 'grabbing' : 'grab',
+        touchAction: 'none',
+        userSelect: 'none',
+        // The nudge animates the CSS `translate` property, which composes
+        // with (never clobbers) the rotation on `transform`.
+        animation: nudged ? 'dd-foreign-nudge 280ms ease-out' : undefined,
+      }}
+    >
+      {/* Markup already normalized to ~180px at the add boundary. */}
+      <DeskObjectArt
+        svgMarkup={obj.svgMarkup}
+        renderConfig={obj.renderConfig ?? null}
+        deskLens={deskLens}
+      />
+    </div>
+  );
+});
 
 // ─── DESK SURFACE CRAFT ─────────────────────────────────────────────────────
 // The desk should feel like a warm paper surface objects SIT on, not a flat div
@@ -135,6 +391,10 @@ function rowToObject(r: DoodleRow): DeskObject {
     why: r.why ?? null,
     ownerSession: r.session_id ?? null,
     createdAt: r.created_at ?? null,
+    // The pen snapshot (D-6) — parsed ONCE here so the object's config is
+    // referentially stable for the memoized render path. null on pre-config
+    // rows → live-global fallback.
+    renderConfig: parseRenderConfig(r.render_config),
   };
 }
 
@@ -169,10 +429,30 @@ export function DeskPage() {
   const deskParam = searchParams.get('desk');
 
   const [objects, setObjects] = useState<DeskObject[]>([]);
+  // Live mirror for event-time reads (P-1 smart placement scores candidate
+  // landing spots against current objects without entering addObject's deps).
+  const objectsRef = useRef<DeskObject[]>([]);
+  objectsRef.current = objects;
   const [drawOpen, setDrawOpen] = useState(false);
   const [feedStatus, setFeedStatus] = useState<'loading' | 'live' | 'offline'>('loading');
   const [rightOpen, toggleRight, setRightOpen] = usePanelOpen('desk.right');
   useMinimizeUi([{ open: rightOpen, setOpen: setRightOpen }]);
+
+  // ── The Pen|Desk gate (D-7 ratified) ─────────────────────────────────────
+  // 'pen' (default): the right panel styles the draw popup + the NEXT doodle;
+  // placed objects render from their own records. 'desk': the sweep — the
+  // panel becomes a viewer-local lens over every object (D-1/D-2: never
+  // synced, never written into records; flipping back restores per-object
+  // looks). React state only — a reload always lands back on Pen.
+  const [panelScope, setPanelScope] = useState<'pen' | 'desk'>('pen');
+  const deskLens = panelScope === 'desk';
+
+  // The live global panel state — read here ONLY to snapshot it into the
+  // object record at the Done boundary (D-6). The desk page subscribing to
+  // these contexts is cheap now: per-object memoization keeps panel tweaks
+  // from touching config-pinned objects.
+  const { state: penStyle } = useF3SvgStyle();
+  const { state: penModifiers } = useF3RoughModifiers();
 
   // ── Multi-desk view state ────────────────────────────────────────────────
   // `desk` is the desk currently being VIEWED (null = flat fallback / pre-v2
@@ -210,7 +490,11 @@ export function DeskPage() {
         if (token !== loadTokenRef.current) return; // a newer load superseded us
         // Replace the desk's object set wholesale — switching desks shows a
         // clean slate of just this desk's (capped) objects.
-        setObjects(rows.map(rowToObject));
+        // NEWEST ON TOP: array order IS stacking order (absolute siblings
+        // paint in DOM order), so reverse the newest-first feed to
+        // oldest-first — the most recent doodle paints highest, and realtime
+        // arrivals / fresh publishes (appended) keep landing on top.
+        setObjects(rows.map(rowToObject).reverse());
         setFeedStatus('live');
       })
       .catch(() => {
@@ -252,7 +536,10 @@ export function DeskPage() {
             setObjects((prev) => {
               const have = new Set(prev.map((o) => o.dbId).filter(Boolean));
               const loaded = rows.filter((r) => !have.has(r.id)).map(rowToObject);
-              return [...loaded, ...prev];
+              // NEWEST ON TOP: reverse the newest-first feed to oldest-first
+              // (array order = stacking order); local optimistic objects in
+              // `prev` are the newest of all, so they stay above the load.
+              return [...loaded.reverse(), ...prev];
             });
             setFeedStatus('live');
           })
@@ -314,6 +601,15 @@ export function DeskPage() {
   }, []);
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  // Every object press (own OR foreign) — pointer-up needs the pressed object
+  // to tell click (open surface) from drag, and `mine` decides whether the
+  // press may drag at all. draggingId stays own-objects-only.
+  const pressRef = useRef<{ id: string; mine: boolean; nudged: boolean } | null>(null);
+  // FOREIGN-DRAG BLOCK: id of the object currently playing its tiny
+  // nudge-and-settle (you tried to drag someone else's doodle — it shrugs and
+  // settles back, never ghost-moves). Cleared by the animation's end event.
+  const [nudgeId, setNudgeId] = useState<string | null>(null);
+  const clearNudge = useCallback(() => setNudgeId(null), []);
   // Drag offset in DESK coordinates: pointer-desk-position minus object
   // origin at pointer-down. Desk-space (not screen-space) so the same offset
   // stays exact at any zoom — moves divide screen deltas by zoom implicitly
@@ -438,9 +734,50 @@ export function DeskPage() {
       const dx = (((h & 0xff) / 255) - 0.5) * 160; // ±80px
       const dy = ((((h >> 8) & 0xff) / 255) - 0.5) * 120; // ±60px
       const rotation = ((((h >> 16) & 0xff) / 255) - 0.5) * 16; // ±8°
-      const x = cx + dx;
-      const y = cy + dy;
+      // P-1 SMART PLACEMENT (anti-cover — smart-system plan Phase P): score a
+      // deterministic candidate set (hash spot first, then rings widening from
+      // the view center) against existing objects' footprints and land on the
+      // least-covered spot. Clear desk → hash spot wins (old behavior intact);
+      // crowded desk → the doodle finds open paper instead of piling on.
+      const FOOT = 190; // ~180px object + breathing room
+      const candidates: Array<[number, number]> = [[cx + dx, cy + dy]];
+      for (let ring = 1; ring <= 4; ring++) {
+        for (let k = 0; k < 8; k++) {
+          const ang = (((h % 8) + k) / 8) * Math.PI * 2 + ring * 0.39;
+          const r = ring * 110;
+          candidates.push([cx + Math.cos(ang) * r, cy + Math.sin(ang) * r * 0.72]);
+        }
+      }
+      const overlapScore = (px: number, py: number) => {
+        let s = 0;
+        for (const o of objectsRef.current) {
+          const ix = Math.max(0, FOOT - Math.abs(px - o.x));
+          const iy = Math.max(0, FOOT - Math.abs(py - o.y));
+          s += ix * iy;
+        }
+        return s;
+      };
+      let x = candidates[0][0];
+      let y = candidates[0][1];
+      let bestScore = overlapScore(x, y);
+      for (let i = 1; i < candidates.length && bestScore > 0; i++) {
+        const s = overlapScore(candidates[i][0], candidates[i][1]);
+        if (s < bestScore - 1) {
+          bestScore = s;
+          x = candidates[i][0];
+          y = candidates[i][1];
+        }
+      }
       setDrawOpen(false);
+
+      // D-6 — snapshot the PEN at the Done boundary: the current global style
+      // + the full modifier state become this object's permanent record.
+      // penModifiers is the context's state object (immutably replaced on
+      // every change), so holding the reference is a true snapshot.
+      const renderConfig: ObjectRenderConfig = {
+        svgStyle: penStyle,
+        modifiers: penModifiers,
+      };
 
       // Drawing always routes to the OPEN desk. If we're viewing a closed past
       // desk, optimistically showing the object here would be wrong (it lands
@@ -450,18 +787,21 @@ export function DeskPage() {
       if (isViewingOpenDesk) {
         // ownerSession on the optimistic add so clicking your just-drawn
         // object opens Edit (yours), not Sandbox, before the insert resolves.
+        // renderConfig rides along so the optimistic object is pinned to the
+        // pen it was drawn with from its very first paint.
         setObjects((prev) => [
           ...prev,
-          { id, svgMarkup, x, y, rotation, ownerSession: getSessionId() },
+          { id, svgMarkup, x, y, rotation, ownerSession: getSessionId(), renderConfig },
         ]);
       }
 
       // M9 — auto-publish to the shared feed. The data layer's RPC handles the
       // per-desk cap + atomic spawn server-side; it returns the inserted row
       // AND the desk it actually landed on (a freshly-spawned one if this Done
-      // filled the desk). renderConfig is OUT OF SCOPE for this agent — pass
-      // undefined; the data layer treats it as a null snapshot.
-      publishDoodle({ svg: svgMarkup, x, y, rotation, deskId: openDeskId ?? undefined })
+      // filled the desk). renderConfig persists the pen snapshot into
+      // doodles.render_config (D-6) so every viewer renders this object under
+      // the look it was MADE with.
+      publishDoodle({ svg: svgMarkup, x, y, rotation, deskId: openDeskId ?? undefined, renderConfig })
         .then(({ row, desk: landedDesk }) => {
           // The desk this object actually landed on (when v2 is live).
           if (landedDesk) {
@@ -491,7 +831,7 @@ export function DeskPage() {
           console.warn('[desk] publish failed — object stays local:', err.message);
         });
     },
-    [isViewingOpenDesk, openDeskId, desk, loadDeskView, announceFreshDesk],
+    [isViewingOpenDesk, openDeskId, desk, loadDeskView, announceFreshDesk, penStyle, penModifiers],
   );
 
   // Drag — same pointer-event pattern as the playground's placed items, but
@@ -503,11 +843,20 @@ export function DeskPage() {
   const handlePointerDown = useCallback(
     (e: React.PointerEvent, obj: DeskObject) => {
       e.stopPropagation();
+      downPosRef.current = { x: e.clientX, y: e.clientY };
+      // FOREIGN-DRAG BLOCK: only YOUR objects drag. A press on someone else's
+      // doodle is tracked (click still opens its Sandbox on pointer-up) but
+      // never becomes a drag — a drag attempt just plays the nudge-and-settle
+      // (see handlePointerMove). Unknown owner (null) counts as foreign: we
+      // can't prove it's yours, and the server-side session scope would
+      // reject the move anyway — so no ghost-move.
+      const mine = obj.ownerSession != null && obj.ownerSession === getSessionId();
+      pressRef.current = { id: obj.id, mine, nudged: false };
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      if (!mine) return;
       const p = screenToDesk(e.clientX, e.clientY);
       dragOffsetRef.current = { dx: p.x - obj.x, dy: p.y - obj.y };
-      downPosRef.current = { x: e.clientX, y: e.clientY };
       setDraggingId(obj.id);
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
     [screenToDesk],
   );
@@ -533,6 +882,18 @@ export function DeskPage() {
         setCamera((c) => ({ ...c, panX: pan.panX + dx, panY: pan.panY + dy }));
         return;
       }
+      // Foreign press pulled past the click slop = a drag attempt on someone
+      // else's doodle → fire the nudge-and-settle ONCE per press and ignore
+      // the rest of the gesture. The object never moves (no ghost-move).
+      const press = pressRef.current;
+      if (press && !press.mine) {
+        const dp = downPosRef.current;
+        if (dp && !press.nudged && Math.hypot(e.clientX - dp.x, e.clientY - dp.y) > 5) {
+          press.nudged = true;
+          setNudgeId(press.id);
+        }
+        return;
+      }
       if (!draggingId || !deskRef.current) return;
       const p = screenToDesk(e.clientX, e.clientY);
       const x = p.x - dragOffsetRef.current.dx;
@@ -548,8 +909,9 @@ export function DeskPage() {
         panDragRef.current = null;
         setPanning(false);
       }
-      if (draggingId) {
-        const obj = objects.find((o) => o.id === draggingId);
+      const press = pressRef.current;
+      if (press) {
+        const obj = objects.find((o) => o.id === press.id);
         const dp = downPosRef.current;
         const moved = dp ? Math.hypot(e.clientX - dp.x, e.clientY - dp.y) : 999;
         // Touch taps jitter more than a mouse — a higher click threshold on
@@ -558,17 +920,19 @@ export function DeskPage() {
         if (e.type === 'pointerup' && moved < clickSlop && obj) {
           // A click, not a drag → open the ONE object surface: Edit if it's
           // yours, Sandbox if it's someone else's.
-          const mine = (obj.ownerSession ?? null) === getSessionId();
-          setActiveSurface({ mode: mine ? 'edit' : 'sandbox', objectId: obj.id });
-        } else if (obj?.dbId) {
-          // A real drag → persist the resting position (session-scoped).
+          setActiveSurface({ mode: press.mine ? 'edit' : 'sandbox', objectId: obj.id });
+        } else if (press.mine && obj?.dbId) {
+          // A real drag of YOUR object → persist the resting position
+          // (session-scoped). Foreign presses never reach here as drags —
+          // they already played the nudge and the object never moved.
           updateDoodlePosition(obj.dbId, obj.x, obj.y, obj.rotation).catch(() => {});
         }
       }
       setDraggingId(null);
+      pressRef.current = null;
       downPosRef.current = null;
     },
-    [draggingId, objects],
+    [objects],
   );
 
   // A cancelled/interrupted pointer (touch scroll-steal, OS gesture, palm
@@ -576,6 +940,7 @@ export function DeskPage() {
   // drag stays glued to the object forever. Just end the drag/pan, never a click.
   const handlePointerCancel = useCallback(() => {
     setDraggingId(null);
+    pressRef.current = null;
     downPosRef.current = null;
     panDragRef.current = null;
     setPanning(false);
@@ -620,6 +985,16 @@ export function DeskPage() {
         flexDirection: 'column',
       }}
     >
+      {/* FOREIGN-DRAG nudge keyframes — a few px shrug + quick settle. Scoped
+          here with the only consumer (DeskObjectView) rather than in shared
+          CSS. Animates the standalone `translate` property so it composes
+          with (never clobbers) the wrapper's rotate on `transform`. */}
+      <style>{`@keyframes dd-foreign-nudge {
+        0% { translate: 0 0; }
+        35% { translate: 5px 2px; rotate: 0.6deg; }
+        70% { translate: -2px -1px; rotate: -0.3deg; }
+        100% { translate: 0 0; rotate: 0deg; }
+      }`}</style>
       {/* Top chrome — brand + desk readout left, Add doodle center, controls toggle + Live right */}
       <header
         style={{
@@ -676,6 +1051,67 @@ export function DeskPage() {
         </button>
 
         <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* THE PEN|DESK GATE (D-7 ratified) — scope is always visible, never
+              implicit. Pen: the panel styles the draw popup + your NEXT doodle;
+              placed records hold their own looks. Desk: the viewer-local sweep
+              — the panel restyles everything you see (nobody else's view, no
+              record writes; flipping back lifts the lens). The caption keeps
+              the active scope readable without opening the doc. */}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 3,
+              marginRight: 8,
+            }}
+          >
+            <div role="tablist" aria-label="Panel scope" style={{ display: 'flex', gap: 4 }}>
+              {(
+                [
+                  ['pen', 'Pen'],
+                  ['desk', 'Desk'],
+                ] as const
+              ).map(([scope, label]) => (
+                <button
+                  key={scope}
+                  role="tab"
+                  aria-selected={panelScope === scope}
+                  onClick={() => setPanelScope(scope)}
+                  title={
+                    scope === 'pen'
+                      ? 'Pen — the panel styles your next doodle; placed doodles keep their own looks'
+                      : 'Desk — the panel restyles the whole desk, just for you (nothing saves)'
+                  }
+                  style={{
+                    ...PILL,
+                    padding: '5px 12px',
+                    background: panelScope === scope ? 'var(--dir-raised)' : 'transparent',
+                    borderColor: panelScope === scope ? 'var(--dir-accent)' : 'var(--dir-border)',
+                    color:
+                      panelScope === scope
+                        ? 'var(--dir-text-primary)'
+                        : 'var(--dir-text-body-soft)',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span
+              style={{
+                fontFamily: IS,
+                fontSize: 9,
+                letterSpacing: '0.02em',
+                color: 'var(--dir-text-body-soft)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {deskLens
+                ? 'restyling the whole desk — only you see this'
+                : 'styling your next doodle'}
+            </span>
+          </div>
           {/* Desk camera controls — toggles live in chrome, never on the desk.
               − / % / + zoom about the viewport center; Fit = full desk (⌘0). */}
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -780,33 +1216,51 @@ export function DeskPage() {
               transform: `translate(${camera.panX}px, ${camera.panY}px) scale(${camera.zoom})`,
               transformOrigin: '0 0',
               willChange: 'transform',
-              backgroundColor: 'var(--dir-bg)',
-              backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}, radial-gradient(ellipse at 50% 38%, transparent 48%, rgba(60,50,40,0.07) 100%)`,
-              boxShadow: 'inset 0 0 160px rgba(60,50,40,0.05)',
             }}
           >
+            {/* ENDLESS PAPER (Sebs 2026-06-11 "the background doesn't extend"):
+                the grain rides a hugely-oversized layer inside the camera so
+                zooming out never reveals a void — the desk reads as one endless
+                sheet. 700% at min zoom 0.25 still over-covers the viewport.
+                pointerEvents none keeps pan/click targets unchanged. */}
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                left: '-300%',
+                top: '-300%',
+                width: '700%',
+                height: '700%',
+                backgroundColor: 'var(--dir-bg)',
+                backgroundImage: PAPER_GRAIN,
+                pointerEvents: 'none',
+              }}
+            />
+            {/* The LAMP POOL + vignette stay sized to the working area — on an
+                endless sheet, the light marks WHERE the desk is. */}
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                backgroundImage: `${WARM_POOL}, radial-gradient(ellipse at 50% 38%, transparent 48%, rgba(60,50,40,0.07) 100%)`,
+                boxShadow: 'inset 0 0 160px rgba(60,50,40,0.05)',
+                pointerEvents: 'none',
+              }}
+            />
+            {/* Array order IS stacking order (absolute siblings paint in DOM
+                order) — the load paths reverse the newest-first feed and all
+                add paths append, so the newest doodle always sits on top. */}
             {objects.map((obj) => (
-              <div
+              <DeskObjectView
                 key={obj.id}
-                onPointerDown={(e) => handlePointerDown(e, obj)}
-                style={{
-                  position: 'absolute',
-                  left: obj.x,
-                  top: obj.y,
-                  transform: `rotate(${obj.rotation}deg)`,
-                  // Sit on the surface, not float over it (warm layered shadow).
-                  filter: OBJECT_SIT_SHADOW,
-                  cursor: draggingId === obj.id ? 'grabbing' : 'grab',
-                  touchAction: 'none',
-                  userSelect: 'none',
-                }}
-              >
-                {/* Markup already normalized to ~180px at the add boundary;
-                    SvgStyleTransform applies the active style/modifiers. */}
-                <SvgStyleTransform>
-                  <div dangerouslySetInnerHTML={{ __html: obj.svgMarkup }} />
-                </SvgStyleTransform>
-              </div>
+                obj={obj}
+                dragging={draggingId === obj.id}
+                nudged={nudgeId === obj.id}
+                deskLens={deskLens}
+                onPointerDown={handlePointerDown}
+                onNudgeEnd={clearNudge}
+              />
             ))}
           </div>
 
@@ -857,7 +1311,7 @@ export function DeskPage() {
                 <>
                   This desk is empty.<br />
                   Hit “Add doodle” to draw — each Done drops one object here.<br />
-                  Drag objects to arrange; Controls restyle the whole desk.
+                  Drag doodles to arrange; the panel is your pen — it styles your next one.
                 </>
               ) : (
                 <>
@@ -870,7 +1324,9 @@ export function DeskPage() {
 
         </main>
 
-        {/* Right chrome — Smart Hachure modifier panel; tweaks re-render the desk */}
+        {/* Right chrome — the PEN panel (D-7): live preview squiggle pinned on
+            top, Smart Hachure controls below. In Pen scope tweaks style the
+            squiggle + the next doodle; in Desk scope they sweep the desk. */}
         <CollapsiblePanel
           side="right"
           open={rightOpen}
@@ -882,6 +1338,7 @@ export function DeskPage() {
             overflowY: 'auto',
           }}
         >
+          <PenPreview deskLens={deskLens} />
           <SmartHachureChrome />
         </CollapsiblePanel>
       </div>

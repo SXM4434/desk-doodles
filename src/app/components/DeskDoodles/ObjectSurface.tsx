@@ -191,7 +191,10 @@ export function ObjectSurface({
     borderRadius: 16,
     boxShadow: RAISED_SHADOW,
     padding: 20,
-    width: 'min(360px, calc(100vw - 64px))',
+    // Sandbox is a MINI DESK (Sebs 2026-06-11): art beside controls, the same
+    // side-by-side grammar as the big desk (canvas + right panel) — wide panel,
+    // no vertical scroll. Edit (no control column yet) keeps the card width.
+    width: isSandbox ? 'min(700px, calc(100vw - 64px))' : 'min(360px, calc(100vw - 64px))',
     maxHeight: 'calc(100vh - 64px)',
     overflowY: 'auto',
     display: 'flex',
@@ -241,22 +244,29 @@ export function ObjectSurface({
           </div>
         )}
 
-        {/* Sandbox wraps JUST the card in nested providers so the art
-            re-renders through the desk's own SvgStyleTransform path with the
-            LOCAL values; Edit renders under the global context as before. */}
-        {isSandbox ? (
-          <F3SvgStyleProvider>
-            <F3RoughModifiersProvider>
-              <SandboxRenderScope svgStyle={sbStyle} mods={sandboxMods}>
-                {card}
-              </SandboxRenderScope>
-            </F3RoughModifiersProvider>
-          </F3SvgStyleProvider>
-        ) : (
-          card
-        )}
+        {/* MINI-DESK ROW (Sebs 2026-06-11): card on the left, controls on the
+            right — the same side-by-side grammar as the big desk, so the
+            surface reads as a miniature of it instead of a scrolling stack.
+            flexWrap lets narrow viewports fall back to stacked. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'flex-start' }}>
+          {/* Sandbox wraps JUST the card in nested providers so the art
+              re-renders through the desk's own SvgStyleTransform path with the
+              LOCAL values; Edit renders under the global context as before. */}
+          <div style={{ flex: '1 1 300px', minWidth: 280 }}>
+            {isSandbox ? (
+              <F3SvgStyleProvider>
+                <F3RoughModifiersProvider>
+                  <SandboxRenderScope svgStyle={sbStyle} mods={sandboxMods}>
+                    {card}
+                  </SandboxRenderScope>
+                </F3RoughModifiersProvider>
+              </F3SvgStyleProvider>
+            ) : (
+              card
+            )}
+          </div>
 
-        {/* Sandbox control strip — compact viewer config under the card:
+        {/* Sandbox control column — viewer config BESIDE the card (mini desk):
             style dropdown + the three core feel sliders (same specs as the
             desk chrome, so the ranges match what the maker had). */}
         {isSandbox && (
@@ -265,8 +275,11 @@ export function ObjectSurface({
               display: 'flex',
               flexDirection: 'column',
               gap: 10,
-              borderTop: '1px solid var(--dir-border)',
-              paddingTop: 12,
+              flex: '1 1 260px',
+              minWidth: 240,
+              borderLeft: '1px solid var(--dir-border)',
+              paddingLeft: 18,
+              alignSelf: 'stretch',
             }}
           >
             <div
@@ -338,6 +351,7 @@ export function ObjectSurface({
             />
           </div>
         )}
+        </div>
 
         <footer style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
           {isSandbox ? (
