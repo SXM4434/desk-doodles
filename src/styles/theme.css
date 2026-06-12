@@ -98,7 +98,7 @@
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     font-family: 'Instrument Sans', sans-serif;
-    font-weight: 300;
+    font-weight: 400; /* was 300 — phantom: no loaded face had it (font survey 2026-06-11) */
   }
   a {
     text-decoration: none;

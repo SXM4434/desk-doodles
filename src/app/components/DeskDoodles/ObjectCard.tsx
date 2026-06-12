@@ -109,6 +109,7 @@ export function ObjectCard({
               flex: 1,
               minWidth: 0,
               fontFamily: ISe,
+              fontVariationSettings: '"SOFT" 60, "WONK" 1',
               fontSize: mini ? 15 : 20,
               letterSpacing: '-0.01em',
               color: 'var(--dir-text-primary)',
@@ -125,6 +126,7 @@ export function ObjectCard({
               flex: 1,
               minWidth: 0,
               fontFamily: ISe,
+              fontVariationSettings: '"SOFT" 60, "WONK" 1',
               fontSize: mini ? 14 : 20,
               letterSpacing: '-0.01em',
               color: name ? 'var(--dir-text-primary)' : 'var(--dir-text-body-soft)',
@@ -201,8 +203,8 @@ export function ObjectCard({
               placeholder="Why's this on your desk?"
               aria-label="Why this doodle"
               style={{
-                fontFamily: IS,
-                fontSize: 13,
+                fontFamily: ISe,
+                fontSize: 14,
                 fontStyle: 'italic',
                 color: 'var(--dir-text-body)',
                 background: 'transparent',
@@ -215,8 +217,8 @@ export function ObjectCard({
             why && (
               <div
                 style={{
-                  fontFamily: IS,
-                  fontSize: 13,
+                  fontFamily: ISe,
+                  fontSize: 14,
                   fontStyle: 'italic',
                   color: 'var(--dir-text-body-soft)',
                   lineHeight: 1.45,

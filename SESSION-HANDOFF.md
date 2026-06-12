@@ -483,6 +483,15 @@ Pre-fork foundation work (I-11..I-14 invariants, playground-native primitives in
 - Git history of this repo (Day 5 fork commit onward)
 - `09-LOCKED-MODEL.md` in portfolio (the contract)
 
+### ROUND 4 — THE FULL OBJECT CREATION LOOP (Sebs 2026-06-11 late: "don't forget the full object creation flow is not done" — LOCKED NEXT after round 3 lands)
+
+The loop is DONE only when: draw → style (full pen controls beside the canvas) → name/why → place → **reopen → restyle AND re-draw → save back to the same object**. Status map:
+- Create mini-desk w/ full pen controls — round-3 rock B (in flight)
+- Full toggles in Sandbox + Edit, Edit SAVES config to the object — round-3 rock C (in flight, schema-v4 paste)
+- **PLUS Sebs popup feedback 22:53 (fold into round 4 — files owned by round 3 until it lands):** ① create-popup pen column must carry the FULL per-style set (port the rock-C SurfaceControls pattern into DrawPanel — never "core subset" again); ② popup should be BIGGER (use more viewport, e.g. min(1040px, 92vw) wide / 88vh tall); ③ NESTED SCROLL fix — dropdown menus inside popup columns must NOT scroll-within-scroll: cap dropdown maxHeight lower inside popups so only the COLUMN scrolls (Sebs: "dropdown shorter and only scroll the panel"), research the standard pattern; ④ CREATE CANVAS LIVE RESTYLE not wired — strokes in the create popup render raw; they must re-render through the pen pipeline live as controls change (the canvas IS the preview; the wiring exists in DrawSurface's commit layer — connect it).
+- **ALSO round 4 — ADD-TIME NAMING STAGE (Sebs expects it, 2026-06-11 late):** create flow gains the card-info step — draw → Done → naming card (name + why, the minting moment) → lands. Today naming only happens post-place via Edit. NOTE: no naming stage exists in DrawPanel at all (verified by grep — the earlier "Name your doodle" screenshot was the Edit surface).
+- **MISSING = STROKE RETENTION + RE-DRAW (round 4):** (a) Done stores the raw perfect-freehand strokes (ride render_config.strokes jsonb — no new column; check size vs the 64KB svg cap) through publish; (b) Edit popup gains "Re-draw" → reopens the draw canvas WITH the object's strokes loaded + editable, Done re-runs the pipeline and UPDATEs the same row (svg + strokes + config via the v4 RPC — extend to accept p_svg); (c) legacy strokeless rows: Re-draw hidden, honest note. Files: DrawPanel/DrawSurface/ObjectSurface/publish/DeskPage + schema-v4 amendment — ALL owned by round-3 rocks right now, hence sequenced not parallel.
+
 ### Sebs feedback round 2026-06-11 ~18:30 (screenshots) — QUEUE ELEVATIONS
 - **Endless paper FIXED by main thread** (oversized grain layer inside camera; pool marks workspace) — verified zoomed-out.
 - **Sandbox/Edit need the FULL toggle set** (more-toggles-better): extend the restyle column to the per-style full controls (MODIFIER_SETS_BY_STYLE-driven like the chrome). → next fleet rock (ObjectSurface).
