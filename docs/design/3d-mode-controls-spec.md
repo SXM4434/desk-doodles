@@ -140,3 +140,22 @@ The 2D panel never renders in 3D mode; the 3D panel never renders in 2D mode. Pr
 ## RATIFIED COLOR POLICY (Sebs 2026-06-12, supersedes any preset colors above): INK-BLACK ACROSS EVERYTHING
 
 "Everything should just be a black color regardless of material." ALL 3D material presets render in the SINGLE ink color — the locked warm-graphite near-black (default ≈ #2A2622, range #121110–#383632 per the D2 amendment). Presets differ ONLY in surface qualities (roughness, metalness, sheen, clearcoat) — NEVER in hue or value. Any Free Stroke preset colors port their surface parameters and get recolored to the ink. Color enters Desk Doodles only through the identity pass's chrome inks (riso blue/orange on UI), and NEVER touches user art or 3D forms. This resolves D-C's "recolor at identity pass" → recolor NOW.
+
+---
+
+## RATIFIED ARCHITECTURE AMENDMENT (Sebs 2026-06-12): THREE CONTROL TIERS
+
+"Each should have its own exclusive toggles for STYLE and PROPERTY — and some that are for all as well."
+
+**Tier 1 — SHARED (always visible in 3D):** the 3D STYLE dropdown (Native / Hatch / SVG-port), Native's material sub-picker (surface qualities only — ink-black locked), and any cross-mode params (lighting/scene-level when they exist).
+
+**Tier 2 — PER-MODE STYLE TOGGLES (exclusive, discrete families — the mode's own "look" choices):**
+- Rod: cap style (round / flat / ink-blob), joint treatment (blob / clean miter)
+- Extrude: bevel profile (sharp / soft / rounded), side-wall treatment (straight / drafted)
+- Inflate: profile family (balloon / cushion / bead — discrete presets over the Puff curve)
+- Solid: edge treatment (crisp / eased), holes ON/OFF (already specced)
+These are DISCRETE family pickers (dropdown/pill rows), distinct from the sliders. Exact family lists per mode = grounded in free-stroke values where they exist + one Sebs taste pass on the rendered set (screenshot board per family before locking).
+
+**Tier 3 — PER-MODE PROPERTY SLIDERS (exclusive, continuous — already specced above):** Rod radius etc.; Extrude width/depth; Inflate base/tip/pressure/Puff; Solid ink-radius/depth.
+
+Chrome layout: Tier 1 on top → mode dropdown → Tier 2 (that mode's style row) → Tier 3 (that mode's sliders). Only the active mode's Tier 2+3 render. SVG chrome still ONLY under SVG-port. BUILD SEQUENCE: rock 1 ships Tiers 1+3 as in-flight; Tier 2 = the immediate fast-follow rock (it needs the per-family render boards for Sebs's eyeball).
