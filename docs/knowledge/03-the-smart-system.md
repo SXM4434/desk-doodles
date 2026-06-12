@@ -170,6 +170,8 @@ This page is a hub — the smart system touches almost everything:
 - **→ The research stack.** `docs/locked-refs/F3-smart-hachure-system/03-agent-research-svg-structural-signals.md` (signal catalog), `04-agent-research-classifier-architectures.md` (hybrid provider pattern), `18-scope-audit.md` (21-row edge-case policy table — most of the odd branches in `signals.ts`/`index.ts` cite its rows), `docs/research/21-research-3d-pipeline-and-style-translation.md` (the locked `coverageToParams` math for the v2 density models). Edge: *derived from*.
 - **→ The 3D mode page (planned).** Per `project_f3_shading_port_to_3d`: every shading fix here must eventually port to the 3D path; per 21-research the 3D analog is screen-space hatching with TAM math in shader uniforms. Edge: *must stay in parity with*.
 - **→ The generalization pattern.** `signals → classify → treatment → render` is a general decision pattern (memory: `project_generalizable_rendering_decision_pattern`) — Smart Hachure is the first concrete instance; the meta-engine is deliberately NOT pre-built. Edge: *first instance of*.
+- **→ [15-the-smart-ml-ladder.md](15-the-smart-ml-ladder.md)** — the dated build sequence of this engine (smart-pick, coverage, golden gates, reliability, the post-makeathon trained ladder) plus "ahead on engines, behind on receipts." Edge: *the build plan for this engine*.
+- **→ [13-the-3d-system.md](13-the-3d-system.md)** — Phase D2 (conversion semantics) is this engine's third decision surface, but with a register split: the UPLOAD register uses the classifier here verbatim, while the DRAWN register is a separate geometry/topology brain (the classifier misfires `paper@0.9` on stroke-only input). Edge: *third decision surface, register-split*.
 
 ---
 

@@ -149,6 +149,11 @@ The knowledge base is a graph; these are this page's edges. Pages other than thi
 | is-generalized-by | `docs/memory/project_generalizable_rendering_decision_pattern.md` | `signals → classify → treatment` is a general pattern; Smart Hachure is instance #1 |
 | is-constrained-by | `docs/memory/project_desk_doodles_no_rapier_in_make.md` + `docs/locked-refs/F3-smart-hachure-system/20-research-figma-make-capabilities.md` | Make's runtime quirks shape the stack (cannon-es, checkpoint uploads) |
 | interacts-via | `docs/research/19…cross-axis` (in `docs/locked-refs/F3-smart-hachure-system/`) + `docs/research/22-research-simplification-toggle.md` | Modifier axes are interconnected; simplification gets its own upstream cluster |
+| is-controlled-by | [11-the-pen-model.md](11-the-pen-model.md) | The desk control model: objects are frozen records, the panel is your pen, Global is a viewer-local lens (D-7) |
+| is-created-by | [12-the-creation-loop.md](12-the-creation-loop.md) | The full loop: Sketch\|Style → name (minting) → place as a stroke-retaining record → Re-draw; the tone brush |
+| renders-into-3d-via | [13-the-3d-system.md](13-the-3d-system.md) | Geometry modes + chrome split + ink-black policy + the conversion-semantics brain (two register brains) |
+| is-published-onto | [14-the-social-desk.md](14-the-social-desk.md) | The public layer: capped multi-desk, the drawer-as-index (place=copy), friendly handles, smart placement |
+| is-scheduled-by | [15-the-smart-ml-ladder.md](15-the-smart-ml-ladder.md) | The dated smart/ML build sequence + "ahead on engines, behind on receipts" + the receipts retrofit |
 
 ---
 

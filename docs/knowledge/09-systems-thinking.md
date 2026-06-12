@@ -178,6 +178,7 @@ This page is the hub for *why*; the spokes are the *what* and *how*:
 - **→ Modifier clusters / toggle architecture** (wobble, roughness, texture, the 5 clusters): I-11/I-13/I-14 are the walls that keep that surface coherent; the clusters are the feature space the future classifier consumes. Edge: *constraint ⇄ surface*.
 - **→ 3D pipeline / engine routing**: the planned Phase D (route drawing → Free Stroke vs Tripo) is the same one brain pointed at a routing decision — the clearest future test of one-brain-many-hands. Edge: *pattern ⇄ next consumer*.
 - **→ The locked design system (W1 / type / spacing)**: I-9 makes the rendering engine a *consumer* of the design system, never a second author of it. Edge: *token discipline*.
+- **→ [15-the-smart-ml-ladder.md](15-the-smart-ml-ladder.md)**: this page's philosophy (one brain many hands · layering beats replacement · audit-as-dataset · no-fake-provenance · honest tiering) is operationalized as a dated build ladder there — including the "ahead on engines, behind on receipts" honesty and the receipts retrofit. Edge: *philosophy ⇄ dated plan*.
 - **System parts named above:** `src/app/lib/smartHachure/*`, `src/app/components/canvas/SvgStyleTransform.tsx` (the legacy outline pass the engine orchestrates), `audit-runs/`, and the `docs/locked-refs/` contract tree.
 
 ---

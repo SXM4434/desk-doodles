@@ -5,9 +5,12 @@ This folder is Sebs's personal systems-knowledge base for Desk Doodles: every lo
 ## Reading order
 
 - **First time:** 01 → 02 → 06 → 03 → 05 (product → pipeline → tone → smart system → graph)
-- **Going deep:** 04 (ML layer) · 07 (3D pipeline) · 08 (stack)
+- **The product surfaces (rounds 4–8 systems):** 11 → 12 → 14 → 13 (pen model → creation loop → social desk → 3D system)
+- **Going deep:** 04 (ML layer) · 15 (smart/ML ladder) · 07 (3D pipeline) · 08 (stack)
 - **Philosophy:** 09
 - **Reference, dip in anytime:** 10
+
+The 01–10 pages describe the engine (how a doodle becomes marks); the **11–15 pages describe the app the engine lives inside** — the pen/lens control model, the creation loop, the 3D system, the social desk, and the smart/ML build ladder. They are the systems that landed across rounds 4–8 (2026-06-11→12) and cite the `docs/design/` specs rather than duplicating them.
 
 ## Pages
 
@@ -23,6 +26,11 @@ This folder is Sebs's personal systems-knowledge base for Desk Doodles: every lo
 | 08 | [The stack](08-the-stack.md) | Every package and its single job — Vite/React/rough.js/perfect-freehand/culori/Supabase wired today, three/R3F/cannon-es installed-but-waiting — filtered through "does it survive Figma Make?" |
 | 09 | [How we think](09-systems-thinking.md) | The operating philosophy made concrete: one decision engine many features feed, 14 invariants as load-bearing walls, the kill-list as immune memory, cite-the-contract anti-drift, audit-as-ML-dataset, the north-star filter. |
 | 10 | [The vocabulary](10-glossary.md) | Three translation tables (project canon · CS-rebuild engineering terms · 3D/graphics) mapping each load-bearing word to its plain meaning, Sebs's verbatim shorthand where sourced, and the real file/line where it lives. |
+| 11 | [The pen model](11-the-pen-model.md) | "The panel is your pen, the popup is the object, Global is a lens" (D-7): objects are records frozen at Done; the panel styles the next doodle + a live preview squiggle (Global OFF); Global ON = a viewer-local lens re-rendering the whole desk without writing; the legacy freeze. |
+| 12 | [The creation loop](12-the-creation-loop.md) | Draw → Sketch\|Style clean swap → name (the minting moment, naming=label) → place as a record that kept its strokes → Re-draw; stroke retention is the keystone; upload parity + draw-over; the round-7 tone-fill brush as drawn input's source-darkness channel. |
+| 13 | [The 3D system](13-the-3d-system.md) | Geometry modes (Rod/Extrude/Inflate/Solid + AI) under the chrome-split rule (3D-only panel; 2D chrome only under SVG-port); ink-black material policy; the conversion-semantics brain (two register brains, the arrow/eyes/two-arc fixtures); AI-as-default coexisting with the local path. |
+| 14 | [The social desk](14-the-social-desk.md) | The shared layer: capped multi-desk + auto-spawn + gallery mini-desks; the drawer as a passive cross-desk index (place=copy, click=full Edit surface); drag-to-place; friendly handles (no raw UUIDs); smart placement P-1 anti-cover landing. |
+| 15 | [The smart/ML ladder](15-the-smart-ml-ladder.md) | The dated build sequence: what runs now (classifier, smart-pick, coverage, golden gates, reliability/ECE, P-1), what's scheduled when, the post-makeathon trained-model ladder — and the central honesty: "ahead on engines, behind on receipts" + the receipts retrofit. |
 
 ## Living document rules
 
