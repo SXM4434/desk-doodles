@@ -151,6 +151,10 @@ export function DrawPanel({
   // Done no longer publishes: it stages the doodle and asks for its card info.
   // Back returns to drawing with strokes intact; Place publishes with meta.
   const [staged, setStaged] = useState<{ markup: string; strokes?: StrokePoint[][] } | null>(null);
+  // DRAW | STYLE canvas mode (Sebs 2026-06-12): Draw = raw ink, keep
+  // sketching, pen-up commits nothing. Style = sketching pauses, the drawing
+  // renders styled and the pen controls restyle it live. Flip freely.
+  const [composeMode, setComposeMode] = useState<'draw' | 'style'>('draw');
   const [stageName, setStageName] = useState('');
   const [stageWhy, setStageWhy] = useState('');
 
@@ -305,14 +309,47 @@ export function DrawPanel({
             {input === 'draw' && (
               /* DrawSurface in draw mode — in-frame Done/Edit/Clear pills hidden;
                  the panel's own Done/Cancel below are the commit chrome. */
-              <DrawSurface
-                mode="svg"
-                input="draw"
-                hideActions
-                fill
-                liveStyle
-                onStrokesChange={setStrokes}
-              />
+              <>
+                {/* Draw | Style — the canvas's own mode pills (the Pen|Desk
+                    grammar, one level down). */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  {(['draw', 'style'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setComposeMode(m)}
+                      aria-pressed={composeMode === m}
+                      style={{
+                        ...PILL,
+                        padding: '6px 14px',
+                        background: composeMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+                        color: composeMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+                      }}
+                    >
+                      {m === 'draw' ? 'Sketch' : 'Style'}
+                    </button>
+                  ))}
+                  <span
+                    style={{
+                      fontFamily: IS,
+                      fontSize: 10,
+                      fontStyle: 'italic',
+                      color: 'var(--dir-text-body-soft)',
+                    }}
+                  >
+                    {composeMode === 'draw'
+                      ? 'raw ink — keep sketching'
+                      : 'styled — play with the pen, flip back to keep drawing'}
+                  </span>
+                </div>
+                <DrawSurface
+                  mode="svg"
+                  input="draw"
+                  hideActions
+                  fill
+                  styled={composeMode === 'style'}
+                  onStrokesChange={setStrokes}
+                />
+              </>
             )}
 
             {input === 'upload-svg' && (

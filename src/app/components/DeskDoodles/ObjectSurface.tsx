@@ -636,6 +636,7 @@ export function ObjectSurface({
   // create flow) reload into the draw canvas, editable; Done re-runs the same
   // markup path the create flow uses and persists svg + config in one v5 RPC.
   const [redrawing, setRedrawing] = useState(false);
+  const [redrawMode, setRedrawMode] = useState<'draw' | 'style'>('draw');
   const redrawStrokesRef = useRef<Stroke[]>([]);
   const [redrawCount, setRedrawCount] = useState(0);
   // Local art override so the card refreshes instantly after a re-draw save.
@@ -914,7 +915,24 @@ export function ObjectSurface({
               gap: 12,
             }}
           >
-            <span style={SECTION_LABEL}>Re-draw — your original strokes, editable</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={SECTION_LABEL}>Re-draw — your original strokes, editable</span>
+              {(['draw', 'style'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setRedrawMode(m)}
+                  aria-pressed={redrawMode === m}
+                  style={{
+                    ...PILL,
+                    padding: '4px 12px',
+                    background: redrawMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+                    color: redrawMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+                  }}
+                >
+                  {m === 'draw' ? 'Sketch' : 'Style'}
+                </button>
+              ))}
+            </div>
             <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
               <F3SvgStyleProvider>
                 <F3RoughModifiersProvider>
@@ -924,7 +942,7 @@ export function ObjectSurface({
                       input="draw"
                       hideActions
                       fill
-                      liveStyle
+                      styled={redrawMode === 'style'}
                       initialStrokes={storedStrokes}
                       onStrokesChange={(st) => { redrawStrokesRef.current = st; setRedrawCount(st.length); }}
                     />
@@ -963,7 +981,7 @@ export function ObjectSurface({
                 </button>
                 {storedStrokes ? (
                   <button
-                    onClick={() => { redrawStrokesRef.current = []; setRedrawCount(0); setRedrawing(true); }}
+                    onClick={() => { redrawStrokesRef.current = []; setRedrawCount(0); setRedrawMode('draw'); setRedrawing(true); }}
                     disabled={saving}
                     title="Reopen the drawing with your original strokes"
                     style={PILL}

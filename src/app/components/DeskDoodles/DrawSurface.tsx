@@ -144,7 +144,7 @@ export function DrawSurface({
   onStrokesChange,
   hideActions,
   fill,
-  liveStyle,
+  styled,
   initialStrokes,
 }: {
   mode: CanvasMode;
@@ -159,15 +159,16 @@ export function DrawSurface({
   /** Fill the parent box (popup mini-desk) instead of clamping to 4:3 —
    *  the inner SVG letterboxes via its viewBox either way. */
   fill?: boolean;
-  /** LIVE-STYLED CANVAS (Sebs 2026-06-11 popup feedback ④: "the canvas IS the
-   *  preview"): finished strokes render through the SAME SvgStyleTransform
-   *  commit layer continuously — no Done needed — so pen-control changes
-   *  restyle the drawing live (SvgStyleTransform subscribes to the style +
-   *  modifier contexts itself). The ACTIVE in-flight stroke stays a raw
-   *  perfect-freehand polygon for zero-latency feel (motion research: direct
-   *  manipulation, no tween) and joins the styled pool on stroke end.
+  /** DRAW | STYLE mode (Sebs 2026-06-12: "drawing shouldn't stop when pen
+   *  lifts, but we can't play with toggles while it's raw — the user needs a
+   *  way IN and OUT"). Controlled by the host's Draw|Style pill pair:
+   *    · false/undefined (Draw): strokes stay RAW ink; pen-up changes
+   *      nothing; keep sketching forever.
+   *    · true (Style): drawing pauses (pointer ignored), the strokes render
+   *      through the SAME SvgStyleTransform pipeline and re-style LIVE as
+   *      the pen controls change. Flip back to keep drawing.
    *  /canvas leaves this unset — its Done/Edit commit flow is unchanged. */
-  liveStyle?: boolean;
+  styled?: boolean;
   /** Preload the canvas with stored strokes (Re-draw: the object's recorded
    *  gesture comes back editable — the record keeps the hand). */
   initialStrokes?: StrokePoint[][];
@@ -258,6 +259,8 @@ export function DrawSurface({
   }
 
   function handlePointerDown(e: React.PointerEvent) {
+    // Style mode pauses drawing — flip back to Draw to keep sketching.
+    if (styled) return;
     if (input !== 'draw' || mode === '3d') return;
     (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
     setCurrent({ id: `s-${Date.now()}`, points: [eventToSvgPoint(e)] });
@@ -330,11 +333,10 @@ export function DrawSurface({
           </SvgStyleTransform>
         </div>
       )}
-      {/* Layer 1a — when COMMITTED (or hosted with liveStyle: the popup canvas
-          IS the preview), strokes flow through SvgStyleTransform so they pick
-          up the active style (rough-handdrawn / wet-ink / etc) and re-render
-          live as the pen controls change. */}
-      {(committed || liveStyle) && strokes.length > 0 && (
+      {/* Layer 1a — when COMMITTED (or the host's Style mode is on), strokes
+          flow through SvgStyleTransform so they pick up the active style and
+          re-render live as the pen controls change. */}
+      {(committed || styled) && strokes.length > 0 && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <SvgStyleTransform
             wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}
@@ -363,7 +365,7 @@ export function DrawSurface({
       )}
       {/* Layer 1b — while NOT committed (and not live-styling), render strokes
           raw as perfect-freehand polygons so user sees what they drew, unstyled. */}
-      {!committed && !liveStyle && strokes.length > 0 && (
+      {!committed && !styled && strokes.length > 0 && (
         <svg
           viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
           width="100%"
