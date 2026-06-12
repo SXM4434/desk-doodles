@@ -405,7 +405,7 @@ export function DrawSurface({
           <path
             d={strokeToPolygonPath(current.points)}
             fill="var(--dir-text-primary)"
-            fillOpacity={0.5}
+            fillOpacity={0.9}
             stroke="none"
           />
         )}

@@ -893,7 +893,7 @@ export function ObjectSurface({
               color: 'var(--dir-text-body-soft)',
             }}
           >
-            style saved locally — needs schema-v4
+            saved locally — couldn’t reach the desk record (schema v4/v5)
           </div>
         )}
 
