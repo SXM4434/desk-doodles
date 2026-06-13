@@ -421,6 +421,35 @@ export async function buildSvgPortTexture(
     }
     return out;
   })();
+
+  // ── BOLD INK (2026-06-13): thin pen lines anti-alias to faint gray at texture
+  // scale → the drawing read washed-out on the 3D form. Overpaint the FATTENED
+  // mark mask (carve) as SOLID resolved ink over the emissive canvas, with a
+  // soft coverage edge, so the marks read crisp + bold (the carve also drives
+  // displacement+normal, so the same bold marks are physically engraved). ──
+  const inkRgb = (() => {
+    try {
+      const c = document.createElement('canvas'); c.width = 1; c.height = 1;
+      const x = c.getContext('2d'); if (!x) return { r: 42, g: 38, b: 34 };
+      const css = (typeof getComputedStyle !== 'undefined'
+        ? getComputedStyle(document.documentElement).getPropertyValue('--dir-text-primary').trim()
+        : '') || '#2A2622';
+      x.fillStyle = '#000'; x.fillStyle = css; x.fillRect(0, 0, 1, 1);
+      const d = x.getImageData(0, 0, 1, 1).data;
+      return { r: d[0], g: d[1], b: d[2] };
+    } catch { return { r: 42, g: 38, b: 34 }; }
+  })();
+  for (let i = 0; i < w * h; i++) {
+    // coverage: 1 where carve is darkest (ink core), fading to 0 by paper.
+    const cov = Math.min(1, Math.max(0, (0.62 - carve[i]) / 0.22));
+    if (cov <= 0) continue;
+    const o = i * 4;
+    src.data[o]     = Math.round(src.data[o]     * (1 - cov) + inkRgb.r * cov);
+    src.data[o + 1] = Math.round(src.data[o + 1] * (1 - cov) + inkRgb.g * cov);
+    src.data[o + 2] = Math.round(src.data[o + 2] * (1 - cov) + inkRgb.b * cov);
+  }
+  emCtx.putImageData(src, 0, 0); // emissive now carries the BOLD inked drawing
+
   const htCanvas = document.createElement('canvas');
   htCanvas.width = w;
   htCanvas.height = h;
