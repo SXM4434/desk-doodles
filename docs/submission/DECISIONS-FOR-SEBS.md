@@ -67,3 +67,7 @@ _Claude clears B-board prep + C/D options as fleets land; you just rule._
 ## Rounds — conversion/3D features placement (2026-06-13)
 - **R10 (AI-conversion round):** ML go-live · shading-fill · **image-mode** (image→SVG; vtracer WASM primary [free, no key], Quiver Arrow via Supabase Edge fallback [best quality] — scaffolded in worktree, ports here) · **HARD-3D path** (AI-mesh: fal.ai/TRELLIS + Tripo image→GLB; `hardPath.ts` scaffolded + inert, becomes default-when-it-lands, local modes are the fallback ladder) — **gated on your fal/Tripo credits → Supabase/Edge secrets, never client**.
 - Image-mode: Quiver IS a real API (`api.quiver.ai/v1/svgs/vectorizations`, Bearer key, arrow-1.1, clean paths) — but vtracer recommended primary (no key/bill). Quiver = quality fallback.
+
+## Image-mode refinement (Sebs 2026-06-13)
+- Use the **BEST-QUALITY** provider (Quiver Arrow via Edge fn) — not vtracer-for-free. Quality over key-convenience.
+- image→SVG must output a **SIMPLER SKETCH version** of the photo (abstract to a few hand-drawn strokes that fit the Desk Doodles look), NOT a detailed/photo-real vectorization. Simplify-to-sketch is part of the conversion.
