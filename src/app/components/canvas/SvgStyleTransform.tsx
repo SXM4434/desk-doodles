@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 // Smart Hachure System (v1) — opt-in via `?smartHachure=1` URL param.
 // See `docs/labs/hero/cells/F3-smart-hachure-system/06-architecture-technical-core.md`.
 import { renderSmartHachure, type SmartHachureStyle } from '../../lib/smartHachure';
@@ -2743,6 +2743,31 @@ export function SvgStyleTransform({
   const cleanRef = useRef<HTMLDivElement | null>(null);
   const fxRef = useRef<HTMLDivElement | null>(null);
 
+  // CASE-3 — PERCENTAGE-SIZED SOURCE detection (2026-06-13).
+  // The /canvas committed-strokes + upload sources declare their root <svg> as
+  // width="100%" height="100%" + a viewBox. A percentage-sized <svg> needs a
+  // DEFINITE containing block to resolve against, but the default wrapper host
+  // is `display:inline-block` (content-sized) and the inner host divs carry no
+  // explicit size — so on engines that don't fall back to the viewBox aspect
+  // ratio the styled <svg> collapses to its intrinsic ~300×225 default,
+  // shrinking the render to the top-left and cropping the far end of an
+  // elongated drawing off-frame. (The clean SKETCH layer fills the frame, so
+  // the mismatch only surfaces on the STYLE flip.)
+  //
+  // Fix: when the SOURCE svg is percentage-sized, host it as
+  // `display:block; width:100%; height:100%` (wrapper + active inner host) so
+  // the 100% resolves against the real frame. Audit / playground sources use
+  // FIXED px sizing (e.g. width="78" height="98") → detection does NOT fire and
+  // those content-sized inline-block hosts stay byte-identical. A call-site
+  // `wrapperOverride` still wins (spread last in wrapperStyle below).
+  const [sourceIsPercent, setSourceIsPercent] = useState(false);
+  useLayoutEffect(() => {
+    const sourceSvg = cleanRef.current?.querySelector('svg');
+    const w = sourceSvg?.getAttribute('width');
+    const h = sourceSvg?.getAttribute('height');
+    setSourceIsPercent(!!w && !!h && w.trim().endsWith('%') && h.trim().endsWith('%'));
+  }, [children]);
+
   const needsClone = NEEDS_DOM_CLONE.includes(style);
 
   // Smart Hachure is now DEFAULT ON (2026-06-11) — the param is an opt-OUT:
@@ -2858,7 +2883,12 @@ export function SvgStyleTransform({
   }, [onRender, needsClone, style, m, children, useSmartHachure]);
 
   const wrapperStyle: CSSProperties = {
-    display: 'inline-block',
+    // CASE-3: a percentage-sized source <svg> needs a definite containing block;
+    // host it block + 100%×100% so the 100% resolves against the real frame
+    // instead of collapsing to the svg intrinsic default. Fixed-px sources keep
+    // the content-sized inline-block (byte-identical to /audit + playground).
+    display: sourceIsPercent ? 'block' : 'inline-block',
+    ...(sourceIsPercent ? { width: '100%', height: '100%' } : null),
     position: 'relative',
     opacity: m.inkIntensity < 1.0 ? m.inkIntensity : undefined,
     ['--f3-fill-opacity' as keyof CSSProperties]: String(m.fillOpacity),
@@ -2866,6 +2896,7 @@ export function SvgStyleTransform({
     // styles the stroke-width is written inline by the rough.js render so
     // this var is harmless.
     ['--f3-stroke-width' as keyof CSSProperties]: String(m.strokeWidth),
+    // A call-site wrapperOverride still wins (spread last).
     ...wrapperOverride,
   };
 
@@ -2924,10 +2955,25 @@ export function SvgStyleTransform({
         [data-f3-fill="neutral"] svg [fill]:not(text):not([fill="transparent"]):not([fill="none"]):not([fill*="--dir-bg"]):not([fill*="color-mix"]) { fill: var(--dir-text-body-soft) !important; }
         [data-f3-fill="inverted"] svg [fill]:not(text):not([fill="transparent"]):not([fill="none"]):not([fill*="--dir-bg"]):not([fill*="color-mix"]) { fill: var(--dir-bg) !important; }
       `}</style>
-      <div ref={cleanRef} style={{ display: needsClone ? 'none' : 'block' }}>
+      <div
+        ref={cleanRef}
+        style={{
+          display: needsClone ? 'none' : 'block',
+          // CASE-3: the active inner host must also carry a definite size so the
+          // percentage-sized source <svg> fills the frame. Fixed-px sources skip
+          // this → byte-identical content-sized host.
+          ...(sourceIsPercent ? { width: '100%', height: '100%' } : null),
+        }}
+      >
         {children}
       </div>
-      <div ref={fxRef} style={{ display: needsClone ? 'block' : 'none' }} />
+      <div
+        ref={fxRef}
+        style={{
+          display: needsClone ? 'block' : 'none',
+          ...(sourceIsPercent ? { width: '100%', height: '100%' } : null),
+        }}
+      />
     </div>
   );
 }
