@@ -39,7 +39,7 @@ import {
 } from '../../state/F3RoughModifiersContext';
 import { applyStylePreset } from '../canvas/SvgStyleTransform';
 import { findDoodleBySvg, updateDoodleConfig, updateDoodleSvg } from '../../lib/publish';
-import { DrawSurface, strokesToObjectMarkup, capStrokes, type Stroke, type StrokePoint } from './DrawSurface';
+import { DrawSurface, strokesToObjectMarkup, capStrokes, fitStrokesToFrame, type Stroke, type StrokePoint } from './DrawSurface';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { exportCardSvg, exportCardPng } from '../../lib/exportCard';
 
@@ -702,7 +702,10 @@ export function ObjectSurface({
             Array.isArray(pt) && pt.length === 3 && pt.every((n) => Number.isFinite(n)),
         ),
     );
-    return ok ? (raw as StrokePoint[][]) : null;
+    // Fit the stored gesture into the draw frame so the redraw canvas shows the
+    // doodle the way the card does (CASE-2: raw-space strokes loaded tiny/offset
+    // or edge-cut). Save re-derives a tight bbox, so this only affects editing.
+    return ok ? fitStrokesToFrame(raw as StrokePoint[][]) : null;
   }, [baseline]);
 
   const handleRedrawDone = async () => {

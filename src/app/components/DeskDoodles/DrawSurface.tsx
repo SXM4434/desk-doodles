@@ -80,6 +80,40 @@ export type InputMode = 'draw' | 'upload-svg' | 'upload-image';
 export const VIEWBOX_W = 800;
 export const VIEWBOX_H = 600;
 
+/** Fit a set of stored strokes into the draw frame (CASE-2 redraw bug). Strokes
+ *  are captured in raw VIEWBOX_W×VIEWBOX_H space, but a doodle drawn small/offset
+ *  (or spanning past the edges) reloads into the redraw canvas tiny/displaced or
+ *  cut off — NOT matching the tight-bbox card view. Scale+center the gesture's
+ *  bbox to fill the frame (minus pad), preserving aspect. The save path
+ *  (strokesToObjectMarkup) re-derives a tight bbox at Done, so this only affects
+ *  the editing view, never the persisted markup. Verified visually (small/offset
+ *  + edge-spanning fixtures) before wiring. */
+export function fitStrokesToFrame(
+  strokes: StrokePoint[][],
+  frameW = VIEWBOX_W,
+  frameH = VIEWBOX_H,
+  pad = 40,
+): StrokePoint[][] {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of strokes) {
+    for (const [x, y] of s) {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  const sw = maxX - minX, sh = maxY - minY;
+  if (!(sw > 0) && !(sh > 0)) return strokes; // single point / empty — leave as-is
+  const availW = frameW - pad * 2, availH = frameH - pad * 2;
+  const scale = Math.min(availW / (sw || 1), availH / (sh || 1));
+  const offX = pad + (availW - sw * scale) / 2 - minX * scale;
+  const offY = pad + (availH - sh * scale) / 2 - minY * scale;
+  return strokes.map((s) =>
+    s.map(([x, y, p]): StrokePoint => [x * scale + offX, y * scale + offY, p ?? 0.5]),
+  );
+}
+
 export const STROKE_OPTS = {
   size: 4,
   thinning: 0.5,
