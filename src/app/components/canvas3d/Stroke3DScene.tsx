@@ -106,16 +106,26 @@ export const STUDIO_ENV = {
    *  ancestor's #15171a, inside the D2-E ink family (#121110–#383632): broad
    *  reflections read as dark warm graphite, never tan. */
   bg: '#211e1a',
-  /** Big soft key panel (top-front) → broad clearcoat highlight. Whisper-warm
-   *  white (Δr−b 15 < the 25 warmth bound even at full mirror). */
-  key: { color: '#fffaf0', intensity: 3 },
+  /** Big soft key panel (top-front) → broad clearcoat highlight. NEUTRALISED
+   *  to near-grey white (#f8f7f6, Δr−b 2) — the be7aac7 fix darkened the env BG
+   *  but left this panel whisper-warm (#fffaf0 Δ15), and rubber/softGel's WIDE
+   *  sheen lobe (sheen 1.0) broadly MIRRORS this panel across a FLAT coplanar
+   *  slab face → the milk-chocolate read (2026-06-13 slab battery: rubber lit
+   *  Δ25, softGel Δ27, local warm buckets Δ29). Specular/sheen bypass albedo,
+   *  so the panel HUE lands at full strength regardless of the ink-black base
+   *  (RATIFIED COLOR POLICY / ink-black D2-E). Full value + intensity KEPT
+   *  (clearcoat/sheen still have a bright source — no Day-11 flat-blob); only
+   *  the warm CAST is removed, so a broad mirror reads grey, never tan. */
+  key: { color: '#f8f7f6', intensity: 3 },
   /** Cool rim panel (back-left) → separates the form's dark side. */
   rim: { color: '#bcd0e8', intensity: 1.6 },
-  /** Low fill (front-low) → soft underside glow for sheen. Was FS's #ffd9b0
-   *  (Δr−b 79 — safe on FS tubes against a near-black bg, but our FLAT slab
-   *  faces mirror it broadly at down-tilted angles) → de-saturated to the
-   *  whisper-warm register (Δr−b 20): warmth direction kept, tan killed. */
-  fill: { color: '#e8e0d4', intensity: 1.1 },
+  /** Low fill (front-low) → soft underside glow for sheen. FS's #ffd9b0 (Δ79)
+   *  → be7aac7 whisper-warm #e8e0d4 (Δ20) → NEUTRALISED #dcdad7 (Δ5): the same
+   *  sheen-lobe flat-face mirror that warmed the KEY warmed this FILL too (it
+   *  sits front-low, square in the sheen lobe of a down-tilted slab). Warmth
+   *  killed, value/intensity kept (the underside glow that lifts sheen forms
+   *  survives — just neutral now). Ink-black holds at every orbit angle. */
+  fill: { color: '#dcdad7', intensity: 1.1 },
   /** Tight bright streak → crisp specular accent on curvature. */
   streak: { color: '#ffffff', intensity: 4 },
 } as const;

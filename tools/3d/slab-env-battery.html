@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- TRUE-SLAB env-reflection battery — repo-side tool only (NOT in the Make
+     drag-drop set). Served by vite at /tools/3d/slab-env-battery.html and
+     driven headless by tools/3d/slab-env-battery.mjs via window.__slab.
+
+     WHY THIS EXISTS (the fixture-blindness fix, 2026-06-13):
+     The material-battery used a SQUIRCLE (superellipse n=4) Extrude fixture —
+     rounded corners, no broad flat coplanar faces. rubber/softGel have a WIDE
+     sheen lobe; on a true flat coplanar slab face that lobe broadly MIRRORS
+     the warm <Environment> KEY + FILL panels and reads milk-chocolate brown.
+     The squircle's curvature spread the lobe across angles so no single broad
+     warm band ever formed — the "72/72 PASS" was fixture-blind.
+
+     THIS battery uses a TRUE RECTANGULAR SLAB (a literal axis-aligned rectangle
+     stroke → buildExtrudeGeometry → broad flat front/top/side faces), sweeps
+     MULTIPLE elevations (10/22/35°) × azimuths (0/45/67°), and covers ALL 6
+     presets — so the fix can't warm one preset, flatten forms to black blobs,
+     or miss rubber/softGel's flat-face sheen mirror.
+
+     Renders through the EXACT product rig (StudioRig incl. Environment bake +
+     createNativeMaterial + buildStrokeWithParams, all EXPORTED from
+     Stroke3DScene). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>TRUE-SLAB env-reflection battery</title>
+    <style>
+      body { margin: 0; padding: 16px; font: 12px/1.4 monospace; background: #fdfcf9; color: #3b362e; }
+      section { margin-bottom: 28px; }
+      h2 {
+        margin: 0 0 4px; font-size: 14px; text-transform: uppercase;
+        letter-spacing: 0.08em; border-bottom: 2px solid #3b362e; padding-bottom: 4px;
+      }
+      p.note { margin: 2px 0 10px; font-size: 11px; color: #6f6a60; }
+      .grid { display: flex; flex-wrap: wrap; gap: 8px; }
+      figure { margin: 0; width: 200px; }
+      figure img { display: block; width: 200px; height: 200px; border: 1px solid #d8d2c6; box-sizing: border-box; }
+      figcaption { padding: 3px 2px; font-size: 10px; font-weight: 700; }
+      figcaption small { display: block; font-weight: 400; color: #6f6a60; }
+      figcaption small.fail { color: #b03434; font-weight: 700; }
+      #stage { position: fixed; right: -9999px; top: 0; width: 460px; height: 460px; }
+    </style>
+  </head>
+  <body>
+    <h1 style="font-size:15px;margin:0 0 14px">
+      TRUE RECTANGULAR SLAB × env-reflection battery — product rig (StudioRig incl. Environment bake)
+    </h1>
+    <section id="board-strip"><h2>Distinctness strip — all 6 presets @ one angle</h2><p class="note">Same true-rect slab, same angle — the six surface reads must stay visibly DIFFERENT while all staying ink-black (no preset flattened to a black blob).</p><div class="grid"></div></section>
+    <section id="board-slab"><h2>TRUE SLAB × 6 presets × ≥6 angles (elev 10/22/35° × az 0/45/67°)</h2><p class="note">Per cell: lit-face median rgb (p55–p92 luminance band — excludes specular pinpoints + dark side). Gates: r−b &lt; 18 · lit-face luminance &lt; 128 · form spread (anti flat-black).</p><div class="grid"></div></section>
+    <section id="board-marks"><h2>Hatch + SVG-port (must be unaffected — no env sampling)</h2><p class="note">ShaderMaterial styles never read the Environment; battery proves they stay byte-stable across the env change.</p><div class="grid"></div></section>
+    <div id="stage"></div>
+    <script type="module" src="/tools/3d/slab-env-battery-harness.tsx"></script>
+  </body>
+</html>

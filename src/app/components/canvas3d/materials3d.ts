@@ -37,9 +37,14 @@ const INK = INK_3D_DEFAULT;
  *  D2-E's paper-tinted #d8c9ae was calibrated for the old single material at
  *  sheen 0.35 — at sheen 1.0 it FLOODS the ink to beige (caught on the
  *  2026-06-12 material sweep screenshots: softGel/rubber read tan, breaking
- *  the ratified everything-black policy). A warm-graphite sheen keeps the
- *  satin/balloon surface identity while the object stays read-as-black. */
-const SHEEN_GRAPHITE = '#6b6258';
+ *  the ratified everything-black policy). The warm-graphite #6b6258 (Δr−b 19)
+ *  STILL tinted the wide sheen lobe warm — and three.js sheen integrates the
+ *  warm scene lights + env panels too — so on a TRUE FLAT coplanar slab face
+ *  the broad lobe read milk-chocolate (2026-06-13 slab battery). NEUTRALISED
+ *  to true grey #626262 at the SAME luminance (99) — the satin/balloon surface
+ *  identity (broad soft sheen) is unchanged, only the warm CAST is removed, so
+ *  the sheen lobe reads grey-on-black, never tan. Ink-black policy (D2-E). */
+const SHEEN_GRAPHITE = '#626262';
 
 export type MaterialPresetId =
   | 'ink'
