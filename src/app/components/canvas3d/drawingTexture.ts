@@ -251,9 +251,14 @@ export interface SvgPortTextureResult {
 /** Displacement depth (world units) for the carved svg-port relief — how far
  *  ink grooves sink below the paper surface. Pair with displacementBias =
  *  −RELIEF_DISPLACEMENT_SCALE so WHITE(paper)=at-surface, BLACK(ink)=recessed.
- *  Eyeball-tunable; start subtle so the carve reads on orbit without shredding
- *  the slab. */
-export const RELIEF_DISPLACEMENT_SCALE = 0.08;
+ *  Eyeball-tunable. RAISED 0.08→0.13 (Sebs 2026-06-13: "engraved, DEEP enough
+ *  to be seen"): at 0.08 the carve read like a printed decal. 0.18 was clearly
+ *  deep but tore THIN line-art (the single-step cap tessellates too coarsely for
+ *  that much push → faceting/dashing on hairline strokes). 0.13 keeps a real,
+ *  obviously-carved channel the orbit reveals while the heavy lifting of the
+ *  "engraved" READ rides the steep-wall normalMap (geometry-free, never tears).
+ *  Both together = deep AND legible. */
+export const RELIEF_DISPLACEMENT_SCALE = 0.13;
 
 /** Build the svg-port channel textures from the REAL styled SvgStyleTransform
  *  markup, registered to the geometry's world front-face window. ASYNC — the
@@ -330,18 +335,27 @@ export async function buildSvgPortTexture(
   // UNDEFINED in a detached SVG rasterized via a data-URL Image. Copy the page's
   // resolved --dir-* tokens (+ the wrapper's --f3-* vars) onto the svg root so
   // they cascade to every mark and var() resolves at raster time.
-  if (typeof getComputedStyle !== 'undefined') {
-    const rootStyle = getComputedStyle(document.documentElement);
-    const DIR_VARS = [
-      '--dir-text-primary', '--dir-bg', '--dir-text-secondary', '--dir-text-body',
-      '--dir-text-body-soft', '--dir-accent', '--dir-border', '--dir-muted',
-      '--dir-detail', '--dir-raised', '--dir-recessed', '--dir-link-color',
-      '--dir-chip-bg', '--dir-chip-border',
-    ];
+  // W1 fallbacks (verbatim src/styles/theme.css :root) — if the page's computed
+  // --dir-* are EMPTY (cold mount / detached doc / a test harness with no
+  // stylesheet), every styled mark paints with an unresolved var() and the
+  // drawing VANISHES → a blank slab (the "svg-port reads faint/blank" class).
+  // Seed each token with the real W1 value so the marks ALWAYS resolve to ink.
+  const DIR_FALLBACK: Record<string, string> = {
+    '--dir-text-primary': '#121110', '--dir-bg': '#FDFCF9',
+    '--dir-text-secondary': '#5F5B54', '--dir-text-body': '#383632',
+    '--dir-text-body-soft': '#797369', '--dir-accent': '#121110',
+    '--dir-border': '#E3DFD4', '--dir-muted': '#EBE7DC', '--dir-detail': '#878075',
+    '--dir-raised': '#F9F7F3', '--dir-recessed': '#F3F0E8',
+    '--dir-link-color': '#121110', '--dir-chip-bg': 'transparent',
+    '--dir-chip-border': '#E3DFD4',
+  };
+  {
+    const rootStyle =
+      typeof getComputedStyle !== 'undefined' ? getComputedStyle(document.documentElement) : null;
     let varStyle = '';
-    for (const v of DIR_VARS) {
-      const val = rootStyle.getPropertyValue(v).trim();
-      if (val) varStyle += `${v}:${val};`;
+    for (const v of Object.keys(DIR_FALLBACK)) {
+      const val = (rootStyle?.getPropertyValue(v).trim() || '') || DIR_FALLBACK[v];
+      varStyle += `${v}:${val};`;
     }
     varStyle += '--f3-fill-opacity:1;--f3-stroke-width:1;';
     svgEl.setAttribute('style', `${varStyle}${svgEl.getAttribute('style') ?? ''}`);
@@ -392,7 +406,10 @@ export async function buildSvgPortTexture(
   // WIDER groove they catch the raking light and read as a bold engraved
   // channel — the ink color (emissive/map, kept thin) then sits IN the groove.
   // This is what makes line-art "actually carved in" instead of a faint decal.
-  const GROOVE_R = Math.max(1, Math.round(longPx * 0.005));
+  // Groove half-width (min-filter radius). WIDENED 0.005→0.008 (deep-carve pass)
+  // so thin pen lines fatten into channels broad enough to hold a visible
+  // displacement well + bevelled walls — a 1px-thin mark can't read as carved.
+  const GROOVE_R = Math.max(2, Math.round(longPx * 0.008));
   const carve = (() => {
     const tmp = new Float32Array(w * h);
     for (let y = 0; y < h; y++) {
@@ -464,7 +481,11 @@ export async function buildSvgPortTexture(
 
   // ── normal: 3×3 Sobel over the CARVE field → tangent-space normal (RGB) ──
   // Groove walls (the fattened gradient) become surface tilt the key light rakes.
-  const NORMAL_STRENGTH = 1.4; // lower = steeper walls = stronger carved read
+  // STEEPER walls 1.4→0.85 (deep-carve pass): lower nz tilts the groove-wall
+  // normals harder away from the surface, so the raking key catches a bold
+  // bright-edge / shadow-edge on every channel — the carve reads even head-on,
+  // before any orbit. (Paired with the higher material normalScale below.)
+  const NORMAL_STRENGTH = 0.85; // lower = steeper walls = stronger carved read
   const nmCanvas = document.createElement('canvas');
   nmCanvas.width = w;
   nmCanvas.height = h;
@@ -546,6 +567,10 @@ export function applyPlanarReliefUVs(
 }
 
 /** bumpScale for the relief — how hard the carved grooves catch the light.
- *  Tuned so the marks read as pressed-in ink under the studio key without the
- *  body looking noisy. Exported so the harness clone uses the SAME value. */
-export const RELIEF_BUMP_SCALE = 0.9;
+ *  RAISED 0.9→2.2 (deep-carve pass, Sebs "native shouldn't bury the drawing in
+ *  a featureless dark blob"): on the dark single-ink body the old 0.9 bump was
+ *  near-invisible under the high studio key. A much stronger perturbation +
+ *  the native grazing key (Stroke3DScene) make the carved drawing catch a bold
+ *  highlight/shadow on every groove wall — the drawing READS on the slab, while
+ *  the body stays one ink value (relief is light-driven, never colour). */
+export const RELIEF_BUMP_SCALE = 2.2;

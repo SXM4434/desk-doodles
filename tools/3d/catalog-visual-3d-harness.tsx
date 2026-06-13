@@ -25,7 +25,7 @@
 // Driven headless by tools/3d/catalog-visual-3d.mjs through window.__vis.
 // Deterministic: fixed orbit angles, fixed slider levels, no randomness.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
@@ -65,11 +65,24 @@ import {
 import { rodAdornmentSpecs, type RodAdornmentSpec } from '../../src/app/components/canvas3d/rodAdornments';
 import {
   buildDrawingReliefTexture,
+  buildSvgPortTexture,
   applyPlanarReliefUVs,
   RELIEF_BUMP_SCALE,
+  RELIEF_DISPLACEMENT_SCALE,
+  type SvgPortTextureResult,
 } from '../../src/app/components/canvas3d/drawingTexture';
+// Subdivides the boundary-only Earcut cap so displacementMap has interior
+// vertices to carve — EXACT product import (Stroke3DScene line 9).
+import { TessellateModifier } from 'three/examples/jsm/modifiers/TessellateModifier.js';
 import { PinShape } from '../../src/app/lib/items/PinShape';
 import { PegToolShape } from '../../src/app/lib/items/PegToolShape';
+// The REAL 2D style pipeline + its contexts — so svg-port renders the EXACT
+// styled SvgStyleTransform output (project_f3_shading_port_to_3d), not the dead
+// hatch-shader stopgap. The harness wraps the catalog shape in the providers,
+// renders SvgStyleTransform, captures its onRender markup = the vibe target.
+import { SvgStyleTransform } from '../../src/app/components/canvas/SvgStyleTransform';
+import { F3RoughModifiersProvider } from '../../src/app/state/F3RoughModifiersContext';
+import { F3SvgStyleProvider } from '../../src/app/state/F3SvgStyleContext';
 import {
   F3_PEGBOARD_SUBJECTS,
   F3_TROPHY_WALL_SUBJECTS,
@@ -123,8 +136,22 @@ const PAPER_RGB = [253, 252, 249] as const;
 const samplerHost = document.getElementById('sampler')!;
 const cleanBox = document.getElementById('cleanbox')!;
 const statusEl = document.getElementById('status')!;
+// Offscreen host for the SvgStyleTransform render (needs live DOM for getBBox/
+// getComputedStyle — it CANNOT be renderToStaticMarkup). Hidden far offscreen
+// like the sampler so it never paints over the GL stage.
+const svgPortHost = (() => {
+  let el = document.getElementById('svgport-host');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'svgport-host';
+    el.style.cssText = 'position:fixed;right:-99999px;top:0;width:800px;height:600px;';
+    document.body.appendChild(el);
+  }
+  return el;
+})();
 let samplerRoot: Root | null = null;
 let cleanRoot: Root | null = null;
+let svgPortRoot: Root | null = null;
 
 function nextFrame(): Promise<void> {
   return new Promise((r) => requestAnimationFrame(() => r()));
@@ -133,6 +160,42 @@ function nextFrame(): Promise<void> {
 interface SampleResult {
   strokes: StrokeInputPoint[][];
   sampledElements: number;
+  /** Serialized styled <svg> from the REAL SvgStyleTransform (default style =
+   *  rough-handdrawn, the engine signature) — the svg-port markup the product
+   *  rasterizes (project_f3_shading_port_to_3d). null on capture failure. */
+  svgPortMarkup: string | null;
+}
+
+/** Mount the catalog shape inside the REAL F3 providers + SvgStyleTransform, let
+ *  its onRender seam hand back the serialized styled <svg>. This is the same
+ *  markup DeskDoodlesCanvas feeds the 3D scene — so the harness svg-port wears
+ *  the EXACT 2D vibe, not a reimplementation. Resolves on the first onRender. */
+function captureSvgPortMarkup(cell: SweepShape): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!svgPortRoot) svgPortRoot = createRoot(svgPortHost);
+    let settled = false;
+    const done = (m: string | null) => { if (!settled) { settled = true; resolve(m); } };
+    // Safety timeout: if onRender never fires (style pass error), resolve null
+    // so the sweep falls back to the plain lit body instead of hanging.
+    const t = setTimeout(() => done(null), 1500);
+    flushSync(() => {
+      svgPortRoot!.render(
+        <F3RoughModifiersProvider>
+          <F3SvgStyleProvider>
+            <SvgStyleTransform
+              onRender={(s) => { clearTimeout(t); done(s); }}
+            >
+              {cell.kind === 'trophy' ? (
+                <PinShape shape={cell.shape as F3TrophyWallShapeId} />
+              ) : (
+                <PegToolShape shape={cell.shape as F3PegboardShapeId} />
+              )}
+            </SvgStyleTransform>
+          </F3SvgStyleProvider>
+        </F3RoughModifiersProvider>,
+      );
+    });
+  });
 }
 
 async function sampleShape(cell: SweepShape): Promise<SampleResult> {
@@ -148,8 +211,11 @@ async function sampleShape(cell: SweepShape): Promise<SampleResult> {
   });
   await nextFrame();
 
+  // Capture the styled svg-port markup in parallel (real SvgStyleTransform).
+  const svgPortMarkup = await captureSvgPortMarkup(cell);
+
   const svg = samplerHost.querySelector('svg');
-  if (!svg) return { strokes: [], sampledElements: 0 };
+  if (!svg) return { strokes: [], sampledElements: 0, svgPortMarkup };
 
   const geomEls = Array.from(
     svg.querySelectorAll<SVGGeometryElement>('path, rect, circle, ellipse, line, polyline, polygon'),
@@ -192,7 +258,7 @@ async function sampleShape(cell: SweepShape): Promise<SampleResult> {
     }
   }
   if (!Number.isFinite(minX) || maxX - minX < 1e-9 || maxY - minY < 1e-9) {
-    return { strokes: [], sampledElements: 0 };
+    return { strokes: [], sampledElements: 0, svgPortMarkup };
   }
   const spanX = maxX - minX;
   const spanY = maxY - minY;
@@ -206,7 +272,48 @@ async function sampleShape(cell: SweepShape): Promise<SampleResult> {
     s.pts.map(([x, y]): StrokeInputPoint => [(x - minX) * scale + offX, (y - minY) * scale + offY]),
   );
 
-  return { strokes, sampledElements: strokes.length };
+  // CO-REGISTER the styled markup to the SAME 800×600 fit space the strokes
+  // were placed in. The markup is in the catalog svg's NATURAL user-coords
+  // (e.g. 0..100); the strokes (and thus the 3D geometry) live in the re-fit
+  // 800×600 SCENE_VIEWBOX. buildSvgPortTexture maps world→viewBox assuming the
+  // markup's viewBox === the stroke viewBox, so we re-root the markup: viewBox
+  // 0 0 800 600 with the children wrapped in the exact fit transform
+  // (x' = (x−minX)·scale + offX). Without this the ported render lands in the
+  // wrong sub-rect and the carve reads as noise / blank.
+  const fittedMarkup = svgPortMarkup
+    ? refitMarkupToScene(svgPortMarkup, { minX, minY, scale, offX, offY })
+    : null;
+
+  return { strokes, sampledElements: strokes.length, svgPortMarkup: fittedMarkup };
+}
+
+/** Re-root a styled <svg> into the 800×600 SCENE_VIEWBOX, applying the SAME
+ *  bbox-fit transform the strokes received so the ported texture co-registers
+ *  with the 3D geometry. Pure string→string (DOM-parsed). */
+function refitMarkupToScene(
+  markup: string,
+  fit: { minX: number; minY: number; scale: number; offX: number; offY: number },
+): string | null {
+  try {
+    const doc = new DOMParser().parseFromString(markup, 'image/svg+xml');
+    const svg = doc.documentElement as unknown as SVGSVGElement;
+    if (!svg || svg.tagName.toLowerCase() !== 'svg') return markup;
+    // Wrap all existing children in a <g> carrying the fit transform.
+    const g = doc.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute(
+      'transform',
+      `translate(${fit.offX} ${fit.offY}) scale(${fit.scale}) translate(${-fit.minX} ${-fit.minY})`,
+    );
+    while (svg.firstChild) g.appendChild(svg.firstChild);
+    svg.appendChild(g);
+    svg.setAttribute('viewBox', `0 0 ${SCENE_VIEWBOX.w} ${SCENE_VIEWBOX.h}`);
+    svg.setAttribute('width', String(SCENE_VIEWBOX.w));
+    svg.setAttribute('height', String(SCENE_VIEWBOX.h));
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    return new XMLSerializer().serializeToString(svg);
+  } catch {
+    return markup;
+  }
 }
 
 // ─── CLEAN ground-truth render (the source SVG as drawn) ─────────────────────
@@ -226,6 +333,10 @@ export interface VisState {
   hatchInputs?: HatchInputs;
   hatchGrammar?: HatchGrammar;
   hatchDirection?: HatchDirection;
+  /** svg-port ONLY: the serialized styled <svg> (real SvgStyleTransform output,
+   *  re-fit to the 800×600 scene). Drives the carved relief — the form WEARS
+   *  the 2D render (project_f3_shading_port_to_3d). Absent → plain lit body. */
+  svgPortMarkup?: string;
   angleDeg: number;
   elevDeg: number;
   /** VERIFY-ONLY A/B flag (not a product code path): when true the Solid/Extrude
@@ -318,6 +429,19 @@ function HatchSync({
 
 const SPHERE_SEGMENTS = 14;
 
+// Driver-observable readiness flag for the async svg-port texture: render3d
+// polls this so it captures the carved cap, not the pre-texture plain body.
+let svgPortReady = true;
+
+/** Dispose the three svg-port channel textures (mirror Stroke3DScene's
+ *  disposeSvgPortTex — three never auto-frees GPU textures on reassignment). */
+function disposeSvgPortTexLocal(t: SvgPortTextureResult | null | undefined): void {
+  if (!t) return;
+  t.emissive.dispose();
+  t.height.dispose();
+  t.normal.dispose();
+}
+
 function VisMeshes({
   strokes,
   state,
@@ -354,24 +478,29 @@ function VisMeshes({
 
   useEffect(() => () => { for (const b of builds) b.geometry.dispose(); }, [builds]);
 
-  // Materials.
+  // Materials. nativeMat is ALWAYS built (EXACT product: svg-port + native both
+  // use the lit native material as the BASE; svg-port overrides it with the
+  // relief material once the texture lands, and falls BACK to it pre-texture /
+  // on failure — never a null material). Hatch builds the parallel shader.
   const nativeProps: NativeProps3D = { ...DEFAULT_NATIVE_PROPS_3D, ...(state.nativeProps ?? {}) };
   const preset: MaterialPresetId = state.materialPreset ?? MODE_MATERIAL_DEFAULTS_3D[state.geometryMode];
   const nativeMat = useMemo(
-    () => (state.style3d === 'native' ? createNativeMaterial(preset, undefined, nativeProps) : null),
+    () => createNativeMaterial(preset, undefined, nativeProps),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.style3d, preset, JSON.stringify(state.nativeProps ?? {})],
+    [preset, JSON.stringify(state.nativeProps ?? {})],
   );
   useEffect(() => () => nativeMat?.dispose(), [nativeMat]);
 
-  const hatchVariant: 'hatch' | 'svg-port' = state.style3d === 'svg-port' ? 'svg-port' : 'hatch';
+  // HATCH style only — svg-port NO LONGER uses the parallel hatch shader (the
+  // killed stopgap); it wears the REAL 2D render as a carved relief (below),
+  // mirroring the product Stroke3DScene exactly.
   const hatchMat = useMemo(
-    () => (state.style3d === 'native' ? null : createHatchMaterial(hatchVariant)),
-    [state.style3d, hatchVariant],
+    () => (state.style3d === 'hatch' ? createHatchMaterial('hatch') : null),
+    [state.style3d],
   );
   useEffect(() => () => hatchMat?.dispose(), [hatchMat]);
 
-  const material: THREE.Material = (hatchMat ?? nativeMat)!;
+  const material: THREE.Material = hatchMat ?? nativeMat;
 
   // BAS-RELIEF FACE (RC-2 fix) — PORT of Stroke3DScene StrokeMeshes. The pool-
   // raster Solid (and closed-loop Extrude) bury the interior hand into a
@@ -411,7 +540,90 @@ function VisMeshes({
     return m;
   }, [relief, material]);
   useEffect(() => () => { if (reliefMaterial) reliefMaterial.dispose(); }, [reliefMaterial]);
-  const bodyMaterial: THREE.Material = reliefMaterial ?? material;
+  // ── SVG-PORT: the form WEARS the REAL 2D render — EXACT product path
+  // (Stroke3DScene StrokeMeshes). Rasterize the styled markup → emissive ink +
+  // Sobel normal + displacement height, register to the front cap, render a
+  // TESSELLATED cap so displacement carves real geometry. solid/extrude only.
+  const isSvgPort = state.style3d === 'svg-port';
+  const svgPortBody = isSvgPort && (state.geometryMode === 'solid' || state.geometryMode === 'extrude');
+  const [svgPortTex, setSvgPortTex] = useState<SvgPortTextureResult | null>(null);
+  const [svgPortGeom, setSvgPortGeom] = useState<THREE.BufferGeometry | null>(null);
+  const svgPortGenRef = useRef(0);
+  useEffect(() => {
+    svgPortReady = false;
+    if (!svgPortBody || !state.svgPortMarkup || builds.length === 0) {
+      setSvgPortTex((prev) => { disposeSvgPortTexLocal(prev); return null; });
+      setSvgPortGeom((prev) => { prev?.dispose(); return null; });
+      svgPortReady = true; // nothing to wait for
+      return;
+    }
+    const mass = builds[0];
+    mass.geometry.computeBoundingBox();
+    const bb = mass.geometry.boundingBox;
+    if (!bb || !Number.isFinite(bb.min.x) || !Number.isFinite(bb.max.x)) {
+      setSvgPortTex((prev) => { disposeSvgPortTexLocal(prev); return null; });
+      setSvgPortGeom((prev) => { prev?.dispose(); return null; });
+      svgPortReady = true;
+      return;
+    }
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES);
+    const myGen = ++svgPortGenRef.current;
+    let cancelled = false;
+    buildSvgPortTexture(
+      state.svgPortMarkup,
+      pool,
+      SCENE_VIEWBOX,
+      { minX: bb.min.x, maxX: bb.max.x, minY: bb.min.y, maxY: bb.max.y },
+      { paperColor: PAPER },
+    )
+      .then((res) => {
+        if (cancelled || myGen !== svgPortGenRef.current) { disposeSvgPortTexLocal(res); return; }
+        if (!res) { svgPortReady = true; return; }
+        let carved: THREE.BufferGeometry | null = null;
+        try {
+          const clone = mass.geometry.clone();
+          carved = new TessellateModifier(0.04, 5).modify(clone); // matches product (deep-carve)
+          clone.dispose();
+          applyPlanarReliefUVs(carved, res.window);
+          carved.computeVertexNormals();
+        } catch {
+          carved = null;
+        }
+        setSvgPortTex((prev) => { disposeSvgPortTexLocal(prev); return res; });
+        setSvgPortGeom((prev) => { prev?.dispose(); return carved; });
+        if (!carved) applyPlanarReliefUVs(mass.geometry, res.window);
+        svgPortReady = true;
+      })
+      .catch(() => { svgPortReady = true; });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svgPortBody, state.svgPortMarkup, builds, state.geometryMode, JSON.stringify(params)]);
+  useEffect(() => () => { disposeSvgPortTexLocal(svgPortTex); }, [svgPortTex]);
+  useEffect(() => () => { svgPortGeom?.dispose(); }, [svgPortGeom]);
+
+  const svgPortMaterial = useMemo<THREE.Material | null>(() => {
+    if (!svgPortTex) return null;
+    const m = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: svgPortTex.emissive,
+      normalMap: svgPortTex.normal,
+      displacementMap: svgPortTex.height,
+      displacementScale: RELIEF_DISPLACEMENT_SCALE,
+      displacementBias: -RELIEF_DISPLACEMENT_SCALE,
+      emissive: new THREE.Color(0xffffff),
+      emissiveMap: svgPortTex.emissive,
+      emissiveIntensity: 0.22, // matches product (deep-carve pass)
+      roughness: 1.0,
+      metalness: 0.0,
+    });
+    m.normalScale = new THREE.Vector2(1.6, -1.6); // matches product (deep-carve)
+    m.needsUpdate = true;
+    return m;
+  }, [svgPortTex]);
+  useEffect(() => () => { if (svgPortMaterial) svgPortMaterial.dispose(); }, [svgPortMaterial]);
+
+  const bodyMaterial: THREE.Material =
+    (svgPortBody && svgPortMaterial) ? svgPortMaterial : (reliefMaterial ?? material);
 
   // VERIFY-ONLY A/B: the OLD raised-tube face-ink overlay (the lazy "lines on
   // top" stopgap), reconstructed verbatim so the before/after board renders
@@ -445,15 +657,8 @@ function VisMeshes({
   );
   useEffect(() => () => legacyTubeMaterial?.dispose(), [legacyTubeMaterial]);
 
-  // SVG-port edges.
-  const showEdges = state.style3d === 'svg-port';
-  const edges = useMemo<THREE.EdgesGeometry[]>(
-    () => (showEdges ? builds.map((b) => new THREE.EdgesGeometry(b.geometry, 30)) : []),
-    [builds, showEdges],
-  );
-  useEffect(() => () => { for (const e of edges) e.dispose(); }, [edges]);
-  const edgeMaterial = useMemo(() => new THREE.LineBasicMaterial({ color: new THREE.Color(INK_3D_DEFAULT) }), []);
-  useEffect(() => () => edgeMaterial.dispose(), [edgeMaterial]);
+  // (svg-port NO LONGER draws an EdgesGeometry outline — the killed stopgap;
+  // the carved relief IS the drawing now.)
 
   // Rod adornments (caps + joints).
   const capSphere = useMemo(() => new THREE.SphereGeometry(1, SPHERE_SEGMENTS, SPHERE_SEGMENTS), []);
@@ -513,7 +718,7 @@ function VisMeshes({
       {hatchMat && (
         <HatchSync
           material={hatchMat}
-          variant={hatchVariant}
+          variant="hatch"
           inputs={state.hatchInputs ?? { hachureGap: 4, hachureAngle: -41, strokeWidth: 1.2, inkIntensity: 1.0 }}
           grammar={state.hatchGrammar ?? 'hachure'}
           direction={state.hatchDirection ?? 'fixed'}
@@ -522,8 +727,12 @@ function VisMeshes({
       {builds.map((b, i) => (
         <group key={i}>
           {hullMaterial && <mesh geometry={b.geometry} material={hullMaterial} />}
-          <mesh geometry={b.geometry} material={bodyMaterial} />
-          {showEdges && edges[i] && <lineSegments geometry={edges[i]} material={edgeMaterial} />}
+          {/* svg-port carves the TESSELLATED cap (svgPortGeom) on i=0; all
+              other meshes (and pre-texture frame) use the plain mass. */}
+          <mesh
+            geometry={svgPortBody && i === 0 && svgPortGeom ? svgPortGeom : b.geometry}
+            material={bodyMaterial}
+          />
           {adornments[i]?.map((spec, j) => (
             <mesh
               key={`a${j}`}
@@ -570,6 +779,23 @@ function VisApp() {
     >
       <color attach="background" args={[PAPER]} />
       <StudioRig />
+      {/* svg-port carve light — LOW grazing key + opposite low fill (EXACT
+          product light, deep-carve pass). Only when svg-port; never perturbs
+          the Native/Hatch groups. */}
+      {scene.state.style3d === 'svg-port' && (
+        <>
+          <directionalLight position={[7, 1.3, 3.2]} intensity={1.7} color="#fff8ee" />
+          <directionalLight position={[-5, 1.0, 2.6]} intensity={0.6} color="#eef2f8" />
+        </>
+      )}
+      {/* Native bas-relief carve light — matches product (deep-carve pass). */}
+      {scene.state.style3d === 'native' &&
+        (scene.state.geometryMode === 'extrude' || scene.state.geometryMode === 'solid') && (
+        <>
+          <directionalLight position={[6.5, 1.4, 3.4]} intensity={1.5} color="#fff5e6" />
+          <directionalLight position={[-5, 1.1, 2.4]} intensity={0.5} color="#eef2f8" />
+        </>
+      )}
       <VisMeshes strokes={scene.strokes} state={scene.state} onBounds={setBounds} />
       <OrbitCamera angleDeg={scene.state.angleDeg} elevDeg={scene.state.elevDeg} bounds={bounds} />
     </Canvas>
@@ -677,11 +903,15 @@ declare global {
        *  pool, so the bas-relief change can be exercised on a face / poster /
        *  multi-feature drawing through the EXACT product render path. */
       setStrokes: (strokes: StrokeInputPoint[][]) => void;
+      /** Debug: return the svg-port channel textures as dataURLs for the current
+       *  shape (emissive/height/normal) — inspect the carve without GL. */
+      debugSvgPortTex: () => Promise<{ emissive: string; height: string; normal: string } | null>;
     };
   }
 }
 
 let currentStrokes: StrokeInputPoint[][] = [];
+let currentSvgPortMarkup: string | null = null;
 
 window.__vis = {
   count: INVENTORY.length,
@@ -692,6 +922,7 @@ window.__vis = {
     statusEl.textContent = `visual ${index + 1}/${INVENTORY.length} — ${cell.kind}/${cell.shape}`;
     const r = await sampleShape(cell);
     currentStrokes = r.strokes;
+    currentSvgPortMarkup = r.svgPortMarkup;
     return { sampledElements: r.sampledElements, strokeCount: r.strokes.length };
   },
 
@@ -725,14 +956,61 @@ window.__vis = {
     statusEl.textContent = `custom strokes injected — ${strokes.length} stroke(s)`;
   },
 
+  // DEBUG: directly build the svg-port channel textures for the current shape's
+  // markup over a synthetic world bbox (the geometry bbox the cap would have),
+  // and return emissive + height as dataURLs so the carve can be inspected
+  // without the GL stage in the loop. Read-only diagnostic.
+  async debugSvgPortTex() {
+    const pool = currentStrokes.filter((s) => s.length > 0).slice(0, MAX_STROKES);
+    if (pool.length === 0 || !currentSvgPortMarkup) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const center = poolCenter(pool, SCENE_VIEWBOX);
+    // Use the real geometry to get the front-cap bbox (extrude default).
+    const builds = pool.map((points) =>
+      buildStrokeWithParams(points, SCENE_VIEWBOX, center, 'extrude', DEFAULT_MODE3D_PARAMS),
+    );
+    for (const b of builds) {
+      b.geometry.computeBoundingBox();
+      const bb = b.geometry.boundingBox!;
+      if (bb.min.x < minX) minX = bb.min.x;
+      if (bb.min.y < minY) minY = bb.min.y;
+      if (bb.max.x > maxX) maxX = bb.max.x;
+      if (bb.max.y > maxY) maxY = bb.max.y;
+    }
+    for (const b of builds) b.geometry.dispose();
+    const res = await buildSvgPortTexture(currentSvgPortMarkup, pool, SCENE_VIEWBOX, { minX, maxX, minY, maxY }, { paperColor: PAPER });
+    if (!res) return null;
+    const dump = (t: THREE.CanvasTexture) => (t.image as HTMLCanvasElement).toDataURL('image/png');
+    const out = { emissive: dump(res.emissive), height: dump(res.height), normal: dump(res.normal) };
+    disposeSvgPortTexLocal(res);
+    return out;
+  },
+
   async render3d(state) {
-    setSceneExternal!({ strokes: currentStrokes, state });
+    // svg-port needs the styled markup (the real 2D render the form wears).
+    const withMarkup: VisState =
+      state.style3d === 'svg-port'
+        ? { ...state, svgPortMarkup: currentSvgPortMarkup ?? undefined }
+        : state;
+    setSceneExternal!({ strokes: currentStrokes, state: withMarkup });
     // Settle: setScene → React render → VisMeshes build → onBounds → camera
     // effect → render. Needs ~3 frames min; 7 + a short tick is safe headroom
     // (ContactShadows omitted from this harness, so no bake wait needed).
     for (let i = 0; i < 7; i++) await nextFrame();
     await new Promise((r) => setTimeout(r, 30));
     await nextFrame();
+    // svg-port builds its texture ASYNC (Image.decode + TessellateModifier);
+    // poll the scene-published readiness flag so the capture isn't of the
+    // pre-texture plain body. Falls through after a bounded wait.
+    if (withMarkup.style3d === 'svg-port' && currentSvgPortMarkup) {
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline && !svgPortReady) {
+        await new Promise((r) => setTimeout(r, 40));
+        await nextFrame();
+      }
+      // one more settle frame so the carved cap + material are on-screen
+      for (let i = 0; i < 3; i++) await nextFrame();
+    }
     const canvas = document.querySelector('#stage canvas') as HTMLCanvasElement;
     const stats = sampleStats(canvas);
     return { dataUrl: canvas.toDataURL('image/png'), stats };

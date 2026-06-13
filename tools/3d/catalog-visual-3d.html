@@ -15,6 +15,26 @@
     <meta charset="UTF-8" />
     <title>Catalog visual 3D sweep</title>
     <style>
+      /* W1 design tokens (verbatim from src/styles/theme.css :root) — the
+         styled SvgStyleTransform markup paints ink/paper via var(--dir-*); WITHOUT
+         these the marks resolve to empty (invisible) and svg-port renders blank.
+         The product page always has these; the harness must too to be faithful. */
+      :root {
+        --dir-bg: #FDFCF9;
+        --dir-raised: #F9F7F3;
+        --dir-recessed: #F3F0E8;
+        --dir-muted: #EBE7DC;
+        --dir-text-primary: #121110;
+        --dir-text-body: #383632;
+        --dir-text-body-soft: #797369;
+        --dir-text-secondary: #5F5B54;
+        --dir-border: #E3DFD4;
+        --dir-accent: #121110;
+        --dir-detail: #878075;
+        --dir-link-color: #121110;
+        --dir-chip-bg: transparent;
+        --dir-chip-border: #E3DFD4;
+      }
       body { margin: 0; padding: 8px; font: 12px/1.4 monospace; background: #fdfcf9; color: #3b362e; }
       /* The live GL stage — fixed size, captured via toDataURL. */
       #stage { position: fixed; left: 0; top: 0; width: 360px; height: 360px; }

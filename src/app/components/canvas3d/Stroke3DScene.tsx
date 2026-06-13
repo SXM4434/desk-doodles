@@ -741,7 +741,11 @@ function StrokeMeshes({
           const clone = mass.geometry.clone();
           // maxEdgeLength in WORLD units (~groove width) so a mark spans several
           // triangles; cap iterations to bound the non-indexed vertex balloon.
-          carved = new TessellateModifier(0.06, 4).modify(clone);
+          // FINER 0.06→0.04 + 5 iters (deep-carve pass): the deeper displacement
+          // faceted/dashed HAIRLINE strokes on the coarse cap (a thin groove fell
+          // between triangle edges). A denser cap lets thin marks carve as smooth
+          // continuous channels instead of a dashed ridge.
+          carved = new TessellateModifier(0.04, 5).modify(clone);
           clone.dispose();
           applyPlanarReliefUVs(carved, res.window);
           carved.computeVertexNormals();
@@ -772,11 +776,18 @@ function StrokeMeshes({
       displacementBias: -RELIEF_DISPLACEMENT_SCALE,
       emissive: new THREE.Color(0xffffff),
       emissiveMap: svgPortTex.emissive,    // partial self-lit → ink values resist shadow wash
-      emissiveIntensity: 0.3,
+      // LOWERED 0.3→0.22 (deep-carve pass): less flat self-lit so the LIT carve
+      // (raking key on the displaced/normal-mapped grooves) dominates the read —
+      // the drawing looks engraved into the form, not printed flat on it. Still
+      // enough emissive that the ink values never wash to pure shadow.
+      emissiveIntensity: 0.22,
       roughness: 1.0,                      // matte — no plastic highlight over the ink
       metalness: 0.0,
     });
-    m.normalScale = new THREE.Vector2(1, -1);
+    // STRENGTHENED 1→1.6 (deep-carve pass, Sebs "deep enough to be seen"): the
+    // Sobel normal walls tilt harder, so the grooves catch a bolder light/shadow
+    // edge head-on. Y inverted (canvas y-down → world y-up).
+    m.normalScale = new THREE.Vector2(1.6, -1.6);
     m.needsUpdate = true;
     return m;
   }, [svgPortTex]);
@@ -1093,12 +1104,31 @@ export function Stroke3DScene({
     >
       <color attach="background" args={[bg]} />
       <StudioRig />
-      {/* svg-port carve light — a LOW grazing key (~16° elevation) so the
-          drawing's carved grooves cast micro-shadow and read as engraved
-          relief (the high studio key alone leaves shallow grooves flat). Only
-          when svg-port is active; never perturbs Native/Hatch. */}
+      {/* svg-port carve light — a LOW grazing key so the drawing's carved
+          grooves cast micro-shadow and read as engraved relief (the high studio
+          key alone leaves shallow grooves flat). STRENGTHENED + lowered
+          (deep-carve pass, Sebs "deep enough to be seen"): intensity 1.15→1.7
+          and elevation pushed down (y 2→1.3) so the rake is harder and the
+          channel walls throw a deeper shadow. A second, opposite low fill keeps
+          the far groove walls from going pure black on orbit. Only when svg-port
+          is active; never perturbs Native/Hatch. */}
       {style3d === 'svg-port' && (
-        <directionalLight position={[7, 2, 3.5]} intensity={1.15} color="#fff8ee" />
+        <>
+          <directionalLight position={[7, 1.3, 3.2]} intensity={1.7} color="#fff8ee" />
+          <directionalLight position={[-5, 1.0, 2.6]} intensity={0.6} color="#eef2f8" />
+        </>
+      )}
+      {/* Native bas-relief carve light (deep-carve pass, Sebs "native shouldn't
+          bury the drawing in a featureless dark blob"): the bumpMap drawing on
+          the extrude/solid front face is near-invisible under the high studio
+          key alone — a LOW grazing rake makes the carved grooves throw a bright
+          highlight + shadow on the dark ink body so the drawing reads. Native
+          form modes only; rod/inflate ARE the strokes (no slab face to carve). */}
+      {style3d === 'native' && (geometryMode === 'extrude' || geometryMode === 'solid') && (
+        <>
+          <directionalLight position={[6.5, 1.4, 3.4]} intensity={1.5} color="#fff5e6" />
+          <directionalLight position={[-5, 1.1, 2.4]} intensity={0.5} color="#eef2f8" />
+        </>
       )}
       {hatchMaterial && (
         <HatchUniformSync
