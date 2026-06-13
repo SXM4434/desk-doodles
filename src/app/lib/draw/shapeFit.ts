@@ -101,12 +101,63 @@ export const EQUILATERAL_CV_MAX = 0.14;
  *  We fold it back into the edge. 18° is below a real polygon vertex's turn yet
  *  above hand-jitter on a straight edge. [PaleoSketch DCR / merge-collinear]. */
 export const COLLINEAR_MERGE_TURN_DEG = 18;
+/** JITTER-SCALE RDP pre-simplification (SA-corner-robustness, 2026-06-13): the
+ *  ShortStraw+RDP cross-check runs on the RAW resampled polyline, so on a rough
+ *  TOUCHPAD stroke (heavy per-sample wobble) the straw-length median goes noisy
+ *  and RDP ε=3.0 manufactures an anchor at every wobble — a clean rough SQUARE
+ *  read as 18–23 corners → Polyline, never rect (Sebs's "Snap can't detect, does
+ *  it for a square too"). FIX: before corner finding we RDP-simplify the
+ *  resampled points with an epsilon that SCALES with the shape so the wobble
+ *  collapses but real corners survive. ε = clamp(bboxDiag × RATIO, FLOOR, CAP).
+ *  RATIO ≈ 3% of the diagonal sits above touchpad jitter (~1–6px on a 300px
+ *  shape) yet well below a real corner's excursion (a square corner deviates
+ *  ~size/2 from the edge chord). The FLOOR keeps a crisp small stroke honest;
+ *  the CAP stops a huge sloppy stroke from eating its own corners. */
+/** Corner-detection epsilon = max(minDim × MINDIM_RATIO, noise × NOISE_MULT),
+ *  clamped [FLOOR, CAP]. minDim (the SHORTER bbox side) is the primary scale: an
+ *  elongated shape's at-risk corners live on its short edges, so keying off the
+ *  short dimension (not the diagonal) is what stopped the 2:1-rect-eaten-corner
+ *  regression. The noise term is a secondary floor so an unusually rough stroke on
+ *  a small shape still collapses. Both stay well below a real corner's chord
+ *  excursion (~½ an edge); the dominant-corner template recovery + min-area-rect
+ *  fallback are the safety nets when a sparse rough stroke still over-segments. */
+export const CORNER_RDP_MINDIM_RATIO = 0.085;
+export const CORNER_RDP_NOISE_MULT = 1.4;
+export const CORNER_RDP_NOISE_WINDOW = 5;
+export const CORNER_RDP_EPS_FLOOR = 3.0; // == RDP_EPSILON; never below the styled-read anchor ε
+export const CORNER_RDP_EPS_CAP = 34.0;
+/** FORGIVING SNAP CLOSURE (SA-corner-robustness): closureStateOf() lives in
+ *  strokeTo3d and is shared by the (silent, conservative) AUTO conversion path,
+ *  so it stays strict — a 27px endpoint gap on a 300px shape reads 'open'. But
+ *  SNAP / STRAIGHTEN is an EXPLICIT user act on the LAST stroke (spec §SA-G:
+ *  "the gap-weld is legitimate because snap is an explicit user act"), so it can
+ *  afford a far more forgiving closure read. We treat a stroke as closed-eligible
+ *  for snapping when EITHER the endpoint gap is within this fraction of the bbox
+ *  diagonal, OR the path turns ≈ one full loop (|turnSum| near 2π) — the
+ *  geometric signature of a shape the user drew as closed but didn't perfectly
+ *  meet. This unlocks the rect/triangle/circle templates that the 'open' verdict
+ *  was hiding. The honest closure value still rides in diag.closure for the log. */
+export const SNAP_CLOSE_GAP_DIAG_RATIO = 0.22;
+export const SNAP_CLOSE_TURNSUM_FRAC = 0.6; // |turnSum| ≥ this × 2π (216°) reads as one loop
 /** Regularization PREFERENCE (PaleoSketch interpretation-priority): a rect or
  *  triangle that CLEARS its geometric gate is the higher-value read the user
  *  wants — it should beat the generic polygon even when the regularized fit's
  *  RMS error is marginally higher than the raw drawn-corner polygon's. We let
  *  the template win whenever its normErr ≤ polygon.normErr × this. */
 export const TEMPLATE_OVER_POLYGON_ERR_MULT = 2.4;
+/** The template-over-polygon accept multiple grows by this per EXTRA polygon
+ *  vertex (a Polygon(12) beating a triangle is jitter; a Polygon(4) tying a rect
+ *  is not). Gated by SNAP_MAX_NORM_ERR so the template must still be a genuinely
+ *  good fit — a real pentagon's dominant-3 triangle has RMS far above 0.10 and is
+ *  never promoted. [PaleoSketch interpretation-priority, vertex-count aware.] */
+export const TEMPLATE_VERTEX_EXCESS_GAIN = 0.22;
+/** Dominant-corner SPREAD: when picking the K vertices of a rough K-gon hypothesis
+ *  we require each pick to be at least (loopLen / K) × this fraction of arc from
+ *  every prior pick, so two jitter bumps on the SAME edge aren't both chosen (the
+ *  fix that lets fitRect's 90° gate see the true square corners on a very-rough
+ *  square). 0.5 = half the ideal vertex spacing — generous enough for a lopsided
+ *  drawn shape, tight enough to reject same-edge doubles. */
+export const DOMINANT_CORNER_SPREAD_FRAC = 0.5;
 /** STAR (regular {p/q}) recognition: a star alternates convex/concave vertices.
  *  A clean 5-point star has 10 corners; we accept this many ± the slop below.
  *  [Star-polygon turning-number theory]. */
@@ -116,6 +167,16 @@ export const STAR_MAX_POINTS = 9;
  *  opposite the loop's overall winding) to read as a star — a real star
  *  alternates, so ~half are concave. Floor a touch below 0.5 for slop. */
 export const STAR_MIN_CONCAVE_FRAC = 0.34;
+/** STAR radial-swing floor: a real {p/q} star's tip radius is far larger than its
+ *  notch radius, so (rMax−rMin)/rMax is large (≈0.5+ for a 5-point star). A rough
+ *  convex quad's alternating noise bumps barely swing radially — this floor (0.30)
+ *  rejects them so a jittery rectangle never reads as a Star. */
+export const STAR_MIN_RADIAL_SWING = 0.3;
+/** STAR notch-depth floor: a real star's concave notches sit this fraction of the
+ *  bbox diagonal INSIDE the convex hull. A jittery square/circle's "concave"
+ *  bumps are shallow (within ~the jitter amplitude of the hull), so 0.12 cleanly
+ *  separates a genuine star from heavy noise on a convex shape. */
+export const STAR_MIN_NOTCH_DEPTH_FRAC = 0.12;
 /** ARROW recognition (geometry-based shaft + V-head decomposition): an arrow is
  *  an OPEN corner-chain whose leading run is one dominant near-straight SHAFT and
  *  whose trailing 1-2 short segments fold back as the head. The total shaft
@@ -288,6 +349,12 @@ interface SnapSignals {
   bboxAspect: number;
   arcLen: number;
   closure: ClosureState;
+  /** Forgiving closure read for the EXPLICIT snap/straighten act (NOT the
+   *  conservative shared closureStateOf): true when the stroke is closed-
+   *  eligible by gap-vs-diag OR one-full-loop turning. Drives both the cyclic
+   *  corner scan and the closed-template family. `closure` stays honest for the
+   *  log. See SNAP_CLOSE_* constants. */
+  snapClosed: boolean;
   reversalFreq: number; // per 100px (markIntent grammar)
   selfIsectDensity: number; // per 100px
   turnSum: number; // signed total turning
@@ -355,17 +422,52 @@ function computeSignals(raw: StrokeInputPoint[]): SnapSignals {
 
   const crossings = anchors.length >= 4 ? selfIntersections(anchors) : 0;
 
+  const closure = closureStateOf(raw);
+  // Forgiving snap closure (explicit act): honest 'closed'/'treated-as-closed'
+  // always qualify; an 'open' stroke still qualifies when its endpoints land
+  // within SNAP_CLOSE_GAP_DIAG_RATIO of the bbox diagonal OR it turns ≈ one
+  // full loop (the rough-square / lifted-pen case that read 'open' on the strict
+  // shared threshold). bboxDiag floor guards the divide.
+  let snapClosed = closure !== 'open';
+  if (!snapClosed && resampled.length >= 3 && bboxDiag > 1e-6) {
+    const first = resampled[0];
+    const last = resampled[resampled.length - 1];
+    const gap = Math.hypot(last[0] - first[0], last[1] - first[1]);
+    const gapClosed = gap <= bboxDiag * SNAP_CLOSE_GAP_DIAG_RATIO;
+    const loopClosed = Math.abs(turnSum) >= SNAP_CLOSE_TURNSUM_FRAC * 2 * Math.PI;
+    snapClosed = gapClosed || loopClosed;
+  }
+
   return {
     resampled,
     anchors,
     bboxDiag,
     bboxAspect,
     arcLen,
-    closure: closureStateOf(raw),
+    closure,
+    snapClosed,
     reversalFreq: reversals * per100,
     selfIsectDensity: crossings * per100,
     turnSum,
   };
+}
+
+/** Estimate the per-sample wobble (noise) of a resampled polyline: the MEDIAN
+ *  perpendicular deviation of each interior point from the chord through its ±w
+ *  neighbours. On a straight (even if jittery) run this ≈ the jitter amplitude;
+ *  a few real corners spike but the median is dominated by edge points, so it's a
+ *  robust noise floor. Drives the jitter-scale corner epsilon (it self-adapts to
+ *  touchpad roughness instead of guessing from shape size). */
+function estimateStrokeNoise(pts: FitPoint[], w: number): number {
+  const n = pts.length;
+  if (n < 2 * w + 1) return 0;
+  const devs: number[] = [];
+  for (let i = w; i < n - w; i++) {
+    devs.push(pointLineDist(pts[i], pts[i - w], pts[i + w]));
+  }
+  if (devs.length === 0) return 0;
+  devs.sort((a, b) => a - b);
+  return devs[Math.floor(devs.length / 2)];
 }
 
 // ─── Corner detection: ShortStraw [Wolin '08] cross-checked with RDP ─────────
@@ -382,7 +484,34 @@ export function detectCorners(sig: SnapSignals): number[] {
   const pts = sig.resampled;
   const n = pts.length;
   if (n < 3) return n === 0 ? [] : [0, n - 1].filter((v, i, a) => a.indexOf(v) === i);
-  const closed = sig.closure !== 'open';
+  const closed = sig.snapClosed;
+
+  // JITTER-SCALE RDP: simplify the resampled polyline with a NOISE-scaled epsilon
+  // so touchpad wobble collapses to its underlying edges before corner finding.
+  // Anchors below come from THIS simplified polyline (snapped to the nearest
+  // resampled index), not the raw ε=3.0 RDP, so jitter can't manufacture corners
+  // (the rough-square-as-18-corners bug). The straw scan still runs on the full
+  // resampled points (its median/threshold logic is jitter-tolerant once the
+  // anchor cross-check is clean).
+  //
+  // Epsilon = max(noise × NOISE_MULT, min(w,h) × MINDIM_RATIO), clamped
+  // [FLOOR, CAP]. Noise self-adapts to roughness; the min-dim term is a small
+  // size-relative floor. Both stay well below a real corner's chord excursion
+  // (~½ an edge), so corners survive even on elongated shapes.
+  const eb = bboxOf(pts);
+  const minDim = Math.max(1, Math.min(eb.maxX - eb.minX, eb.maxY - eb.minY));
+  const noise = estimateStrokeNoise(pts, CORNER_RDP_NOISE_WINDOW);
+  const cornerEps = Math.min(
+    CORNER_RDP_EPS_CAP,
+    Math.max(
+      CORNER_RDP_EPS_FLOOR,
+      minDim * CORNER_RDP_MINDIM_RATIO,
+      noise * CORNER_RDP_NOISE_MULT,
+    ),
+  );
+  // For a closed loop the chord endpoints coincide → rdpPoints' degenerate-chord
+  // guard keeps it ≥3 anchors; for open we hand it the polyline as-is.
+  const simplified = rdpPoints(pts as unknown as StrokeInputPoint[], cornerEps).map(xy);
 
   const W = SHORTSTRAW_WINDOW;
   // Straw = chord across ±W. Cyclic for closed loops so the seam corner is
@@ -422,9 +551,12 @@ export function detectCorners(sig: SnapSignals): number[] {
     }
   }
 
-  // RDP anchor indices (nearest resampled-point index per anchor).
+  // RDP anchor indices (nearest resampled-point index per JITTER-SCALE-simplified
+  // vertex). Using the size-scaled simplification (not raw ε=3.0) is the
+  // jitter-robustness fix: a rough edge collapses to its two endpoints, so the
+  // cross-check below only corroborates real corners.
   const anchorIdx: number[] = [];
-  for (const a of sig.anchors) {
+  for (const a of simplified) {
     let best = -1;
     let bestD = Infinity;
     for (let k = 0; k < n; k++) {
@@ -713,6 +845,86 @@ function fitRect(sig: SnapSignals, loopVerts: FitPoint[]): ShapeCandidate | null
   };
 }
 
+/** Andrew's monotone-chain convex hull (CCW, no repeated last point). Pure. */
+function convexHull(points: FitPoint[]): FitPoint[] {
+  const pts = points.slice().sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
+  if (pts.length < 3) return pts;
+  const cross = (o: FitPoint, a: FitPoint, b: FitPoint) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: FitPoint[] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: FitPoint[] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+/** ROBUST RECT via the MINIMUM-AREA bounding rectangle (rotating calipers on the
+ *  convex hull) — independent of the noisy corner picks, so a rough/sparse closed
+ *  stroke that over-segments still recovers its rectangle (the rough-wide-rect
+ *  that read Star/Polygon because the corner-based fitRect's 4-vertex gate never
+ *  fired). The min-area rect of a near-rectangular point cloud IS that rectangle;
+ *  the residual-vs-bbox gate downstream rejects it for genuinely non-rect shapes
+ *  (a circle's min-area rect has huge RMS). [Toussaint '83 rotating calipers.] */
+function fitRectMinArea(sig: SnapSignals): ShapeCandidate | null {
+  const pts = sig.resampled;
+  if (pts.length < 5) return null;
+  const hull = convexHull(pts);
+  if (hull.length < 3) return null;
+  let best: { area: number; corners: FitPoint[] } | null = null;
+  const h = hull.length;
+  for (let i = 0; i < h; i++) {
+    const a = hull[i];
+    const b = hull[(i + 1) % h];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const elen = Math.hypot(ex, ey);
+    if (elen < 1e-9) continue;
+    const ux = ex / elen, uy = ey / elen; // edge direction
+    const vx = -uy, vy = ux; // perpendicular
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (const p of hull) {
+      const pu = (p[0] - a[0]) * ux + (p[1] - a[1]) * uy;
+      const pv = (p[0] - a[0]) * vx + (p[1] - a[1]) * vy;
+      if (pu < minU) minU = pu;
+      if (pu > maxU) maxU = pu;
+      if (pv < minV) minV = pv;
+      if (pv > maxV) maxV = pv;
+    }
+    const area = (maxU - minU) * (maxV - minV);
+    if (best === null || area < best.area) {
+      const c0: FitPoint = [a[0] + ux * minU + vx * minV, a[1] + uy * minU + vy * minV];
+      const c1: FitPoint = [a[0] + ux * maxU + vx * minV, a[1] + uy * maxU + vy * minV];
+      const c2: FitPoint = [a[0] + ux * maxU + vx * maxV, a[1] + uy * maxU + vy * maxV];
+      const c3: FitPoint = [a[0] + ux * minU + vx * maxV, a[1] + uy * minU + vy * maxV];
+      best = { area, corners: [c0, c1, c2, c3] };
+    }
+  }
+  if (!best) return null;
+  const corners = best.corners;
+  const residuals = pts.map((p) => pointToLoopDist(p, corners));
+  const normErr = normRms(residuals, sig.bboxDiag);
+  const w = dist(corners[0], corners[1]);
+  const hgt = dist(corners[1], corners[2]);
+  const ratio = Math.max(w, hgt) / Math.max(Math.min(w, hgt), 1e-6);
+  return {
+    kind: 'rect',
+    points: corners,
+    normErr,
+    score: 1 - normErr,
+    closed: true,
+    label: 'Rectangle',
+    notes: ratio <= SQUARE_ASPECT_TOL ? 'square-eligible' : undefined,
+  };
+}
+
 /** STAR — a simple (non-self-intersecting) star OUTLINE is a concave 2p-gon
  *  whose vertices ALTERNATE convex tip / concave notch. That alternation is the
  *  robust discriminant — NOT total turning (a drawn star outline winds just once,
@@ -764,6 +976,54 @@ function fitStar(sig: SnapSignals, loopVerts: FitPoint[]): ShapeCandidate | null
   // alternates (a 5-point star has 10 vertices → 10 flips around the loop, 9 if
   // the seam doesn't flip). Floor at STAR_MIN_POINTS × 2 − 2.
   if (signFlips < STAR_MIN_POINTS * 2 - 2) return null;
+  // RADIAL-SWING gate (SA-corner-robustness): a TRUE star's tips sit far from the
+  // centroid and its notches sit near, so the per-vertex radius swings hard; a
+  // jittery convex quad (a rough rectangle) has alternating convex/concave bumps
+  // from NOISE whose radii barely swing — that's what false-read a rough wide rect
+  // as a Star. Require the radial range (max−min)/max to clear a floor so shallow
+  // jitter alternation is rejected. [Star vs lumpy-blob discriminator.]
+  let rcx = 0, rcy = 0;
+  for (const v of loopVerts) { rcx += v[0]; rcy += v[1]; }
+  rcx /= m; rcy /= m;
+  let rMin = Infinity, rMax = 0;
+  for (const v of loopVerts) {
+    const r = Math.hypot(v[0] - rcx, v[1] - rcy);
+    if (r < rMin) rMin = r;
+    if (r > rMax) rMax = r;
+  }
+  const radialSwing = rMax > 1e-6 ? (rMax - rMin) / rMax : 0;
+  if (radialSwing < STAR_MIN_RADIAL_SWING) return null;
+  // NOTCH-DEPTH gate (the decisive star discriminant): a TRUE star's concave
+  // notches sit DEEP inside its convex hull; a rough square/circle's "concave"
+  // vertices are shallow JITTER bumps within a px or two of the hull edge. Require
+  // the MEDIAN concave-vertex depth-below-hull to exceed STAR_MIN_NOTCH_DEPTH_FRAC
+  // of the bbox diagonal — this is what stops heavy jitter on a square/triangle
+  // from masquerading as a star. (A vertex's "depth" = how far inside the hull it
+  // lies = the convex-hull turn would be 0 for a hull point; we measure distance
+  // from each concave vertex to the hull boundary.)
+  const hull = convexHull(loopVerts);
+  if (hull.length >= 3) {
+    const depths: number[] = [];
+    for (let i = 0; i < m; i++) {
+      const a = loopVerts[(i - 1 + m) % m];
+      const b = loopVerts[i];
+      const c = loopVerts[(i + 1) % m];
+      const cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+      const sgn = Math.sign(cr);
+      if (sgn !== 0 && sgn !== winding) {
+        // concave vertex → distance to the hull boundary (how deep the notch is)
+        let d = Infinity;
+        for (let j = 0; j < hull.length; j++) {
+          d = Math.min(d, pointSegDist(b, hull[j], hull[(j + 1) % hull.length]));
+        }
+        depths.push(d);
+      }
+    }
+    if (depths.length === 0) return null;
+    depths.sort((x, y) => x - y);
+    const medDepth = depths[Math.floor(depths.length / 2)];
+    if (medDepth < sig.bboxDiag * STAR_MIN_NOTCH_DEPTH_FRAC) return null;
+  }
   const base = fitPolygon(sig, loopVerts);
   if (!base) return null;
   const pointCount = Math.round(m / 2);
@@ -1035,6 +1295,56 @@ function fitConicEllipse(
 
 // ─── THE engine ──────────────────────────────────────────────────────────────
 
+/** DOMINANT-CORNER loop (SA-corner-robustness): a rough/sparse closed stroke can
+ *  leave the collinear-merge with a few corners ABOVE the template count — a
+ *  rough triangle as 5 corners, a very-rough square as 6 — because the residual
+ *  jitter corners turn just past COLLINEAR_MERGE_TURN_DEG. Rather than over-tune
+ *  the merge (and risk eating a real pentagon vertex), we let the rect/triangle
+ *  templates ALSO try the K SHARPEST-turn corners (the dominant vertices), in
+ *  cyclic order. The template's own geometric gate (right-angle for rect, the
+ *  residual-vs-bbox error for all) rejects the hypothesis if those K corners
+ *  don't actually form the shape — so this only ever HELPS a genuine K-gon, never
+ *  forces one. [PaleoSketch / $N: enumerate the low-vertex polygon hypotheses.] */
+function dominantLoopVertices(sig: SnapSignals, corners: number[], k: number): FitPoint[] | null {
+  const pts = sig.resampled;
+  if (corners.length <= k) return null; // the full loop already has ≤k corners
+  const n = pts.length;
+  const m = corners.length;
+  // Score each corner by its cyclic turn against its corner-neighbours.
+  const scored = corners.map((c, i) => {
+    const prev = corners[(i - 1 + m) % m];
+    const next = corners[(i + 1) % m];
+    return { c, turn: cornerTurnDeg(pts, prev, c, next) };
+  });
+  // Greedily pick the SHARPEST corners that are also well SPREAD around the loop:
+  // a real k-gon's vertices sit ~loop/k apart, so two jitter bumps on the same
+  // edge must not both be picked (that's what made fitRect's 90° gate reject the
+  // dominant-4 on a very-rough square). Require each pick to be at least
+  // (loop circumference / k) × SPREAD_FRAC of arc away from every prior pick.
+  const order = scored.slice().sort((a, b) => b.turn - a.turn);
+  const minSep = (n / k) * DOMINANT_CORNER_SPREAD_FRAC;
+  const cyclicSep = (a: number, b: number) => {
+    const d = Math.abs(a - b);
+    return Math.min(d, n - d);
+  };
+  const picked: number[] = [];
+  for (const { c } of order) {
+    if (picked.length >= k) break;
+    if (picked.every((p) => cyclicSep(p, c) >= minSep)) picked.push(c);
+  }
+  // If the spread constraint starved the pick (very few corners), fall back to the
+  // k sharpest regardless of spread.
+  if (picked.length < k) {
+    for (const { c } of order) {
+      if (picked.length >= k) break;
+      if (!picked.includes(c)) picked.push(c);
+    }
+  }
+  if (picked.length !== k) return null;
+  picked.sort((a, b) => a - b);
+  return picked.map((c) => pts[c]);
+}
+
 /** Build the loop vertices for a closed/treated-as-closed stroke's corner
  *  chain (drops the duplicate endpoint, since the loop closes implicitly). */
 function closedLoopVertices(sig: SnapSignals, corners: number[]): FitPoint[] {
@@ -1123,7 +1433,10 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
     };
   }
 
-  const open = sig.closure === 'open';
+  // Candidate family is driven by the FORGIVING snap closure (explicit act), not
+  // the conservative shared closureStateOf — so a rough lifted-pen square/circle
+  // still gets the closed templates. diag.closure keeps the honest value.
+  const open = !sig.snapClosed;
   const candidates: ShapeCandidate[] = [];
 
   if (action === 'straighten') {
@@ -1149,8 +1462,26 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
       if (arrow) candidates.push(arrow);
     } else {
       const loop = closedLoopVertices(sig, corners);
-      const tri = fitTriangle(sig, loop);
-      const rect = fitRect(sig, loop);
+      // Templates try the full corner loop AND (when there are extra corners)
+      // the dominant top-3/top-4 corner loops, so a rough K+1/K+2-corner stroke
+      // still recovers its triangle/rect. Keep the lowest-error fit of each kind.
+      const triLoop3 = dominantLoopVertices(sig, corners, 3);
+      const rectLoop4 = dominantLoopVertices(sig, corners, 4);
+      const bestOf = (
+        a: ShapeCandidate | null,
+        b: ShapeCandidate | null,
+      ): ShapeCandidate | null => {
+        if (!a) return b;
+        if (!b) return a;
+        return b.normErr < a.normErr ? b : a;
+      };
+      const tri = bestOf(fitTriangle(sig, loop), triLoop3 ? fitTriangle(sig, triLoop3) : null);
+      // Rect: best of corner-loop fit, dominant-4 fit, AND the corner-pick-free
+      // min-area bounding rect (the robust recovery for rough/sparse strokes).
+      const rect = bestOf(
+        bestOf(fitRect(sig, loop), rectLoop4 ? fitRect(sig, rectLoop4) : null),
+        fitRectMinArea(sig),
+      );
       const star = fitStar(sig, loop); // closed alternating star (bug 2)
       const circle = fitCircle(sig);
       const ellipse = fitEllipse(sig);
@@ -1193,9 +1524,22 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
   // the polygon's so it ranks first; the polygon stays in the chip to cycle to.
   const poly = candidates.find((c) => c.kind === 'polygon');
   if (poly) {
+    // When the polygon has MANY more vertices than the template, those extra
+    // vertices are almost certainly jitter the template averaged through (a rough
+    // triangle read as Polygon(12) that hugs every wobble at a tiny RMS — the
+    // dominant-corner triangle is the read the user wants). Scale the accept
+    // multiple up with the polygon's vertex EXCESS over the template so a much-
+    // higher-vertex polygon yields to the template, while a 4-vs-4 tie stays at
+    // the base multiple (a genuine pentagon's dominant-3 triangle has huge RMS and
+    // never clears even the scaled bound, so real polygons are safe).
+    const polyVerts = poly.points.length;
     for (const tplKind of ['rect', 'triangle', 'star'] as const) {
       const tpl = candidates.find((c) => c.kind === tplKind);
-      if (tpl && tpl.normErr <= poly.normErr * TEMPLATE_OVER_POLYGON_ERR_MULT) {
+      if (!tpl) continue;
+      const tplVerts = tpl.kind === 'triangle' ? 3 : tpl.kind === 'rect' ? 4 : tpl.points.length;
+      const excess = Math.max(0, polyVerts - tplVerts);
+      const mult = TEMPLATE_OVER_POLYGON_ERR_MULT * (1 + TEMPLATE_VERTEX_EXCESS_GAIN * excess);
+      if (tpl.normErr <= poly.normErr * mult && tpl.normErr <= SNAP_MAX_NORM_ERR) {
         if (tpl.score <= poly.score) tpl.score = poly.score + COMPLEXITY_PRIOR;
       }
     }
