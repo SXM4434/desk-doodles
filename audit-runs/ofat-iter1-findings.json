@@ -1,0 +1,1255 @@
+{
+  "iter": 1,
+  "objectsChecked": 395,
+  "divergenceCount": 156,
+  "findings": [
+    {
+      "object": "boxedGameCartridge",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Sheet 012, row 6. Clean shows the cartridge with a WHITE inner label panel carrying legible multi-line text ('NES / SUPER MARIO') plus a dark border frame and dark NINTENDO footer bar. In the risograph tile the ENTIRE cartridge — including the white inner label panel — is flooded with solid dark grey ink, so the white paper region is shaded and the SUPER MARIO text is buried into the mass (white-shaded -> detail-lost). Confirmed at 4x zoom against clean. This is ISOLATED, not blanket risograph behavior: risograph on ampCombo (s000 r6, white slatted body) and cardBinder (s012 r10, white card pockets) correctly KEEP their enclosed white regions as paper, and bandTshirt/boardingPass riso keep their labels legible. So the cartridge's nested white label panel is wrongly being treated as fillable instead of as paper.",
+      "researchedFix": "Two established fixes apply. (1) Duotone/risograph luminance-preservation: a faithful risograph/duotone mapping must scale each region's tone to lie between PAPER color and INK color according to source luminance, so high-luminance (white/paper) regions map to paper and receive no ink; only darker source regions take the spot ink. The cartridge's high-luminance inner label should map to paper, matching how cel-shading quantizes lighting to discrete shades while leaving the lightest band un-inked. (2) SVG fill-rule: when a path has an enclosed inner region (the white label nested inside the cartridge outline), fill-rule='nonzero' (the default) fills the entire shape including the inner 'hole', whereas fill-rule='evenodd' leaves the nested inner region empty — 'choosing the wrong fill rule could accidentally fill regions (like a background area) that should remain empty.' Set fill-rule:evenodd (or ensure the riso ink layer respects var(--dir-bg)/none/transparent paper fills and never overrides them) so the inner label stays paper.",
+      "citation": "Duotone luminance preservation: US Patent 5,982,924 'Method and system for reproducing color images as duotones' (image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/5982924) — luminance scaled to lie between paper color and black ink. Cel/threshold quantization: Cel shading, en.wikipedia.org/wiki/Cel_shading. SVG fill-rule fix: 'Understanding the SVG fill-rule Property', sitepoint.com/understanding-svg-fill-rule-property/ and MDN fill-rule, developer.mozilla.org/en-US/docs/Web/SVG/Attribute/fill-rule (even-odd leaves nested regions empty; wrong rule accidentally fills regions that should remain empty)."
+    },
+    {
+      "object": "dominoTiles (style-sheet-036.png, row 3)",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean shows THREE domino tiles stacked vertically, each with pip dots. Under bold-ink only ONE tile (the top one) renders; the lower two tiles are entirely dropped. Same failure across the whole solid/textured-fill family on this row: rough-handdrawn, sketchy, bold-ink, wet-ink, charcoal, stipple ALL collapse to a single tile. The pure-outline / texture-overlay styles (risograph, newsprint, outline-only, wireframe) correctly render all three. Pattern = the three tiles are disjoint subpaths in one compound geometry, and the hand-style solid/hachure fill only resolves the first subpath, dropping the rest. bold-ink is the clearest single representative (crisp single tile, two missing).",
+      "researchedFix": "Root cause is rough.js filling compound/disjoint subpaths under one winding rule with the fill limited to the first subpath / canvas bounds (hachure cutoff). Fix: do NOT pass the multi-tile geometry as one compound path to rough.js for solid/hachure fill styles; iterate and call the rough fill per-subpath (split the path on each M...Z and roughen+fill each tile separately, then composite). This matches the rough.js maintainer guidance to draw separate shapes rather than one path with multiple regions.",
+      "citation": "https://github.com/rough-stuff/rough/issues/167 (fill always non-zero / multi-region path fill) and https://github.com/rough-stuff/rough/issues/65 (Hachure fill cutoff in SVG-Path polygons)"
+    },
+    {
+      "object": "collectorTin (style-sheet-024.png, row 7)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean shows a tin whose body panel is light gray containing a WHITE circle with a '+' emblem and a small label below. Under risograph the inner panel is filled a flat dark gray and the white circle+plus emblem is buried into a featureless dark mass (only a faint dot survives) — the white emblem region (a hole/cutout) got shaded over, losing the central detail. Newsprint on the same row preserves the white circle+emblem, so the failure is risograph-specific.",
+      "researchedFix": "Cause is rough.js filling the path with the non-zero fill-rule so the inner emblem subpath (which should be a hole / unfilled cutout) is filled solid instead of left as paper. Fix: render the emblem cutout as its OWN reversed subpath or as a separate top layer drawn AFTER the body fill (re-stamp the white circle+plus over the risograph fill), since rough.js does not honor fill-rule='evenodd' for holes; equivalently subtract the inner region by reversing its winding before handing the path to rough.js.",
+      "citation": "https://github.com/rough-stuff/rough/issues/167 (Filling a path is always done with non-zero fill-rule — holes get filled); fill-rule/holes background: https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/fill-rule"
+    },
+    {
+      "object": "flagPanel",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean = solid-black canton (top-left) + 3 solid-black horizontal stripes. rough-handdrawn renders the canton as an EMPTY white box and the dark stripes as faint hatch outlines, so the dark/light contrast that defines the flag is lost. Fill-capable styles (wet-ink, charcoal, stipple, risograph, newsprint) all preserve the dark regions, confirming this is a stroke-only-style fill failure, not expected behavior. (outline-only/wireframe legitimately drop fill, not flagged.)",
+      "researchedFix": "Rough.js only renders hachure/fill when a fill COLOR is passed to the drawable; with no fill set the shape is outlined only. Fix: route the region's solid fill color into the Rough.js options (fill: <regionColor>, fillStyle 'hachure' or 'solid' for dark regions) so dark fills are hatched/filled instead of dropped. Per StudyRaid: the fill option must be set with a color value for hachure hatching to appear; without it the shape only shows the outline with transparent fill and no hatching.",
+      "citation": "https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns ; https://github.com/rough-stuff/rough"
+    },
+    {
+      "object": "flagPanel",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same root cause as rough-handdrawn but more severe: the solid-black canton + stripes are reduced to thin sketchy outlines with near-zero shading, so the flag reads as a blank grid. Dark regions go light/empty.",
+      "researchedFix": "Same as flagPanel/rough-handdrawn: pass the region fill color into Rough.js so the solid-dark canton and stripes get a hachure/solid fill instead of outline-only. Use fillStyle 'solid' (or dense hachure with small hachureGap) for regions whose source luminance is near-black so they read dark.",
+      "citation": "https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "flagPanel",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean canton is solid black; bold-ink draws it as an empty white box with only a bold outline, and the dark stripes become empty outlined bands. The bold-ink style strokes paths but never fills the solid-dark regions, so all dark fills are dropped to white.",
+      "researchedFix": "Same fix family: ensure the dark fill regions receive a Rough.js fill color (fillStyle 'solid' for near-black regions); bold-ink should keep its heavy stroke but ADD a solid/dense-hachure fill driven by source luminance so dark canton/stripes don't read as empty.",
+      "citation": "https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns ; https://github.com/rough-stuff/rough"
+    },
+    {
+      "object": "framedCanvas",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = dark frame around a WHITE mat with a distinct dark canvas square + text lines. risograph fills the entire object (mat included) with a uniform dark-gray mass, burying the canvas square and text. The light mat region is shaded dark. All other fill styles (wet-ink, charcoal, stipple, newsprint) keep the mat light, so this is risograph-specific posterization pushing the light mat below the dark cutoff.",
+      "researchedFix": "risograph posterize uses feComponentTransfer type='discrete' tableValues; the band breakpoints are clipping light/white values into the dark band. Fix: anchor the top tableValues entry to 1 (preserve highlights) so light mat maps to paper not ink, and/or raise the discrete step so near-white stays in the lightest band. Codrops/Sudonull posterize-with-feComponentTransfer is the canonical pattern.",
+      "citation": "https://tympanus.net/codrops/2019/01/29/svg-filter-effects-poster-image-effect-with-fecomponenttransfer/ ; https://sudonull.com/post/326-Effects-of-filtering-SVG-Part-3-Image-posterization-effect-using-feComponentTransfer"
+    },
+    {
+      "object": "framedMoviePoster",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = black frame around a WHITE poster interior (title text) + dark bottom credit band. risograph fills the white interior dark gray; the title is nearly illegible and the object is one dark mass with a faint white outline rect. charcoal/newsprint keep the interior white, confirming a risograph-only light-region-clipped-to-dark issue.",
+      "researchedFix": "Same as framedCanvas/risograph: correct the feComponentTransfer discrete tableValues so the highest input band maps to paper (1.0) and white interior is preserved; the current band table collapses mid/high luminance into the ink band. Preserve highlights by anchoring the top table entry.",
+      "citation": "https://tympanus.net/codrops/2019/01/29/svg-filter-effects-poster-image-effect-with-fecomponenttransfer/ ; https://www.w3.org/TR/SVG11/filters.html"
+    },
+    {
+      "object": "framedRacePhoto",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Clean = dark photo field with a clear WHITE runner-silhouette figure + light top text band. risograph keeps the dark field (correct) but buries the white figure -- only two tiny white tick-marks (feet) survive. charcoal and newsprint both retain the full white figure, so risograph posterization is collapsing the light figure into the surrounding dark band (loss of the light-on-dark detail).",
+      "researchedFix": "Posterize banding is merging the figure's light luminance into the dark field. Fix: increase the number of discrete bands (more tableValues steps) and/or add a dedicated high band so the figure's brightness lands in a lighter band than the photo field; per W3C, type='discrete' nValues create n bands -- too few bands erases mid/high detail. Keep at least one light band above the figure luminance.",
+      "citation": "https://www.w3.org/TR/SVG11/filters.html ; https://tympanus.net/codrops/2019/01/29/svg-filter-effects-poster-image-effect-with-fecomponenttransfer/"
+    },
+    {
+      "object": "glassBottleTopo",
+      "variant": "rough-handdrawn",
+      "divergence": "garbled",
+      "note": "Clean = upright bottle with a FLAT bottom and rounded shoulder. rough-handdrawn collapses the flat base + lower body into a converging downward SPIKE -- the rectangular base is lost and the silhouette becomes a tapered point. risograph/newsprint/outline/wireframe keep the correct flat-bottom bottle, so this is path-roughening breaking the closed bottle path.",
+      "researchedFix": "Known Rough.js behavior: high roughness breaks/distorts closed paths (GitHub issue #162 'Path has been break apart when applying roughness=2'). Fix: lower roughness/maxRandomnessOffset for this path, lower bowing, and/or ensure the bottle outline is a single properly-closed path (close with 'Z' so base corners aren't pulled to a point). Reduce per-segment randomness on long near-vertical edges so the base stays flat.",
+      "citation": "https://github.com/rough-stuff/rough/issues/162 ; https://shihn.ca/posts/2020/roughjs-algorithms/"
+    },
+    {
+      "object": "glassBottleTopo",
+      "variant": "sketchy",
+      "divergence": "garbled",
+      "note": "Same as rough-handdrawn: the flat bottle base becomes a sharp downward point and the body warps; the bottle silhouette is no longer readable as a flat-bottomed bottle.",
+      "researchedFix": "Same fix: reduce roughness/maxRandomnessOffset and ensure the path is explicitly closed (Z) so corners aren't pulled into a spike; clamp randomness on the base segment.",
+      "citation": "https://github.com/rough-stuff/rough/issues/162"
+    },
+    {
+      "object": "glassBottleTopo",
+      "variant": "bold-ink",
+      "divergence": "garbled",
+      "note": "Flat bottom rendered as a pointed spike; lower body warped. Same path-distortion as rough/sketchy, just with a heavier stroke.",
+      "researchedFix": "Same: lower roughness, close the path (Z), clamp base-segment randomness so the flat base survives the roughening.",
+      "citation": "https://github.com/rough-stuff/rough/issues/162"
+    },
+    {
+      "object": "glassBottleTopo",
+      "variant": "wet-ink",
+      "divergence": "garbled",
+      "note": "Bottle base distorted into a converging point and body skewed vs Clean's flat-bottom upright bottle. Same closed-path roughening failure.",
+      "researchedFix": "Same: reduce roughness/maxRandomnessOffset, ensure closed (Z) path, clamp base randomness.",
+      "citation": "https://github.com/rough-stuff/rough/issues/162"
+    },
+    {
+      "object": "glassBottleTopo",
+      "variant": "charcoal",
+      "divergence": "garbled",
+      "note": "Flat-bottom bottle rendered as a tapered spike with warped body. Same path-distortion as the other roughened styles.",
+      "researchedFix": "Same: reduce roughness/maxRandomnessOffset, close the path (Z), clamp randomness on the base edge.",
+      "citation": "https://github.com/rough-stuff/rough/issues/162"
+    },
+    {
+      "object": "glassBottleTopo",
+      "variant": "stipple",
+      "divergence": "garbled",
+      "note": "Flat bottle base collapses to a point and body warps, same as the other stroke-roughened styles; silhouette no longer reads as a flat-bottomed bottle.",
+      "researchedFix": "Same: reduce roughness/maxRandomnessOffset, ensure the outline path is closed (Z), clamp base-segment randomness.",
+      "citation": "https://github.com/rough-stuff/rough/issues/162"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "rough-handdrawn",
+      "divergence": "blob",
+      "note": "Clean tile shows a full pyramid stack of ~10 LaCroix cans (4-3-2-1 triangle). In rough-handdrawn the entire multi-can stack collapses to a single tiny ~1-2 cell dark box at top-center, with only a faint partial 4th can dropping out below the edge. The whole composition is lost vs Clean. risograph/newsprint/outline-only/wireframe correctly preserve the full pyramid, so the geometry exists; the sketchy pass collapses it. Same failure also affects sketchy, bold-ink, wet-ink, charcoal, stipple in this row.",
+      "researchedFix": "This is the classic rough.js multi-element / compound-path collapse: a drawing made of many disconnected subpaths (the 10 can shapes) is being passed through one sketchy pass and reduced to a single bounding mass. Fix: flatten transforms and split the composition into its individual subpaths/elements, then run the sketchy/rough transform per-subpath rather than on the grouped whole. rough.js itself normalizes each subpath into separate Move/Line/Cubic OpSets, so feeding it pre-split subpaths (via an SVG flattener that handles all path commands) renders every can. See shihn.ca rough.js algorithm notes (normalizes paths into per-subpath Move/Line/Cubic OpSets) and Flatten.js / svg-path-commander for splitting+normalizing subpaths before the sketchy filter.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/ ; https://gist.github.com/timo22345/9413158 (Flatten.js) ; https://www.npmjs.com/package/svg-path-commander"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "sketchy",
+      "divergence": "blob",
+      "note": "Same collapse as rough-handdrawn: the 10-can pyramid renders as a single small box outline instead of the full stack. Detail of the multi-can composition is lost vs Clean.",
+      "researchedFix": "Same fix family: split the grouped multi-can drawing into its subpaths/elements and apply the sketchy transform per-subpath; flatten transforms first so each can keeps its own placement.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/ ; https://gist.github.com/timo22345/9413158"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "bold-ink",
+      "divergence": "blob",
+      "note": "Pyramid collapses to a single small filled box; the 10-can stack is gone vs Clean.",
+      "researchedFix": "Render the composition per-subpath instead of as one grouped shape; flatten/normalize subpaths before the bold-ink stroke pass so each can is drawn.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/ ; https://www.npmjs.com/package/svg-path-commander"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "wet-ink",
+      "divergence": "blob",
+      "note": "Pyramid collapses to a single dark filled box; multi-can detail lost vs Clean.",
+      "researchedFix": "Split the grouped drawing into individual can subpaths and apply the wet-ink fill/stroke per-subpath after flattening transforms.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/ ; https://gist.github.com/timo22345/9413158"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "charcoal",
+      "divergence": "blob",
+      "note": "Pyramid collapses to a single small smudged box; the can stack is not rendered vs Clean.",
+      "researchedFix": "Apply the charcoal transform per-subpath on the flattened/normalized can subpaths rather than on the grouped composition.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/ ; https://gist.github.com/timo22345/9413158"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "stipple",
+      "divergence": "blob",
+      "note": "Pyramid collapses to a single small box; the multi-can stack is lost vs Clean. (risograph/newsprint/outline-only/wireframe in the same row preserve the full pyramid, confirming the geometry is present and the collapse is style-pass-specific.)",
+      "researchedFix": "Run the stipple fill per-subpath on the split/normalized can subpaths; flatten transforms first so each can is stippled in place instead of one collapsed region.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/ ; https://www.npmjs.com/package/svg-path-commander"
+    },
+    {
+      "object": "passportDocument",
+      "variant": "newsprint",
+      "divergence": "detail-lost",
+      "note": "Clean shows a DARK passport cover carrying light knockout detail (legible 'UNITED STATES OF AMERICA' text + circular emblem) overlapping a lighter document page peeking out at right. The newsprint variant collapses the entire dark cover into a uniform halftone dot field: the white text, the emblem, and the cover-vs-document layering all vanish into one featureless dot rectangle. Verified at full-crop resolution (/tmp/c108_passdoc_clean.png vs /tmp/c108_passdoc_newsprint.png). The other styles handle this same dark region correctly — risograph (/tmp/c108_passdoc_risograph.png) and bold-ink (/tmp/c108_passdoc_bold.png) both keep the text, emblem, and document-behind readable — which isolates the failure to newsprint's flat dot fill. Root cause: newsprint applies a uniform dot screen across the whole dark silhouette instead of modulating dot coverage by source luminance, so light knockout interior detail is destroyed.",
+      "researchedFix": "Drive newsprint halftone dot coverage from the SOURCE pixel luminance (clustered-dot / ordered dither), the canonical halftone model: dark source -> large merged dots (stays dark), light/knockout source -> small-or-no dots (stays light), so interior white text/emblem survive. This is exactly how GIMP's Newsprint filter works — it requires a grayscale luminance input and renders a clustered-dot dither whose dot size tracks tone, rather than a flat fill over the silhouette. Implement by sampling the rasterized object luminance (or treating explicit fill-vs-knockout regions distinctly) and mapping it to dot radius/threshold per cell.",
+      "citation": "GIMP Newsprint filter docs (clustered-dot dither, grayscale luminance input, Cell-size dot modulation): https://docs.gimp.org/2.10/en/gimp-filter-newsprint.html ; ordered dithering / threshold-by-luminance per-cell model: https://users.ece.utexas.edu/~bevans/projects/halftoning/methods.html"
+    },
+    {
+      "object": "nintendoPowerMag",
+      "variant": "newsprint",
+      "divergence": "detail-lost",
+      "note": "Milder instance of the same root cause. Clean shows a DARK 'NINTENDO POWER' header banner with legible light text plus a dark center circle (/tmp/c108_powermag_clean.png). In newsprint the header banner becomes a flat halftone dot strip and the 'NINTENDO POWER' text is no longer readable, buried in the dot field (/tmp/c108_powermag_newsprint.png). Overall structure (header band + center disc + frame) is still recognizable, so this is a partial detail-loss rather than a full collapse — but the white knockout text on the dark banner is lost, same failure mode as passportDocument. Light-region objects under newsprint elsewhere (e.g. passport row10 light cover) render faithfully, confirming the problem is specific to newsprint over dark knockout-bearing fills.",
+      "researchedFix": "Same fix as passportDocument: make newsprint dot coverage a function of source luminance so the dark banner stays dark while its light text knockout produces little/no dot coverage and remains legible. Use a luminance-thresholded clustered-dot dither per cell (GIMP Newsprint model) instead of a uniform dot fill applied to the whole dark region.",
+      "citation": "GIMP Newsprint filter docs (luminance-driven clustered-dot halftone): https://docs.gimp.org/2.10/en/gimp-filter-newsprint.html ; halftoning methods (ordered/threshold dither preserves tone): https://users.ece.utexas.edu/~bevans/projects/halftoning/methods.html"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean is a SOLID DARK card with white 'DDW' logo + small caption. rough-handdrawn renders only an empty light outlined rectangle — the dark fill is dropped and the white-on-dark logo/caption vanish entirely. wet-ink and charcoal (same row) correctly keep the dark block, proving the dark region exists in source; the line-style preset is emitting it stroke-only with no fill.",
+      "researchedFix": "In Rough.js, a closed dark-filled region must be drawn with fill:<darkInk> + fillStyle:'solid' (true solid blocks) rather than stroke-only; the path must be closed with Z so fill applies. For NPR correctness, preserve the region's tonal value via a Tonal Art Map so a dark region keeps high hatch density and never collapses to empty.",
+      "citation": "Rough.js fill options (solid/cross-hatch/zigzag) https://github.com/rough-stuff/rough ; closed-path fill + stroke omission https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns ; Tonal Art Maps for tonal preservation in NPR hatching https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same row as above: sketchy renders an empty light outlined rectangle, dropping the solid-dark card fill and the white 'DDW' logo + caption. wet-ink/charcoal in the same row keep the dark block.",
+      "researchedFix": "Map the solid-dark fill to Rough.js fillStyle:'solid' (or dense cross-hatch with small hachureGap + heavier fillWeight) with a closed Z path so the dark tone is preserved instead of dropped.",
+      "citation": "Rough.js fillStyle list https://roughjs.com/ ; closed-path/strokeless fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Same row: bold-ink draws a heavy empty outlined rectangle with no interior fill — the dark card and white logo/caption are dropped. wet-ink/charcoal keep them.",
+      "researchedFix": "bold-ink should still carry fill:<darkInk> with fillStyle:'solid' on the closed region; thickening the stroke alone leaves the interior empty. Preserve tonal value via TAM-style dense fill.",
+      "citation": "Rough.js fill options https://github.com/rough-stuff/rough ; Tonal Art Maps https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "ppvPoster",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean is a poster with white 'WRESTLE MANIA' text over a SOLID DARK lower block containing white 'XL'. rough-handdrawn collapses the whole thing to an empty outlined rectangle — dark block and all text gone. wet-ink/charcoal in the same row correctly keep the dark block + readable 'XL'.",
+      "researchedFix": "Emit the dark block as a closed (Z) Rough.js shape with fill:<darkInk> + fillStyle:'solid'; do not strip the fill in line-style presets. Use a Tonal Art Map so the dark region's density tracks source illumination instead of going empty.",
+      "citation": "Rough.js solid/cross-hatch fill https://roughjs.com/ ; closed-path fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns ; TAM tonal preservation https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "ppvPoster",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same row: sketchy renders an empty wobbly outlined rectangle — solid-dark block and 'WRESTLE MANIA'/'XL' text dropped. wet-ink/charcoal keep them.",
+      "researchedFix": "Map the dark block to fillStyle:'solid' (or dense cross-hatch) on a closed Z path; preserve tone via TAM density rather than dropping to outline.",
+      "citation": "Rough.js fillStyle https://github.com/rough-stuff/rough ; TAM https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "ppvPoster",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Same row: bold-ink draws an empty heavy outlined rectangle, dropping the dark block and all text. wet-ink/charcoal keep them.",
+      "researchedFix": "bold-ink must retain fill:<darkInk> + fillStyle:'solid' on the closed dark region; stroke weight alone leaves the interior empty.",
+      "citation": "Rough.js fill options https://roughjs.com/ ; closed-path fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "ps1JewelCase",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean is a CD jewel case with a DARK cover-art region carrying white 'FINAL FANTASY' title, plus a small header band and striped spine. rough-handdrawn renders an empty outlined box — the dark cover and title text are dropped (only the faint frame remains). wet-ink/charcoal in the same row keep the dark cover + readable title.",
+      "researchedFix": "Draw the dark cover-art rectangle as a closed (Z) Rough.js shape with fill:<darkInk> + fillStyle:'solid'; preserve the white title as an overlaid lighter mark. Use TAM density so the cover keeps its dark tone.",
+      "citation": "Rough.js solid fill https://github.com/rough-stuff/rough ; closed-path/strokeless fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns ; TAM https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "ps1JewelCase",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same row: sketchy renders an empty outlined box, dropping the dark cover and 'FINAL FANTASY' title. wet-ink/charcoal keep them.",
+      "researchedFix": "Map the dark cover region to fillStyle:'solid' (or dense cross-hatch with small hachureGap) on a closed Z path instead of stroke-only outline.",
+      "citation": "Rough.js fillStyle list https://roughjs.com/ ; closed-path fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "ps1JewelCase",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Same row: bold-ink draws an empty box with bottom spine stripes only — the dark cover-art block and title are dropped. wet-ink/charcoal keep the dark cover.",
+      "researchedFix": "bold-ink must keep fill:<darkInk> + fillStyle:'solid' on the closed cover region; thickening strokes alone leaves the cover empty.",
+      "citation": "Rough.js fill options https://github.com/rough-stuff/rough ; TAM tonal preservation https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "psPoster",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean is a SOLID DARK poster/banner with a light 'PS' mark + small light caption on dark ground. rough-handdrawn renders an empty light outlined rectangle — dark ground and 'PS' dropped. wet-ink/charcoal/newsprint in the same row correctly keep the dark ground with 'PS' visible.",
+      "researchedFix": "Emit the dark ground as a closed (Z) Rough.js shape with fill:<darkInk> + fillStyle:'solid'; keep the 'PS' as a light overlaid knockout. Preserve tone via TAM density rather than dropping to outline.",
+      "citation": "Rough.js solid/cross-hatch fill https://roughjs.com/ ; closed-path fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns ; TAM https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "psPoster",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same row: sketchy renders an empty outlined rectangle — dark ground and 'PS' dropped. wet-ink/charcoal/newsprint keep the dark ground.",
+      "researchedFix": "Map the dark ground to fillStyle:'solid' (or dense cross-hatch) on a closed Z path; do not strip fill in the sketchy preset.",
+      "citation": "Rough.js fillStyle https://github.com/rough-stuff/rough ; closed-path fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "psPoster",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Same row: bold-ink draws an empty heavy outlined rectangle, dropping the dark ground and 'PS'. wet-ink/charcoal/newsprint keep them.",
+      "researchedFix": "bold-ink must retain fill:<darkInk> + fillStyle:'solid' on the closed dark ground; stroke weight alone leaves it empty.",
+      "citation": "Rough.js fill options https://roughjs.com/ ; TAM https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "ps1MemoryCard",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean has a DARK horizontal window/slot near the top of the card plus a ridged base. rough-handdrawn renders the slot as an empty light open rectangle — the dark slot fill is dropped. Same row wet-ink/charcoal/risograph keep the slot dark. Smaller region than the poster cases but the same stroke-only-on-fill failure.",
+      "researchedFix": "Draw the dark slot as a closed (Z) Rough.js shape with fill:<darkInk> + fillStyle:'solid'; preserve the small dark feature's tone rather than rendering it as an open outline.",
+      "citation": "Rough.js solid fill + closed path https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns ; Rough.js fillStyle https://roughjs.com/"
+    },
+    {
+      "object": "ps1MemoryCard",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same row: sketchy renders the dark slot as an empty light rectangle. wet-ink/charcoal/risograph keep it dark.",
+      "researchedFix": "Map the dark slot to fillStyle:'solid' on a closed Z path so the small dark feature is preserved instead of dropped.",
+      "citation": "Rough.js fillStyle https://github.com/rough-stuff/rough ; closed-path fill https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "ps1MemoryCard",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Same row: bold-ink draws a bold card outline but the dark window reads as an empty/light open rectangle — dark fill dropped. wet-ink/charcoal/risograph keep it dark.",
+      "researchedFix": "bold-ink must keep fill:<darkInk> + fillStyle:'solid' on the closed slot region; thicker strokes alone do not restore the dropped dark fill.",
+      "citation": "Rough.js fill options https://github.com/rough-stuff/rough ; TAM tonal preservation https://gfx.cs.princeton.edu/proj/sg05lines/course7-4-npr.pdf"
+    },
+    {
+      "object": "replicaBelt",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean shows a fully-inked circular buckle disc carrying a white 'W' logo. rough-handdrawn renders the disc as a hollow outline only — the dark fill is dropped and the 'W' negative-space mark vanishes. This is a regression, not by-design: charcoal/stipple/risograph/bold-ink/wet-ink all retain the dark disc + W; only the sketch-family paths drop it. The buckle is the object's focal dark element.",
+      "researchedFix": "rough.js (the hand-drawn engine class these styles derive from) preserves region fills only when the path is closed AND a fill+fillStyle are passed; outline-only output means fillStyle isn't propagated to the filled subpath. Fix: for ink/sketch styles, set fillStyle:'solid' (or 'hachure') with the source fill color on closed filled regions instead of stroking outline-only. rough.js supports hachure/solid/zigzag/cross-hatch/dots fill styles.",
+      "citation": "https://github.com/rough-stuff/rough (README: fill + fillStyle on closed paths; outline-only occurs when fill not propagated); https://roughjs.com/"
+    },
+    {
+      "object": "replicaBelt",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same failure as rough-handdrawn: the solid dark buckle disc and its white 'W' mark are reduced to a hollow outline. sketchy is an ink style (not outline-only/wireframe), so the dark region should be preserved as it is in charcoal/stipple/risograph.",
+      "researchedFix": "Propagate fill+fillStyle to the closed buckle subpath in the sketchy renderer (rough.js fillStyle:'hachure' or 'solid'); do not strip the fill to outline. Outline-only and wireframe legitimately drop fills — sketchy should not.",
+      "citation": "https://github.com/rough-stuff/rough (fillStyle options: hachure, solid, cross-hatch); https://roughjs.com/"
+    },
+    {
+      "object": "replicaBelt",
+      "variant": "newsprint",
+      "divergence": "detail-lost",
+      "note": "newsprint fills the buckle disc with a dense uniform halftone, but the white 'W' logo (negative space in clean) is completely buried under the dot mass — the mark is gone, leaving a featureless halftone blob.",
+      "researchedFix": "Halftone should be threshold-driven from the source luminance and must keep negative-space regions (where source is light) dot-free. Mask the halftone with the source white/light areas before screening so the 'W' stays as un-dotted paper, varying dot radius with reflectance rather than flooding the whole disc.",
+      "citation": "https://weber.itn.liu.se/~stegu/webglshadertutorial/shadertutorial.html (vary dot radius/threshold by reflectance so white area stays proportional, preserving light/negative-space regions)"
+    },
+    {
+      "object": "ringsideTicket",
+      "variant": "newsprint",
+      "divergence": "detail-lost",
+      "note": "Clean ticket has crisp 'RINGSIDE' text and a stub digit. newsprint overlays a halftone fill + dashed border that fades the body text into the dot field and nearly erases the stub digit — interior text is no longer legible.",
+      "researchedFix": "Exclude text/label sub-regions from the halftone screen (treat as light/negative space, dot-free) or apply halftone only to fill regions, keeping text strokes as solid ink overprint above the screen.",
+      "citation": "https://weber.itn.liu.se/~stegu/webglshadertutorial/shadertutorial.html (threshold proportional to reflectance keeps light areas open; screen fills, not detail strokes)"
+    },
+    {
+      "object": "screenshotPrint",
+      "variant": "newsprint",
+      "divergence": "detail-lost",
+      "note": "Clean has a dark text bar and a solid dark button (bottom-right) plus content lines inside a browser window. newsprint reduces all interior content to a faint uniform halftone — the dark bar and the dark button essentially disappear (dark regions screened to near-light), so the UI structure is lost.",
+      "researchedFix": "Drive halftone dot size from source luminance: dark source regions (bar, button) must produce large/merged dots (near-solid), not faint dots. Current output applies a uniform light screen regardless of source darkness. Map threshold to per-pixel source value.",
+      "citation": "https://weber.itn.liu.se/~stegu/webglshadertutorial/shadertutorial.html (dot radius proportional to source reflectance — dark areas must stay dark)"
+    },
+    {
+      "object": "sealedBoosterBox",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean has a solid black 'BOOSTER BOX' label bar across the top. bold-ink drops the dark fill entirely — the label bar becomes an empty white rectangle (outline only), so the signature dark label region is lost. Confirmed by-design failure: charcoal, stipple, and risograph all retain a dark top band; bold-ink does not.",
+      "researchedFix": "bold-ink emphasizes stroke weight but is dropping the closed-region fill. Pass fillStyle:'solid' with the source dark color to the label-bar subpath so the dark fill survives the bold redraw; thickened strokes alone should not replace fills.",
+      "citation": "https://github.com/rough-stuff/rough (fill + fillStyle:'solid' on closed paths required for filled regions; outline-only = fill not propagated)"
+    },
+    {
+      "object": "sealedBoosterBox",
+      "variant": "newsprint",
+      "divergence": "detail-lost",
+      "note": "The dark top label compresses into a dense halftone blob (text buried) while the lower body's vertical divider lines fade into faint dots — both the label text and the divider structure are lost.",
+      "researchedFix": "Keep divider strokes as solid ink above the halftone screen, and screen the label region with luminance-mapped dots so the white label text remains as dot-free negative space rather than a uniform blob.",
+      "citation": "https://weber.itn.liu.se/~stegu/webglshadertutorial/shadertutorial.html (reflectance-proportional dots preserve light text; keep fine detail strokes out of the screen)"
+    },
+    {
+      "object": "sealedKickstarterFidget",
+      "variant": "newsprint",
+      "divergence": "detail-lost",
+      "note": "Clean shows a boxed package with a dark header label and a detailed inner socket/panel. newsprint reduces the whole package to a faint dashed-bordered halftone; the inner socket detail and header label fade into the dot field and are hard to read vs the crisp clean tile.",
+      "researchedFix": "Apply halftone only to broad fill regions and overprint the fine socket/header detail as solid strokes; map dot size to source luminance so the dark header stays dark instead of becoming a faint screen.",
+      "citation": "https://weber.itn.liu.se/~stegu/webglshadertutorial/shadertutorial.html (threshold/dot radius proportional to source; keep detail strokes above the screen)"
+    },
+    {
+      "object": "sonyKeychain",
+      "variant": "rough-handdrawn",
+      "divergence": "garbled",
+      "note": "Clean shows a key-ring loop above a distinct dumbbell/peanut-shaped controller body with two circular button recesses. rough-handdrawn collapses the dumbbell body into a skewed, roughly-filled dark slab/log — the figure-8 waist and both button recesses are gone; the silhouette no longer reads as the controller. The jitter amplitude is too high relative to this small detailed shape.",
+      "researchedFix": "Scale hand-drawn roughness/bowing by feature size: small shapes need reduced rough.js 'roughness' and 'bowing' (and tighter maxRandomnessOffset) so the dumbbell silhouette and interior recesses survive. NPR practice: preserve silhouette/feature detail by limiting simplification on small features rather than applying a fixed global perturbation.",
+      "citation": "https://github.com/rough-stuff/rough (roughness/bowing/maxRandomnessOffset control jitter magnitude); https://mrl.cs.nyu.edu/publications/npr-course1999/hertzmann-intro3d.pdf (preserve silhouette/feature detail in NPR line rendering)"
+    },
+    {
+      "object": "sonyKeychain",
+      "variant": "bold-ink",
+      "divergence": "detail-lost",
+      "note": "bold-ink renders the controller body as a tilted parallelogram slab with the two buttons reduced to tiny dots — the dumbbell/peanut waist that defines the silhouette is lost and the shape appears rotated/skewed vs the upright clean tile. Thick stroke weight merges the small interior features.",
+      "researchedFix": "Cap stroke-width relative to feature size for small shapes (thick strokes merge thin features / fill small concavities). On tiny detailed shapes, convert strokes to outlined fills and reduce weight so the dumbbell waist and button recesses stay distinct; keep the upright orientation (avoid jitter-induced skew).",
+      "citation": "https://css-tricks.com/almanac/properties/s/stroke-width/ and https://iconvectors.io/tutorials/keep-svg-stroke-width-constant-non-scaling-stroke.html (outline strokes to fills / limit stroke-width on small shapes to prevent thin-feature merge and detail loss)"
+    },
+    {
+      "object": "framedSketch (3D, row 0)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean is a framed sketch with an interior frame outline. extrude-q35/q315 render the whole object as a featureless dark slab (blackFrac 0.80/0.56); auto-q35/q315 are byte-identical to extrude (same blackFrac) so auto is routing flat panels into the extrude path; solid-q35/q315 also slab over it (0.73/0.54). rod and inflate columns preserve the frame outline, proving the source has interior content the slab modes bury. Front face carries no drawing.",
+      "researchedFix": "Use ExtrudeGeometry with a materials ARRAY: index 0 (front cap) gets a CanvasTexture/SVG-rendered map of the clean linework, index 1 (sides) gets the plain extruded material. three.js applies the first material to the face and the second to the sides, so the front face shows the drawing instead of a flat fill. Build the texture via THREE.CanvasTexture from the clean SVG render and set needsUpdate=true.",
+      "citation": "three.js forum 'Extrude Geometry, side material separate from front and rear' https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542 ; three.js CanvasTexture manual https://threejs.org/manual/en/canvas-textures.html"
+    },
+    {
+      "object": "framedSketchPage (3D, row 1)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean page has interior squiggle/wave marks. rod and inflate clearly render the squiggle; extrude-q35/q315 (blackFrac 0.78/0.58) and auto (identical) and solid (0.68/0.53) bury the squiggle under a dark slab. Multi-feature drawing lost into the extruded form.",
+      "researchedFix": "Same as framedSketch: materials-array ExtrudeGeometry with a front-cap CanvasTexture carrying the SVG linework; sides keep the solid extruded material. Alternatively apply the drawing as a heightmap/relief so interior marks read in the geometry rather than as a flat fill.",
+      "citation": "three.js forum side-vs-front material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542 ; Vectary 2D-to-3D heightmap-vs-extrude note https://help.vectary.com/documentation/other/2d-to-3d"
+    },
+    {
+      "object": "pitchDeckCover (3D, row 2)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean cover has a title text line. rod/inflate show the text line; extrude-q35/q315 (0.80/0.56), auto (identical), solid (0.75/0.55) flood the face to a dark slab and bury the title. Only a faint emboss survives in solid.",
+      "researchedFix": "Front-cap CanvasTexture on a materials-array ExtrudeGeometry so the cover art/title renders on the front face; sides keep the extruded fill.",
+      "citation": "three.js CanvasTexture manual https://threejs.org/manual/en/canvas-textures.html ; three.js issue UV map of extruded geometry https://github.com/mrdoob/three.js/issues/4994"
+    },
+    {
+      "object": "externalSsdArchive (3D, row 3)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean SSD shows a label rectangle plus a screw/port detail. rod/inflate render the label rect and screw; extrude-q35/q315 (0.80/0.55), auto (identical), solid (0.73/0.53) bury both into a dark slab.",
+      "researchedFix": "Materials-array ExtrudeGeometry: front-cap material = CanvasTexture of the SSD linework (label + screw), side material = solid. Render the SVG to a canvas, wrap as CanvasTexture, assign to face material index 0.",
+      "citation": "three.js forum face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542 ; CanvasTexture https://threejs.org/manual/en/canvas-textures.html"
+    },
+    {
+      "object": "framedFlyer (3D, row 4)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean flyer has a header bar, a squiggle headline, and body lines. rod/inflate show all of it; extrude-q35/q315 (0.78/0.58), auto (identical), solid (0.69/0.52) collapse the multi-feature flyer into a dark slab; solid keeps only a faint relief.",
+      "researchedFix": "Front-cap CanvasTexture (flyer linework) on materials-array ExtrudeGeometry; sides solid. For richer reads, drive a bump/relief from the SVG so headline + lines read on the lit face.",
+      "citation": "three.js CanvasTexture https://threejs.org/manual/en/canvas-textures.html ; Vectary heightmap vs extrude https://help.vectary.com/documentation/other/2d-to-3d"
+    },
+    {
+      "object": "setlistHandwritten (3D, row 5)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean setlist has a top clip and handwritten text lines. rod/inflate render clip + lines; extrude-q35/q315 (0.78/0.58), auto (identical), solid (0.72/0.55) bury the text under a dark slab (only one faint line survives in solid-q315).",
+      "researchedFix": "Materials-array ExtrudeGeometry with front-cap CanvasTexture of the setlist linework; sides solid material.",
+      "citation": "three.js forum face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542"
+    },
+    {
+      "object": "boxedGameCartridge (3D, row 6)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean box shows label panels / inner rectangles. rod/inflate render the panel divisions; extrude-q35/q315 (0.78/0.58), auto (identical), solid (0.70/0.54) bury them into a dark slab.",
+      "researchedFix": "Front-cap CanvasTexture (box art / label panels) on materials-array ExtrudeGeometry; sides solid.",
+      "citation": "three.js CanvasTexture https://threejs.org/manual/en/canvas-textures.html ; face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542"
+    },
+    {
+      "object": "nintendoPowerMag (3D, row 7)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean magazine has a prominent circular motif and frame. rod/inflate clearly show the circle; extrude-q35/q315 (0.78/0.58), auto (identical), solid (0.69/0.53) bury the circle into a dark slab (faint emboss only in solid).",
+      "researchedFix": "Materials-array ExtrudeGeometry with front-cap CanvasTexture carrying the cover art (circle + frame); sides solid.",
+      "citation": "three.js forum face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542 ; CanvasTexture https://threejs.org/manual/en/canvas-textures.html"
+    },
+    {
+      "object": "finisherShirt (3D, row 8)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean shirt graphic has interior horizontal lines/graphic. rod/inflate render the lines; extrude-q35/q315 (0.79/0.57), auto (identical), solid (0.72/0.56) flatten to a dark slab burying the graphic.",
+      "researchedFix": "Front-cap CanvasTexture (shirt graphic) on materials-array ExtrudeGeometry; sides solid.",
+      "citation": "three.js CanvasTexture https://threejs.org/manual/en/canvas-textures.html"
+    },
+    {
+      "object": "polaroid (3D, row 9)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean polaroid has a clear photo window framed by the white border. rod/inflate render the window/border; extrude-q35/q315 (0.78/0.58), auto (identical), solid (0.71/0.54) render the whole thing as a dark slab, losing the white border + window distinction.",
+      "researchedFix": "Materials-array ExtrudeGeometry: front-cap CanvasTexture reproducing the white border + photo window; sides solid. This preserves the border-vs-window contrast that the flat dark fill destroys.",
+      "citation": "three.js forum face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542"
+    },
+    {
+      "object": "psPoster (3D, row 12)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean poster has a text/title line. rod/inflate show the line; extrude-q35/q315 (0.79/0.58), auto (identical), solid (0.74/0.55) bury it into a dark slab.",
+      "researchedFix": "Front-cap CanvasTexture (poster art) on materials-array ExtrudeGeometry; sides solid.",
+      "citation": "three.js CanvasTexture https://threejs.org/manual/en/canvas-textures.html ; face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542"
+    },
+    {
+      "object": "playstationMag (3D, row 13)",
+      "variant": "extrude (auto + solid mirror it)",
+      "divergence": "detail-lost",
+      "note": "Clean magazine has a circle + rectangle layout (cover composition). rod/inflate render the circle + rectangle; extrude-q35/q315 (0.78/0.58), auto (identical), solid (0.69/0.53) collapse the layout into a dark slab (faint emboss only in solid).",
+      "researchedFix": "Materials-array ExtrudeGeometry with front-cap CanvasTexture of the cover layout; sides solid.",
+      "citation": "three.js forum face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542 ; CanvasTexture https://threejs.org/manual/en/canvas-textures.html"
+    },
+    {
+      "object": "ALL flat-panel objects (3D) - auto mode",
+      "variant": "auto",
+      "divergence": "blob",
+      "note": "Cross-cutting: in every flat-panel row (0-9,12,13) auto-q35/q315 have byte-identical blackFrac to extrude-q35/q315 (e.g. 0.78/0.58). auto is routing flat panels into the extrude/slab path, so the auto default inherits the same featureless-dark-slab failure instead of picking a detail-preserving mode (rod/inflate keep interior content). The default mode users see first is the broken one.",
+      "researchedFix": "Fix at the source by giving extrude a textured front cap (above), OR change auto's routing so flat multi-feature panels default to a textured-extrude / inflate-with-front-texture path rather than plain extrude. Simplest robust fix: always apply the front-cap CanvasTexture on the extruded path so auto and extrude both carry the drawing.",
+      "citation": "three.js forum face/side material array https://discourse.threejs.org/t/extrude-geometry-side-material-separate-from-front-and-rear/31542 ; three.js CanvasTexture manual https://threejs.org/manual/en/canvas-textures.html"
+    },
+    {
+      "object": "60 pokemonPlush",
+      "variant": "extrude (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod tiles reveal a full face (two eyes + smile + two ears); extrude collapses it into a featureless dark glossy oval. auto also buries the face. inflate/solid keep eyes+smile. The face is the object's whole identity and it vanishes under extrude/auto.",
+      "researchedFix": "Don't bury 2D interior marks under a flat extruded cap. Treat interior line features as engraving: bake the clean SVG line layer into a grayscale displacement/bump map and apply to the extruded cap so eyes/smile read as recessed relief (white=high, black=low). Displacement mapping is the established technique for engravings/reliefs 'especially when silhouettes and edge breaks are relevant.'",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://grabcad.com/tutorials/texture-bump-and-displacement-how-to-make-photorealistic-models"
+    },
+    {
+      "object": "76 wrestlingCard",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals a card with a championship-belt/figure icon inside a bordered frame; extrude and auto render a plain solid dark card slab with zero interior detail. inflate/solid keep the icon. Classic multi-feature flat drawing buried by the extrude cap.",
+      "researchedFix": "Keep the flat front face as a textured/engraved plane rather than a blank extruded cap: project the clean SVG as a displacement or normal map onto the front face so the icon+frame survive as relief. Established displacement-map workflow for adding engraved/interior features to an extruded 2D base form without re-modeling each feature.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://python.camden.rutgers.edu/documents/freecad/freecad_tutorial5.pdf"
+    },
+    {
+      "object": "80 foldedMap",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals fold-crease grid + a location marker dot; extrude and auto render a smooth solid dark slab with no creases. inflate/solid keep the grid. The crease grid IS the map's identity and it disappears.",
+      "researchedFix": "Engrave the crease lines via displacement map on the extruded cap instead of discarding the line layer. Grayscale displacement (peaks/valleys = creases) keeps fold geometry as real surface relief on the extruded base.",
+      "citation": "https://en.wikipedia.org/wiki/Displacement_mapping ; https://www.danthree.studio/en/glossary/displacement-map"
+    },
+    {
+      "object": "84 wornFidgetCube",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the fidget-cube face features (buttons, holes, slider slot); extrude and auto render a plain dark rounded square. inflate keeps the buttons. All the interactive surface detail is buried.",
+      "researchedFix": "Carry interior features as engraved relief on the cap (displacement/bump map from the clean SVG) rather than a flat extruded face. For features that are true through-cuts (holes), use Shape.holes so geometry is actually punched rather than painted flat.",
+      "citation": "https://threejs.org/docs/#api/en/extras/core/Shape.holes ; https://www.danthree.studio/en/glossary/displacement-map"
+    },
+    {
+      "object": "88 lacroixCan",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the can's bubble/fizz dots; extrude and auto render a solid dark can slab with no bubbles. inflate keeps the dots (solid-q315 also nearly loses them).",
+      "researchedFix": "Bake the bubble dots into a displacement/bump map on the cylindrical/extruded surface so the fizz reads as surface relief, instead of dropping the interior line layer when extruding.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://grabcad.com/tutorials/texture-bump-and-displacement-how-to-make-photorealistic-models"
+    },
+    {
+      "object": "92 perrierPoster",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals a framed poster with a bottle illustration; extrude and auto render a blank dark slab. inflate/solid keep the bottle+frame. Whole poster artwork buried.",
+      "researchedFix": "Treat the poster face as an engraved/printed plane: project clean SVG as displacement (or texture) map onto the front face of the extruded board so the bottle+frame survive.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://python.camden.rutgers.edu/documents/freecad/freecad_tutorial5.pdf"
+    },
+    {
+      "object": "108 overEarHeadphones",
+      "variant": "extrude (q35 + q315)",
+      "divergence": "blob",
+      "note": "rod/auto/inflate/solid all keep the open headband arc + two distinct earcups with center holes. extrude fills the entire open band-and-earcup negative space into one solid dark featureless mass; the defining open-arc topology is destroyed. inflate/solid keep the structure.",
+      "researchedFix": "Open-frame / compound topology must be extruded with holes preserved: parse with SVGLoader.createShapes (not toShapes) and feed inner contours into Shape.holes so the band arc and earcup openings extrude as real holes. Open paths have no fill in three.js, so the band must be a closed shape WITH holes, with correct EVENODD/NONZERO winding, or the loader fills/inverts the hole. Known SVGLoader hole/winding pitfall.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://muffinman.io/blog/three-js-extrude-svg-path/ ; https://github.com/mrdoob/three.js/issues/20858"
+    },
+    {
+      "object": "112 guitarPedal",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals two knobs + a footswitch slot on the pedal face; extrude and auto render a blank dark slab. inflate/solid keep knobs+slot.",
+      "researchedFix": "Engrave knobs/slot as relief via displacement map on the extruded cap, or model the knobs as raised sub-geometry; do not flatten the interior line layer into the cap.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://grabcad.com/tutorials/texture-bump-and-displacement-how-to-make-photorealistic-models"
+    },
+    {
+      "object": "120 nesCartridge",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the cartridge label band + horizontal label lines; extrude and auto render a featureless dark slab. inflate/solid keep the label lines.",
+      "researchedFix": "Project the label/ridge lines as displacement relief onto the extruded cap so the label survives, instead of discarding the interior line layer.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "124 n64Controller",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the analog stick + face buttons across the 3-prong body; extrude and auto keep the silhouette but bury every button into a smooth dark mass. inflate/solid keep the buttons.",
+      "researchedFix": "Carry buttons/stick as engraved relief (displacement/bump) on the front face or as raised sub-geometry; keep the silhouette extrusion but don't blank the interior. Displacement map from the clean SVG is the established way to add these surface features to an extruded base.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://grabcad.com/tutorials/texture-bump-and-displacement-how-to-make-photorealistic-models"
+    },
+    {
+      "object": "132 clapperboard",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the striped clapper bar on top + slate text lines; extrude and auto render a plain dark slab with no stripes or text. inflate/solid keep the stripes.",
+      "researchedFix": "Engrave the diagonal stripes + slate lines as displacement relief on the extruded cap. The clapper stripes are the identity-defining feature and must survive extrusion as surface relief, not be flattened away.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://python.camden.rutgers.edu/documents/freecad/freecad_tutorial5.pdf"
+    },
+    {
+      "object": "136 pokeball",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the equator band + center button ring; extrude and auto render a plain dark disc with no band or button. inflate/solid keep the band+button.",
+      "researchedFix": "Engrave the equator band + button ring via displacement/bump map on the disc surface so the pokeball's defining split reads, rather than dropping the interior lines on extrude.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "140 boosterPack",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals foil-seam horizontal lines + a window/label box; extrude and auto render a blank dark slab. inflate/solid keep the seams+window.",
+      "researchedFix": "Project the foil seams + label window as displacement relief onto the extruded front face so packaging detail survives extrusion.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://grabcad.com/tutorials/texture-bump-and-displacement-how-to-make-photorealistic-models"
+    },
+    {
+      "object": "144 vita",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the central screen + d-pad + face buttons of the handheld; extrude and auto render a featureless dark slab. inflate/solid keep screen+controls.",
+      "researchedFix": "Engrave the screen recess + d-pad/buttons as displacement/normal-map relief on the extruded front face (screen could be an inset sub-face). Do not flatten the whole console face into a blank cap.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://grabcad.com/tutorials/texture-bump-and-displacement-how-to-make-photorealistic-models"
+    },
+    {
+      "object": "148 miniDisc",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the center hub + shutter window inside the disc square; extrude and auto render a plain dark slab. inflate/solid keep hub+window.",
+      "researchedFix": "Engrave hub + shutter window as relief via displacement map; the shutter window in particular could be a true Shape.hole if it should read as a cut. Keep the interior layer rather than burying it.",
+      "citation": "https://threejs.org/docs/#api/en/extras/core/Shape.holes ; https://www.danthree.studio/en/glossary/displacement-map"
+    },
+    {
+      "object": "152 mic",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the mic-grille line pattern on the capsule head; extrude and auto render the head as a smooth dark oval with no grille. Silhouette (head+stem) survives but the grille texture is buried. inflate/solid keep the grille.",
+      "researchedFix": "Bake the grille pattern into a bump/displacement map on the capsule surface so the mesh detail reads, rather than discarding the grille lines on extrude.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://grabcad.com/tutorials/texture-bump-and-displacement-how-to-make-photorealistic-models"
+    },
+    {
+      "object": "156 megaphone",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "rod reveals the cone-flare radial lines + handle; extrude and auto render a solid dark cone slab with no flare lines (handle silhouette partly survives). inflate/solid keep the radial lines.",
+      "researchedFix": "Engrave the cone-flare radial lines as displacement relief on the cone surface; keep the handle as sub-geometry. Don't flatten the cone-interior line layer on extrude.",
+      "citation": "https://www.danthree.studio/en/glossary/displacement-map ; https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "164 ring",
+      "variant": "extrude (q35 + q315) + auto (q35 + q315)",
+      "divergence": "blob",
+      "note": "rod reveals an open ring band (finger hole) topped by a triangular gem/setting; extrude and auto fill the open center of the band into a solid dark disc with a triangle on top. The defining finger-hole negative space is destroyed. inflate/solid keep the open ring.",
+      "researchedFix": "Open-frame topology: the ring's center must extrude as a real hole. Use SVGLoader.createShapes and put the inner circle into Shape.holes with correct winding (EVENODD vs NONZERO) so the band extrudes as an annulus. This is the documented circle-with-hole/donut SVGLoader case that loads filled/inverted if winding/holes aren't handled.",
+      "citation": "https://discourse.threejs.org/t/svgloader-compound-shape-circle-with-hole-loads-inverted/25303 ; https://threejs.org/docs/#api/en/extras/core/Shape.holes ; https://github.com/mrdoob/three.js/issues/20858"
+    },
+    {
+      "object": "188 monkeyNoodle",
+      "variant": "extrude (extrude-q35 and extrude-q315)",
+      "divergence": "blob",
+      "note": "CLEAN is a thin, open wavy stroke with zero filled area (dk 0.00; sampled CLEAN tile min pixel=106, true-black fraction=0.0). The extrude mode treats this open polyline as a closed fillable region and triangulates its interior into a solid black mass (extrude tile min pixel=24, ~3.9% true-black coverage), producing two irregular filled lumps instead of a thin 3D stroke. The line character of the noodle is destroyed. auto and rod render it as a faithful thin line; inflate and solid render it correctly as a thin puffy tube along the curve — so only extrude fails. Root cause: open paths are being sent through the extrude (closed-shape) pipeline.",
+      "researchedFix": "Detect open vs closed paths before choosing the 3D primitive. ExtrudeGeometry is designed only for closed 2D shapes — it fills/triangulates the interior, so feeding it an open polyline yields a filled-blob silhouette (a documented limitation). For open polylines/strokes route to a tube/ribbon along the curve (three.js TubeGeometry, which wraps a constant-radius tube along any 3D curve) — the same approach the inflate/solid modes already use here correctly. Equivalently, in CAD terms a closed polyline extrudes to a solid while an open polyline does not render as a solid and must instead be used as a sweep PATH or have its stroke expanded first. Concretely: if path.isClosed === false (or first point != last point), skip ExtrudeGeometry and build a TubeGeometry from a CatmullRomCurve3 of the polyline points; reserve ExtrudeGeometry for closed contours only.",
+      "citation": "three.js docs — TubeGeometry (extrudes a tube along a 3D curve, for pipes/roads/flow lines) https://threejs.org/docs/pages/TubeGeometry.html ; three.js docs — ExtrudeGeometry (extrudes a 2D *shape*, i.e. a closed path) https://threejs.org/docs/pages/ExtrudeGeometry.html ; Vectorworks docs — a closed polyline extrudes to a solid (accepts fill/texture) while an open polyline does not render as a solid; an open object can be used as the extrusion PATH https://app-help.vectorworks.net/2018/eng/VW2018_Guide/Shapes1/Creating_Polylines.htm ; mattdesl/extrude-polyline (closed-path handling for stroke triangulation) https://github.com/mattdesl/extrude-polyline/compare/master...jeffbaumes:closed-path"
+    },
+    {
+      "object": "topoChicoBottle (obj 89, sheet c014 row 09)",
+      "variant": "extrude (extrude-q35 and extrude-q315; auto-q35/auto-q315 follow extrude and show the same defect)",
+      "divergence": "garbled",
+      "note": "The Clean tile is a slim bottle: narrow neck, gentle shoulder, then a roughly constant-width straight-walled cylindrical body. The rod-q35/q315 (outline trace) and solid-q35/q315 (mesh) modes reproduce this faithfully — proper neck + straight body + 'M' label. But extrude-q35/q315 (and auto, which mirrors extrude) widen the lower body into a triangular FLARE, rendering the bottle as a wide spatula/paddle instead of a cylinder. The straight-walled body silhouette is mis-derived only in the extrude path; the same object is correct in rod and solid, so this is specific to the extrude-mode contour/triangulation, not the source SVG. Verified at 2x and 3x zoom.",
+      "researchedFix": "The flare is a contour-preservation/triangulation defect in the extrude path, not a bevel artifact (no bevel offset would convert a straight wall into a flare). Fix family: feed the extrusion the faithful closed contour via SVGLoader.toShapes() and let ShapeUtils.triangulateShape handle it with correct outer-CW/hole-CCW winding so the concave straight-walled profile is preserved rather than collapsed toward a convex hull — the same triangulation/winding discipline the solid+rod paths already use (their output is correct). three.js docs note shape triangulation must respect winding order for proper outline preservation, and ExtrudeGeometry depends on that contour. If a hull/simplification step is being applied before extrusion, remove it so extrude consumes the same contour as solid. Also confirm bevelOffset/bevelSize are not silently inflating the base (use negative bevelOffset = -bevelSize if bevel is on).",
+      "citation": "three.js ShapeUtils.triangulateShape & winding-order requirement: https://threejs.org/docs/pages/ShapeUtils.html and https://github.com/mrdoob/three.js/blob/master/src/extras/ShapeUtils.js ; ExtrudeGeometry/Shape contour dependence: https://threejs.org/docs/pages/ExtrudeGeometry.html and https://threejs.org/docs/pages/Shape.html ; SVGLoader.toShapes extrusion workflow: https://muffinman.io/blog/three-js-extrude-svg-path/ ; bevelOffset to counter base inflation: https://github.com/mrdoob/three.js/issues/10521"
+    },
+    {
+      "object": "arepaPan (#177)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows the pan as a HOLLOW open ring + handle; auto and extrude fill the ring into a solid dark disc, burying the open center. inflate keeps the ring open. The defining hollow-pan feature is lost in the silhouette-only extrusion.",
+      "researchedFix": "ExtrudeGeometry only solidifies the outer silhouette; preserve interior contour by also rendering THREE.EdgesGeometry/feature-lines over the mesh (tune thresholdAngle so the inner ring edge survives), or apply the clean SVG as a front-face texture map (UV-mapped, magFilter=LinearFilter) so interior linework reads on the solid form.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/#api/en/geometries/EdgesGeometry"
+    },
+    {
+      "object": "carriel (#181)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a structured bag: flap pocket + clasp. auto and extrude render a solid dark arched silhouette with the flap and clasp completely buried. inflate retains the flap+clasp outline.",
+      "researchedFix": "Add a feature-line pass (EdgesGeometry / NPR contour+crease overlay) so the flap/clasp interior strokes survive the solid fill; alternatively texture-map the clean drawing onto the extruded front face.",
+      "citation": "https://gfx.cs.princeton.edu/pubs/DeCarlo_2003_SCF/DeCarlo2003.pdf ; https://threejs.org/docs/#api/en/geometries/EdgesGeometry"
+    },
+    {
+      "object": "seltzerCan (#193)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a slab with a panel divider + button/dot detail; auto and extrude bury the buttons and divider into a featureless dark slab. inflate and solid keep the dots.",
+      "researchedFix": "Render interior feature lines via EdgesGeometry over the extrusion, or composite the clean SVG as an albedo/decal texture on the front face so the button dots remain visible.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/EdgesGeometry ; https://discoverthreejs.com/book/first-steps/textures-intro/"
+    },
+    {
+      "object": "inktoberCard (#6)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a card with a central oval/face motif; auto and extrude render a solid dark card with the central motif fully buried. inflate keeps the oval; solid keeps it faintly.",
+      "researchedFix": "Use the clean drawing as a front-face texture map (UV mapping + LinearFilter) on the extruded card, or overlay EdgesGeometry feature lines for the interior motif.",
+      "citation": "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.map ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "awwwardsStatue (#14)",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "blob",
+      "note": "rod/auto read as a clean trophy (cup + two handles + base). extrude merges the cup and handles into an amorphous featureless dark mass (cloud-like blob) where the trophy form is no longer legible. inflate and auto keep the trophy silhouette.",
+      "researchedFix": "Thin-feature handles collapse under uniform extrusion; clamp extrude depth relative to feature width and add EdgesGeometry contour lines so the handle openings stay legible, or fall back to the rod/auto representation for thin-strut shapes.",
+      "citation": "https://gfx.cs.princeton.edu/pubs/DeCarlo_2003_SCF/DeCarlo2003.pdf ; https://github.com/min1max/svg-extrude-path"
+    },
+    {
+      "object": "vinylLpSleeve (#18)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a sleeve with a concentric-circle vinyl record motif; auto and extrude render a solid dark square with the record buried. solid (notably) and inflate retain the concentric circles.",
+      "researchedFix": "Texture-map the clean SVG onto the extruded front face, or add an EdgesGeometry/feature-line overlay so the concentric record circles survive — the solid mode already preserves them, so route auto/extrude through the same interior-line pass.",
+      "citation": "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.map ; https://threejs.org/docs/#api/en/geometries/EdgesGeometry"
+    },
+    {
+      "object": "zeldaMap (#22)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows map fold/contour curves across the page; auto and extrude render a solid dark page with all contour lines buried. inflate and solid keep the curves.",
+      "researchedFix": "Overlay interior feature lines (EdgesGeometry / NPR ridge-valley lines) or apply the clean drawing as a front-face texture so the contour curves remain visible on the extruded page.",
+      "citation": "https://www.researchgate.net/publication/221523198_Highlight_lines_for_conveying_shape ; https://threejs.org/docs/#api/en/geometries/EdgesGeometry"
+    },
+    {
+      "object": "looseCartridge (#26)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows the cartridge label + connector grid/ridges; auto and extrude render a solid dark slab with the grid buried. solid and inflate keep the grid.",
+      "researchedFix": "Route auto/extrude through the same interior-line pass solid already uses (EdgesGeometry feature lines), or texture-map the clean SVG onto the front face to keep the connector grid legible.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/EdgesGeometry ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "raceMedal (#30)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a concentric-ring medal; auto and extrude flatten it to a solid dark disc with the rings gone. inflate and solid retain the rings.",
+      "researchedFix": "Add EdgesGeometry/feature-line overlay for the concentric rings, or apply the clean SVG as a front-face decal texture so the medal rings survive the solid extrusion.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/EdgesGeometry ; https://discoverthreejs.com/book/first-steps/textures-intro/"
+    },
+    {
+      "object": "framedRacePhoto (#34)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a frame with an interior figure/bell motif; auto and extrude render a solid dark frame with the figure buried. inflate keeps the figure; solid keeps it faintly.",
+      "researchedFix": "Texture-map the clean drawing onto the extruded front face (UV + LinearFilter) or overlay interior feature lines so the framed figure reads.",
+      "citation": "https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.map ; https://threejs.org/docs/#api/en/geometries/EdgesGeometry"
+    },
+    {
+      "object": "pairedPhotoStrip (#38)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a photobooth strip of 4 framed cells; auto and extrude render a solid dark bar with the 4 cell divisions buried. solid keeps faint cell borders; inflate keeps the cells.",
+      "researchedFix": "Add EdgesGeometry interior feature lines (tune thresholdAngle to keep the cell dividers) or texture-map the clean SVG onto the front face.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/EdgesGeometry ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "letterboxdCard (#46)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a ~9-box poster grid; auto and extrude render a solid dark card with the grid buried. solid keeps faint grid; inflate keeps it.",
+      "researchedFix": "Route auto/extrude through the interior-line pass solid uses (EdgesGeometry), or texture-map the clean drawing onto the front face so the poster grid survives.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/EdgesGeometry ; https://threejs.org/docs/#api/en/materials/MeshStandardMaterial.map"
+    },
+    {
+      "object": "ps1JewelCase (#50)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows the jewel case with hinge/teeth detail along the edge; auto and extrude render a solid dark case with the hinge teeth buried. inflate and solid keep the detail.",
+      "researchedFix": "Overlay EdgesGeometry feature lines (the hinge teeth are high-angle creases that survive a tuned thresholdAngle) or texture-map the clean SVG onto the front face.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/EdgesGeometry ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "ps1ConsoleDisplay (#54)",
+      "variant": "auto + extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod view shows a console with a circular disc-lid + vent slats; auto and extrude render a solid dark slab with the disc and vents buried. inflate and solid keep the disc + vents.",
+      "researchedFix": "Add an interior feature-line pass (EdgesGeometry) or texture-map the clean drawing onto the extruded front face so the disc-lid and vent slats remain legible.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/EdgesGeometry ; https://discoverthreejs.com/book/first-steps/textures-intro/"
+    },
+    {
+      "object": "58 psaSlab",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid keep the nested border + circular grade window. extrude (and auto) render a featureless dark slab; the multi-feature card face (border + grade window) is fully buried. rod/inflate/solid faithful.",
+      "researchedFix": "Build the front face from SVGLoader.createShapes() (preserves interior subpaths/holes, unlike path.toShapes) and project the Clean SVG onto the extruded front face via DecalGeometry / a front-face texture, since ExtrudeGeometry already textures only the front face — so the drawing survives the extrusion.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "62 collectorTin",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the nested rectangle + center circle. extrude (and auto) flatten to a dark slab with the interior nested-rect + circle gone.",
+      "researchedFix": "Same SVGLoader.createShapes + front-face decal/texture approach so interior subpaths render on the extruded face.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "66 sombreroVueltiao",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the woven crown lines + brim ellipse. extrude (and auto) render a solid dark hat with the crown weave texture erased.",
+      "researchedFix": "Project the Clean SVG interior strokes onto the extruded front face as a decal/texture; use createShapes so the brim+crown subpaths are kept rather than merged.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "74 ppvPoster",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the poster's horizontal title line. extrude (and auto) bury the interior line in a featureless slab. Borderline (single interior line) but the poster face content is fully lost.",
+      "researchedFix": "Same front-face decal/texture treatment so the poster's interior content stays on the extruded face.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "78 stampedPassport",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the 4 circular stamps in two columns. extrude (and auto) flatten to a dark slab; all 4 stamps gone — clear multi-feature drawing buried.",
+      "researchedFix": "SVGLoader.createShapes to retain the 4 stamp subpaths, then decal/front-face texture the Clean SVG onto the extruded face.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "82 luggageTagWorn",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the label window + 3 worn text lines. extrude (and auto) render a featureless dark tag, label + lines gone.",
+      "researchedFix": "Front-face decal/texture of the Clean SVG so the label window + text lines survive on the extruded face; use createShapes to keep the window subpath.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "86 komboloi",
+      "variant": "inflate (q35 & q315)",
+      "divergence": "blob",
+      "note": "auto/rod/extrude faithfully render the bead loop + tassel strands. inflate merges the beads into a lumpy ring and turns the tassel into a featureless dark paddle/blob (strand detail lost). solid clumps similarly but reads less broken.",
+      "researchedFix": "Inflate the FILLED bead/tassel regions via the Poisson 'puffer' inflation (solve laplacian(u)+4=0, u=0 on boundary, height z^2=u), per-subpath rather than inflating the merged silhouette, and add a min-feature-size guard so thin strands aren't swallowed.",
+      "citation": "https://medium.com/@harry7557558/img23d-web-based-tool-that-turns-2d-images-into-3d-models-15c0d7382a08"
+    },
+    {
+      "object": "90 lacroixRack",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep individual cans with pull-tab outlines. extrude (and auto) merge the can-stack into solid dark panels; per-can outlines + tab details mostly gone.",
+      "researchedFix": "Use createShapes so each can subpath stays separate, and decal/front-face texture the Clean SVG; consider extruding each can subpath as its own shape so the stack reads as discrete cans.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "94 draftingPen",
+      "variant": "inflate (q35 & q315)",
+      "divergence": "garbled",
+      "note": "auto/rod/extrude/solid keep the straight pen barrel + nib. inflate bloats the thin straight pen into a lumpy curved bean/clip blob that no longer reads as a pen.",
+      "researchedFix": "Add a high-aspect-ratio (thin-shape) guard that clamps/skips balloon inflation for elongated forms, or inflate via Poisson on the filled region with a thickness cap so a thin barrel stays a barrel; route very thin shapes to rod/extrude instead.",
+      "citation": "https://medium.com/@harry7557558/img23d-web-based-tool-that-turns-2d-images-into-3d-models-15c0d7382a08 ; https://patents.justia.com/patent/8334868"
+    },
+    {
+      "object": "98 brushPen",
+      "variant": "inflate (q35 & q315)",
+      "divergence": "garbled",
+      "note": "auto/rod/extrude/solid keep the straight brush-pen barrel. inflate bloats it into a lumpy curved blob, losing the straight barrel — same failure mode as draftingPen.",
+      "researchedFix": "Same thin-shape aspect-ratio guard / capped Poisson inflation, or route thin elongated shapes away from inflate.",
+      "citation": "https://medium.com/@harry7557558/img23d-web-based-tool-that-turns-2d-images-into-3d-models-15c0d7382a08 ; https://patents.justia.com/patent/8334868"
+    },
+    {
+      "object": "102 macbook",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the lid logo circle. extrude (and auto) bury the logo in a featureless slab. Borderline (single feature) but the only face detail is lost.",
+      "researchedFix": "Decal/front-face texture the Clean SVG onto the extruded lid face so the logo survives.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "106 mxMouse",
+      "variant": "inflate (q35 & q315)",
+      "divergence": "garbled",
+      "note": "auto/extrude/solid render a solid filled mouse body with scroll-wheel detail. inflate hollows the body into a thin ring/donut with a detached bulbous wheel — no longer a filled mouse.",
+      "researchedFix": "Inflate the FILLED region (Poisson puffer on the solid area, not the stroke outline) so the body stays solid instead of becoming a hollow loop; ensure the fill region (not the outline path) is the inflation input.",
+      "citation": "https://medium.com/@harry7557558/img23d-web-based-tool-that-turns-2d-images-into-3d-models-15c0d7382a08"
+    },
+    {
+      "object": "110 fieldNotes",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the cover label box + ruled lines. extrude (and auto) flatten to a dark slab; label box + ruled lines gone — multi-feature cover buried.",
+      "researchedFix": "SVGLoader.createShapes + front-face decal/texture so the label box and ruled lines render on the extruded cover.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "114 electricGuitar",
+      "variant": "inflate (q35 & q315)",
+      "divergence": "garbled",
+      "note": "auto/rod/extrude/solid keep the guitar body + neck silhouette. inflate hollows + bloats it into a lumpy bottle-opener-like loop; the neck balloons and body hollows, no longer reads as a guitar.",
+      "researchedFix": "Poisson inflation on the filled region with an aspect-ratio guard for the thin neck (cap thickness on elongated portions) so the body stays solid and the neck stays slender.",
+      "citation": "https://medium.com/@harry7557558/img23d-web-based-tool-that-turns-2d-images-into-3d-models-15c0d7382a08 ; https://patents.justia.com/patent/8334868"
+    },
+    {
+      "object": "118 switch",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the joycon buttons + analog sticks + screen. extrude (and auto) keep only the 3-segment seam; all button/stick circles are gone.",
+      "researchedFix": "Front-face decal/texture of the Clean SVG so the joycon controls render on the extruded face; createShapes to retain button subpaths.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "122 nesController",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the D-pad, select/start, and A/B buttons. extrude (and auto) flatten to a dark bar; all controls gone — clear multi-feature buried.",
+      "researchedFix": "createShapes to keep each control subpath + front-face decal/texture of the Clean SVG onto the extruded face.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "126 powerGlove",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the control-pad buttons. extrude (and auto) keep the finger silhouette but bury the control-pad button grid in a featureless mass.",
+      "researchedFix": "Front-face decal/texture of the Clean SVG so the control-pad buttons render on the extruded face.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "130 filmCanister",
+      "variant": "inflate (q35 & q315)",
+      "divergence": "dark-dropped",
+      "note": "auto/extrude/solid render a solid filled disc. inflate turns it into a hollow torus/ring — the solid center face is dropped out, leaving a donut.",
+      "researchedFix": "Inflate the FILLED disc region (Poisson puffer on the solid area) rather than the rim/stroke outline, so the center stays filled instead of hollowing into a ring.",
+      "citation": "https://medium.com/@harry7557558/img23d-web-based-tool-that-turns-2d-images-into-3d-models-15c0d7382a08"
+    },
+    {
+      "object": "134 filmStrip",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the sprocket holes + frame divisions. extrude (and auto) flatten to a dark slab; sprockets + frame lines gone.",
+      "researchedFix": "createShapes to retain sprocket-hole subpaths (treat holes as holes, not fills) + front-face decal/texture of the Clean SVG.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "138 cardSleeve",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the nested rounded-rect sleeve opening. extrude (and auto) bury it in a featureless slab. Borderline (single nested feature) but it is the defining detail.",
+      "researchedFix": "Front-face decal/texture of the Clean SVG so the sleeve-opening border renders on the extruded face.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "142 ps5Controller",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the touchpad, sticks, and buttons. extrude (and auto) render a dark dogbone mass; all controls gone — clear multi-feature buried.",
+      "researchedFix": "createShapes to keep control subpaths + front-face decal/texture of the Clean SVG onto the extruded face.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "146 discman",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the concentric CD/spindle circles. extrude (and auto) flatten to a dark slab; the CD circles gone.",
+      "researchedFix": "Front-face decal/texture of the Clean SVG so the concentric circles render on the extruded face; createShapes to keep the ring subpaths.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html ; https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "150 beltMini",
+      "variant": "inflate (q35 & q315)",
+      "divergence": "garbled",
+      "note": "auto/extrude/solid keep the filled buckle bar + center plate. inflate hollows the buckle into outlined rings/oval and renders the straps as thin tubes — filled body becomes hollow loops.",
+      "researchedFix": "Poisson inflation on the FILLED buckle region (not the stroke outline) so it stays solid; add min-thickness for the strap segments.",
+      "citation": "https://medium.com/@harry7557558/img23d-web-based-tool-that-turns-2d-images-into-3d-models-15c0d7382a08 ; https://patents.justia.com/patent/8334868"
+    },
+    {
+      "object": "154 wrestlingBoot",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the lace eyelets + lacing lines. extrude (and auto) render a dark boot mass; laces + eyelets gone — multi-feature lacing buried.",
+      "researchedFix": "createShapes to keep eyelet/lace subpaths + front-face decal/texture of the Clean SVG onto the extruded face.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "158 luggageTag",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the 3 horizontal text lines. extrude (and auto) bury them in a featureless dark tag.",
+      "researchedFix": "Front-face decal/texture of the Clean SVG so the text lines render on the extruded face.",
+      "citation": "https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "162 packingCubes",
+      "variant": "extrude (q35 & q315)",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid keep the zip seams + tab + ribbed lines. extrude (and auto) merge into dark panels; zip ribs + tab gone — multi-feature buried.",
+      "researchedFix": "createShapes to keep each cube + rib subpath; front-face decal/texture of the Clean SVG; optionally extrude each cube subpath separately so they read as discrete cubes.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/ ; https://threejs.org/docs/pages/DecalGeometry.html"
+    },
+    {
+      "object": "182 dominoTiles",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 identical issue)",
+      "divergence": "detail-lost",
+      "note": "CLEAN shows three domino bars with pip dots; rod/inflate/solid all keep the pips readable. auto and extrude render each tile as a flat dark slab with NO pips visible — the pip pattern that IS the domino identity is buried in the extruded mass.",
+      "researchedFix": "Parse interior subpaths with SVGLoader.createShapes(path) instead of path.toShapes() (toShapes drops SVG-specific subpath/hole logic), then render the pip subpaths as a front-face decal/texture or engraved extrude-cuts so interior marks survive extrusion.",
+      "citation": "https://muffinman.io/blog/three-js-extrude-svg-path/ ; https://help.autodesk.com/view/INVNTOR/2024/ENU/?guid=GUID-E6848555-B274-4858-8401-84E260771E84"
+    },
+    {
+      "object": "186 fidgetCube",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "blob",
+      "note": "CLEAN/rod/inflate show the fidget face's buttons, oval and circular controls; auto and extrude collapse the whole face to a featureless dark rounded square — all fidget controls lost.",
+      "researchedFix": "Use SVGLoader.createShapes() so the control cutouts (circles/ovals/rects) are kept as subpaths, then either subtract them as ExtrudeGeometry holes or composite them as a decal on the extruded front face.",
+      "citation": "https://github.com/mrdoob/three.js/issues/13653 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "194 glassBottleTopo",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/solid show the bottle's topo-wave label and label box (the 'Topo' feature in the name); auto and extrude give a featureless dark bottle silhouette with the label gone.",
+      "researchedFix": "Render the label/topo subpaths as a front-face decal/texture (or engraved extrude-cut) after parsing via SVGLoader.createShapes(); the label is interior line-art, not silhouette, so it must be layered onto the extruded face.",
+      "citation": "https://help.autodesk.com/view/INVNTOR/2024/ENU/?guid=GUID-E6848555-B274-4858-8401-84E260771E84 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "7 screenshotPrint",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "blob",
+      "note": "Strongest case. CLEAN/rod/inflate show full window UI — chrome dots, address bar, text lines, button. auto and extrude render a completely blank dark rectangle; a screenshot is ENTIRELY its interior content, so 100% of identity is lost.",
+      "researchedFix": "A screenshot's content is interior detail only; extrude the outer plate and apply the UI as a front-face image/decal texture rather than extruding silhouette alone (createShapes keeps the subpaths if vector route is kept).",
+      "citation": "https://en.wikipedia.org/wiki/Texture_mapping ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "11 stickerStack",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate show multiple offset layered edges (the 'stack'); auto and extrude collapse it to one single rounded slab — the layering that defines a stack is gone.",
+      "researchedFix": "Preserve the stacked offset outlines as separate extruded shapes (one ExtrudeGeometry per layer at stepped depth) via SVGLoader.createShapes() rather than merging into one outer silhouette.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/ExtrudeGeometry ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "23 cartShadowBox",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate/solid show the nested concentric rectangle (the shadow-box recessed frame); auto and extrude show a flat dark slab with the inner frame gone.",
+      "researchedFix": "Subtract the inner rectangle as an ExtrudeGeometry hole (recessed depth) so the shadow-box recess reads; detect the enclosed contour as a hole via createShapes (toShapes has a known hole-target bug for enclosed areas).",
+      "citation": "https://github.com/mrdoob/three.js/issues/13653 ; https://threejs.org/docs/#api/en/geometries/ExtrudeGeometry"
+    },
+    {
+      "object": "27 strategyGuide",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate/solid show spiral binding holes down the spine plus a cover label box; auto and extrude bury both into a flat dark slab.",
+      "researchedFix": "Keep binding-hole subpaths as ExtrudeGeometry holes and the cover label as a decal/engrave on the front face, parsed via SVGLoader.createShapes() to retain the multiple interior subpaths.",
+      "citation": "https://github.com/mrdoob/three.js/issues/20858 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "31 raceBib",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate/solid show the four safety-pin corner holes (the bib's defining marks); auto and extrude render a blank dark plate with the corner holes gone.",
+      "researchedFix": "Render the four corner holes as ExtrudeGeometry holes / punched cutouts via SVGLoader.createShapes() so they survive extrusion instead of being filled by the outer silhouette.",
+      "citation": "https://github.com/mrdoob/three.js/issues/907 ; https://en.wikipedia.org/wiki/Even%E2%80%93odd_rule"
+    },
+    {
+      "object": "35 agePodiumPlaque",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate/solid show an inner engraved plaque panel plus a stepped base; auto and extrude give a featureless dark trapezoid, losing the inner panel and base step.",
+      "researchedFix": "Engrave the inner panel as an extrude-cut (recessed front-face profile) and model the base as a separate extruded block; parse with createShapes() to keep the inner-panel subpath.",
+      "citation": "https://help.autodesk.com/view/INVNTOR/2024/ENU/?guid=GUID-E6848555-B274-4858-8401-84E260771E84 ; https://threejs.org/docs/#api/en/geometries/ExtrudeGeometry"
+    },
+    {
+      "object": "43 framedMoviePoster",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate/solid show the inner frame (concentric rectangle) plus a center poster mark; auto and extrude render a flat dark slab — the frame, the defining 'framed' feature, is gone.",
+      "researchedFix": "Render the frame as a recessed inner ExtrudeGeometry hole/border and the poster art as a front-face decal; createShapes() preserves the concentric inner contour that toShapes can mis-detect.",
+      "citation": "https://github.com/mrdoob/three.js/issues/13653 ; https://help.autodesk.com/view/INVNTOR/2024/ENU/?guid=GUID-E6848555-B274-4858-8401-84E260771E84"
+    },
+    {
+      "object": "51 walkmanMixtape",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate/solid show the cassette's two tape reels/spindles and label window; auto and extrude give a blank dark slab with reels and window gone.",
+      "researchedFix": "Keep the two reel circles and label window as ExtrudeGeometry holes / engraved subpaths via SVGLoader.createShapes(), or composite them as a front-face decal.",
+      "citation": "https://github.com/mrdoob/three.js/issues/907 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "55 sonyKeychain",
+      "variant": "extrude (extrude-q35 & extrude-q315; auto-q35/q315 same)",
+      "divergence": "blob",
+      "note": "Two-part failure. CLEAN/rod/inflate/solid show the keyring as an OPEN loop (hole through center) plus a fob with rivet detail. auto and extrude fill the ring's center solid (ring becomes a solid disk) and reduce the fob to a featureless blob — the open loop is the keychain's whole point.",
+      "researchedFix": "The ring's center is a hole whose winding/fill-rule isn't detected so it fills solid; use SVGLoader.createShapes() with correct even-odd/nonzero fill-rule + hole-target detection so the loop extrudes as an open ring (toShapes has a documented hole-detection bug for enclosed contours).",
+      "citation": "https://github.com/mrdoob/three.js/issues/13653 ; https://oreillymedia.github.io/Using_SVG/extras/ch06-fill-rule.html ; https://en.wikipedia.org/wiki/Even%E2%80%93odd_rule"
+    },
+    {
+      "object": "67 mochilaWayuu",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "CLEAN/rod/inflate/solid all show the woven horizontal chevron bands of the bag. extrude (both angles) collapses the whole silhouette into a featureless dark mass — the entire weave pattern vanishes. auto routes to this same dark-fill render so it loses the weave too. rod, inflate and solid faithfully preserve the woven detail.",
+      "researchedFix": "Two established three.js remedies: (1) drive extrusion from SVGLoader.createShapes(path) and extrude interior subpaths as separate engraved/embossed geometry so they survive — three.js forum 'SVG extrude without filling the path' + muffinman.io 'Three.js extrude SVG path'; (2) project the source SVG onto the front face as a texture with a custom UV / resetUVs attribute (ExtrudeGeometry default leaves interior detail off the flat face) — three.js forum 'Extrude geometry: apply texture to all faces of the mesh'.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "71 signedPhoto",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The framed portrait (person bust + frame border, clearly drawn in CLEAN/rod/inflate/solid) is completely buried in extrude — both angles render an unlit dark slab with no portrait or frame. auto picks the same dark render. rod and inflate show the portrait as outline; solid retains it as embossed detail.",
+      "researchedFix": "Same as 67: extrude interior subpaths via SVGLoader.createShapes() as engraved geometry, and/or texture-map the SVG onto the front face with custom UVs. Also verify the front face is lit — the 'dark slab' is the known MeshStandardMaterial-renders-black symptom, fixable by adding scene lighting or using MeshPhongMaterial.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://github.com/mrdoob/three.js/issues/17113"
+    },
+    {
+      "object": "75 luchaMask",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "blob",
+      "note": "The mask's eye holes, mouth and lacing (visible in rod as outline, in inflate/solid as embossed features) become a smooth featureless dark oval in extrude. No facial features survive. auto = same blob. rod/inflate/solid all read the face correctly.",
+      "researchedFix": "Extrude the eye/mouth subpaths as actual holes/engraving via SVGLoader.createShapes() (holes are lost when paths are flattened to a single filled shape), or texture the SVG onto the front face with custom UVs.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "79 travelPatch",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The shield emblem with mountain/peak motif inside (rod shows it as clean outline, inflate/solid as embossed) flattens to a plain dark shield blob in extrude. The interior mountain mark is gone. auto = same. rod/inflate/solid preserve the emblem.",
+      "researchedFix": "Same family of fixes: SVGLoader.createShapes() to keep interior emblem subpaths as engraved geometry, plus front-face SVG texture with custom UVs as a fallback for fine linework.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "83 fidgetCollectionTray",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "A tray packed with many distinct fidget items (buttons, dials, switches, sliders — richly drawn in CLEAN/rod/inflate/solid) becomes a single featureless dark rounded slab in extrude. This is the worst multi-feature loss on the sheet: a whole inventory of marks reduced to one mass. auto = same. rod/inflate/solid keep all the items.",
+      "researchedFix": "This is the canonical 'extrude/solid burying a multi-feature drawing' case. Preferred fix: front-face SVG texture-projection with custom UVs so the full drawing stays legible on the flat face (engraving every tiny subpath is impractical at this density); see three.js forum on applying texture/UVs to ExtrudeGeometry faces. Combine with SVGLoader.createShapes() for outline fidelity.",
+      "citation": "https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246 ; https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032"
+    },
+    {
+      "object": "87 sealedKickstarterFidget",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The blister/window panel with label text region and small buttons (clearly drawn in CLEAN/rod/inflate/solid) is buried in extrude — both angles render a plain dark card with no window or buttons. auto = same. rod/inflate/solid retain the packaging detail.",
+      "researchedFix": "Same: SVGLoader.createShapes() for interior subpaths and/or front-face SVG texture with custom UVs; ensure front face is lit (avoid the black-silhouette MeshStandardMaterial symptom).",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://github.com/mrdoob/three.js/issues/17113"
+    },
+    {
+      "object": "91 seltzerTshirt",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The shirt's neckline and fold/crease lines (visible in CLEAN/rod/inflate/solid) flatten into a plain dark panel in extrude. auto = same. rod/inflate/solid keep the creases.",
+      "researchedFix": "Same family: keep interior fold subpaths via SVGLoader.createShapes() as engraving, or texture-project the SVG onto the front face with custom UVs.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "107 mechKeyboard",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The full key grid (every keycap drawn in CLEAN/rod/inflate/solid) disappears into a smooth dark wedge in extrude. Both angles lose all keys. auto = same. rod/inflate/solid render the key matrix.",
+      "researchedFix": "High-density repeated detail — best preserved via front-face SVG texture-projection with custom UVs; SVGLoader.createShapes() keeps the outline true. See three.js ExtrudeGeometry UV/texture forum threads.",
+      "citation": "https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "111 vinyl",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The record's concentric groove rings + center label (crisp in rod, embossed in inflate/solid) become a smooth featureless dark disc in extrude. auto = same. rod/inflate/solid all show the grooves.",
+      "researchedFix": "Concentric subpaths are exactly what gets flattened when paths collapse to a single filled shape — use SVGLoader.createShapes() so the rings extrude as grooves, or texture-map the SVG onto the front face with custom UVs.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "123 snesController",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "D-pad cross, face buttons and start/select (all drawn in CLEAN/rod/inflate/solid) vanish into a smooth dark pill in extrude. auto = same. rod/inflate/solid retain the controls.",
+      "researchedFix": "Same: SVGLoader.createShapes() for button subpaths and/or front-face SVG texture-projection with custom UVs; confirm front face lit.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "127 vhs",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The two tape-reel windows and label band (clear in CLEAN/rod/inflate/solid) are buried into a plain dark slab in extrude. auto = same. rod/inflate/solid show the reels.",
+      "researchedFix": "Same: extrude reel-window subpaths via SVGLoader.createShapes() (windows are holes that get lost on flatten) and/or texture the SVG onto the front face with custom UVs.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "131 filmReel",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "blob",
+      "note": "The reel's spoke holes (drawn open in CLEAN/rod, embossed in inflate/solid) become a solid featureless dark disc in extrude — the holes are filled in. auto = same. rod/inflate/solid keep the holes.",
+      "researchedFix": "Classic lost-holes case: use SVGLoader.createShapes(path) (not path.toShapes) so hole subpaths are honored during extrusion; the forum explicitly notes interior holes/fill logic is missed otherwise.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "135 homeProjector",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The two film reels on top and the projector body openings (visible in CLEAN/rod/inflate/solid) flatten into a dark featureless block in extrude. auto = same. rod/inflate/solid render the reels and openings.",
+      "researchedFix": "Same: SVGLoader.createShapes() to preserve the reel subpaths/holes during extrusion, plus optional front-face SVG texture with custom UVs.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "139 cardBinder",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The 3x3 card-pocket grid (clear in CLEAN/rod/inflate/solid) disappears into a plain dark slab in extrude. auto = same. rod/inflate/solid keep the pocket grid.",
+      "researchedFix": "Repeated grid detail — best via front-face SVG texture-projection with custom UVs; SVGLoader.createShapes() for outline fidelity. See three.js ExtrudeGeometry texture/UV forum threads.",
+      "citation": "https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "143 walkman",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The face — two reel windows, button row, speaker lines (drawn in CLEAN/rod/inflate/solid) — flattens to a dark featureless card in extrude. auto = same. rod/inflate/solid retain the face controls.",
+      "researchedFix": "Same: SVGLoader.createShapes() for the windows/buttons subpaths and/or front-face SVG texture with custom UVs; verify front face is lit.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "147 ps1MemoryCard",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The label area, connector slot and small markings (visible in CLEAN/rod/inflate/solid) are buried into a plain dark block in extrude. auto = same. rod/inflate/solid retain the markings.",
+      "researchedFix": "Same: SVGLoader.createShapes() for interior subpaths and/or front-face SVG texture-projection with custom UVs.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://discourse.threejs.org/t/extrude-geometry-apply-texture-to-all-faces-of-the-mesh/48246"
+    },
+    {
+      "object": "167 cookingTool",
+      "variant": "extrude (q35 + q315); auto inherits same flat-fill render",
+      "divergence": "detail-lost",
+      "note": "The whisk-wire / open cage detail of the head (clear in CLEAN/rod as outline, embossed in inflate/solid) collapses into a solid dark wedge in extrude — the wires fill in to a featureless mass. auto = same. rod/inflate/solid keep the open wires.",
+      "researchedFix": "Open wire/cage subpaths are holes that get filled on flatten — use SVGLoader.createShapes() so the open regions extrude as gaps; texture-project as a fallback for the thin wires.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032 ; https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "171 medal",
+      "variant": "rod-q35 / rod-q315",
+      "divergence": "white-shaded",
+      "note": "Clean is a near-solid dark medal (dk 0.91): ribbon/loop + filled disc. Both rod tiles render the disc and ribbon as a thin white outline ring with an empty white interior — the filled, almost-fully-dark mass collapses into hollow wireframe. auto/extrude/solid render it correctly as a solid dark form, so the failure is rod-mode-specific. The rod geometry is being built from the path outline rather than the filled silhouette, dropping the fill.",
+      "researchedFix": "Drive the rod/skeleton geometry from the FILLED region's medial axis (grassfire/medial-axis transform of the filled area), not from the path stroke, so a dk~0.91 closed fill produces solid mass. Honor SVG fill-rule (nonzero/evenodd) when deciding what is interior before generating geometry. Cite: Carnegie Mellon Skeletonization (medial axis from filled discretized objects) and W3C SVG painting/fill-rule spec.",
+      "citation": "https://kilthub.cmu.edu/articles/journal_contribution/Skeletonization/6469319 ; https://www.w3.org/TR/SVG/painting.html"
+    },
+    {
+      "object": "179 mokaPotGreca",
+      "variant": "rod-q35 / rod-q315",
+      "divergence": "white-shaded",
+      "note": "Clean is an almost fully solid dark moka-pot silhouette (dk 0.93). Both rod tiles render only a sparse white wireframe of the octagonal body/handle/spout with an empty white interior. The high-darkness filled mass is dropped to a hollow outline. auto/extrude/solid render the solid dark pot correctly; rod is the outlier.",
+      "researchedFix": "Same root cause as the other rows: build rod geometry from the filled-region medial axis (Teddy-style inflation of the closed region so wide filled areas keep mass), not from edge tracing. Detect 'filled vs outline' by area fraction (dk near 1.0 = filled, inflate as solid) before choosing rod skeletonization. Cite: Teddy/silhouette inflation (USPTO 6549201) and CMU Skeletonization.",
+      "citation": "https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/6549201 ; https://kilthub.cmu.edu/articles/journal_contribution/Skeletonization/6469319"
+    },
+    {
+      "object": "183 maracasGuacharaca",
+      "variant": "rod-q35 / rod-q315",
+      "divergence": "white-shaded",
+      "note": "Clean is two solid dark maracas (bulb + handle), dk 0.86. Both rod tiles render the bulbs as empty white circles (a few interior dots) with thin-line handles — the solid dark fill becomes hollow white outline. auto/extrude/solid render solid dark maracas correctly.",
+      "researchedFix": "Same fix: rod skeleton from the filled silhouette's medial axis with fill preserved; a dk~0.86 closed bulb should inflate as a solid rod/ovoid, not be traced as a hollow ring. Cite: CMU Skeletonization (medial axis of filled object) and W3C SVG fill-rule.",
+      "citation": "https://kilthub.cmu.edu/articles/journal_contribution/Skeletonization/6469319 ; https://www.w3.org/TR/SVG/painting.html"
+    },
+    {
+      "object": "187 worryStone",
+      "variant": "rod-q35 / rod-q315",
+      "divergence": "white-shaded",
+      "note": "Clean is a tiny solid dark lens/pebble (dk 0.94). Both rod tiles render an empty white oval outline with a small interior swirl — the near-fully-dark filled stone becomes a hollow white outline. auto/extrude/solid render a solid dark lens correctly.",
+      "researchedFix": "Same fix: medial-axis rod from the filled region (grassfire transform) so a dk~0.94 closed fill yields solid mass; gate rod-vs-fill on darkness/area before geometry. Cite: CMU Skeletonization.",
+      "citation": "https://kilthub.cmu.edu/articles/journal_contribution/Skeletonization/6469319"
+    },
+    {
+      "object": "191 sodaStreamCarbonator",
+      "variant": "rod-q35 / rod-q315",
+      "divergence": "white-shaded",
+      "note": "Clean is a tall, essentially fully solid dark bottle silhouette (dk 0.97). Both rod tiles render a thin white bottle outline with a small 'o' cap detail and an empty white body — the densest-fill object on the sheet collapses to hollow wireframe. auto/extrude/solid render the solid dark bottle correctly.",
+      "researchedFix": "Same fix: build rod geometry from the filled silhouette's medial axis; at dk 0.97 the region is unambiguously a solid fill and must inflate with mass, never be traced as an outline. Add an area/darkness gate so very high-coverage shapes skip stroke-tracing entirely. Cite: Teddy/silhouette inflation (USPTO 6549201).",
+      "citation": "https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/6549201"
+    },
+    {
+      "object": "195 glassWithBubbles",
+      "variant": "rod-q35 / rod-q315",
+      "divergence": "white-shaded",
+      "note": "Clean is a solid dark tumbler silhouette (dk 0.94). Both rod tiles render an empty white glass outline with the bubble circles visible inside — the solid dark fill is dropped to hollow outline. auto/extrude/solid render the solid dark glass correctly (bubbles buried, consistent with the dk 0.94 Clean).",
+      "researchedFix": "Same fix: rod from filled-region medial axis with fill preserved; the dk~0.94 closed glass body should inflate as solid mass. Cite: CMU Skeletonization and W3C SVG fill-rule.",
+      "citation": "https://kilthub.cmu.edu/articles/journal_contribution/Skeletonization/6469319 ; https://www.w3.org/TR/SVG/painting.html"
+    }
+  ]
+}
