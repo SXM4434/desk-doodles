@@ -21,6 +21,11 @@
 | P10 | **Capture KEY SCENES (Claude records via playwright)** — the lockstep-slider wedge (Grand/Runner-Up linchpin, built-not-filmed), draw→Sketch\|Style flip, 2D→3D flip + orbit, region-fill, shading, live social desk. Clean local recordings cut to the video beats → Sebs assembles in Figma/Weave | canvas3d + draw panel HOT (would film a mid-edit state) | relaunch fleet `wf_633c5c80` lands (capture locally; re-capture on published Make URL if it differs) | **HIGH** |
 | P9 | **Figma Agent reintegration** — Agent CONFIRMED (Sebs has beta); thread it back as the 5th suite tool across narrative docs (the-story · social-post-draft · demo-video-plan · README · makeathon-rules-VERBATIM framing) + ensure we actually USE Agent on a real asset (Community file / intro graphic / video) so the claim is true | housekeeping/story fleets editing docs | housekeeping fleet `wf_d63505a1` lands | HIGH |
 
+| P11 | **Conversion/shading FIDELITY audit + fix** — Sebs flagged (2026-06-13) that clean→hand-drawn conversion + "regions that should shade aren't shading" had issues all day. Definitively catalog EVERY shape×style that converts/shades WRONG, classify each as real-engine-BUG vs by-design vs not-built-input-tool, FIX the bugs (don't let them hide under "shading system not done"). Already-fixed today: wash flood, outline-only blank posters, riso flood — confirm + go beyond | SvgStyleTransform.tsx HOT (render-bug fix `w7dt2ducr` in flight) | render-bug-fix fleet lands | **HIGH** |
+
+## Git hygiene (do before any push, when fleets quiet)
+- **Consolidate branch:** all session work is linear on `og-image-baseline` (a stray branch from the og-image rock); `main` is stuck at f6bf608. FF it: `git checkout main && git merge --ff-only og-image-baseline && git branch -d og-image-baseline`. Nothing lost (linear). DO NOT switch branches while agents are committing.
+
 ## Sebs-gated (NOT auto-fire — his call, surface in main chat)
 - Identity / 06-16 design+motion pass (design decision).
 - First-visit intro animation (his Weave creative direction — don't auto-build a React version that clashes).
