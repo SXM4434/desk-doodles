@@ -26,8 +26,37 @@ import {
   WORLD_SCALE,
   SOLID_INK_RADIUS,
   REGION_EXTRACTOR_VERSION,
+  type StrokeInputPoint,
 } from '../../lib/geometry3d/strokeTo3d';
 import { pushShadeFillEntry, type ShadeFillGesture } from '../../lib/shadeFillLog';
+import {
+  fitStroke,
+  applyCandidate as applyShapeCandidate,
+  type ShapeCandidate,
+  type ShapeFitResult,
+  type SnapAction,
+} from '../../lib/draw/shapeFit';
+
+// ─── Shape Assist API (Rock F3) ──────────────────────────────────────────────
+// SEBS'S LAW: freehand is the DEFAULT. Snap/Straighten are ACTION VERBS the
+// host's chrome pills invoke on the LAST stroke ON DEMAND — never on pen-up,
+// never auto. DrawSurface owns `strokes`, so it owns the apply; the host owns
+// the chip (rendered by the pills, per the toggles-in-chrome rule). This API
+// is the seam: the host fits + applies + cycles through it, never reaching into
+// stroke state directly. `originalPoints` lets the host restore the drawn
+// stroke (chip → Original) without DrawSurface keeping per-stroke undo memory.
+export interface ShapeSnapApi {
+  /** The last committed stroke's id + raw points, or null when none exists.
+   *  Snap/Straighten target THIS (spec §3). */
+  lastStroke: () => { id: string; points: StrokePoint[] } | null;
+  /** Fit the last stroke under the given action — pure, no mutation. The host
+   *  decides whether to apply (accept) or surface a refusal note. */
+  fitLast: (action: SnapAction) => { strokeId: string; result: ShapeFitResult } | null;
+  /** Replace a stroke's points with a candidate's clean geometry (Apply /
+   *  chip cycle). Pass the chip's remembered ORIGINAL points for the candidate
+   *  kind 'original' (restore). Stays a stroke — same id, renders in the pen. */
+  applyToStroke: (strokeId: string, candidate: ShapeCandidate, originalPoints: StrokePoint[]) => void;
+}
 
 // ─── DrawSurface — pointer-event freehand capture + SvgStyleTransform render ──
 // Extracted 2026-06-11 from DeskDoodlesCanvas.tsx (mechanical move, zero
@@ -695,6 +724,7 @@ export function DrawSurface({
   onToneFillsChange,
   onGapChange,
   onFillNote,
+  onSnapApi,
 }: {
   mode: CanvasMode;
   input: InputMode;
@@ -759,6 +789,12 @@ export function DrawSurface({
    *  (stable callback, fired from an effect). The host stages
    *  render_config.toneFills from this at Done. */
   onToneFillsChange?: (toneFills: ToneFill[]) => void;
+  /** SHAPE ASSIST (Rock F3): hand the host an imperative API for the SNAP /
+   *  STRAIGHTEN action pills (which live in the host's chrome, not the
+   *  canvas). Fired once with a stable api object (the onStrokesChange idiom)
+   *  so the host can fit/apply/cycle the last stroke on demand. /canvas leaves
+   *  this unset — zero behavior change, freehand stays the only path. */
+  onSnapApi?: (api: ShapeSnapApi) => void;
 }) {
   // PREVIEW strokes — gestures the user has finished pen-up on but hasn't
   // committed yet. While in this state they render as raw perfect-freehand
@@ -1002,6 +1038,43 @@ export function DrawSurface({
   useEffect(() => {
     onToneFillsChange?.(toneFills);
   }, [toneFills, onToneFillsChange]);
+
+  // ── SHAPE ASSIST API (Rock F3) ──────────────────────────────────────────────
+  // Latest strokes via ref so the API closure (installed once) never goes
+  // stale. Snap/Straighten are EXPLICIT acts the host's pills invoke on the
+  // last stroke — never on pen-up. fitLast is PURE (no mutation); applyToStroke
+  // does the points-replace (stays a stroke, same id, renders in the pen).
+  const strokesRef = useRef<Stroke[]>(strokes);
+  strokesRef.current = strokes;
+  const snapApiRef = useRef<ShapeSnapApi | null>(null);
+  if (snapApiRef.current === null) {
+    snapApiRef.current = {
+      lastStroke: () => {
+        const pool = strokesRef.current;
+        if (pool.length === 0) return null;
+        const last = pool[pool.length - 1];
+        return { id: last.id, points: last.points };
+      },
+      fitLast: (action) => {
+        const pool = strokesRef.current;
+        if (pool.length === 0) return null;
+        const last = pool[pool.length - 1];
+        if (last.points.length < 2) return null;
+        const result = fitStroke(last.points as StrokeInputPoint[], action);
+        return { strokeId: last.id, result };
+      },
+      applyToStroke: (strokeId, candidate, originalPoints) => {
+        const next =
+          candidate.kind === 'original'
+            ? originalPoints
+            : (applyShapeCandidate(candidate, originalPoints as StrokeInputPoint[]) as StrokePoint[]);
+        setStrokes((prev) => prev.map((s) => (s.id === strokeId ? { ...s, points: next } : s)));
+      },
+    };
+  }
+  useEffect(() => {
+    if (snapApiRef.current) onSnapApi?.(snapApiRef.current);
+  }, [onSnapApi]);
 
   function handleFilePick() {
     fileInputRef.current?.click();

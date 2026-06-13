@@ -16,7 +16,10 @@ import {
   type BackdropFrame,
   type Stroke,
   type StrokePoint,
+  type ShapeSnapApi,
 } from './DrawSurface';
+import { type ShapeCandidate, type ShapeFitResult, type SnapAction } from '../../lib/draw/shapeFit';
+import { pushShapeSnapEntry, type ShapeSnapOutcome } from '../../lib/shapeSnapLog';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
 import { prepareSvgUpload } from '../../lib/svgUpload';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
@@ -151,6 +154,54 @@ function SmartPickChip({
         undo
       </button>
     </div>
+  );
+}
+
+// ─── SnapChip — the shape-assist receipt (Rock F3) ───────────────────────────
+// "Circle ▸" — tap to cycle the ranked candidates (incl. Original). Same chip
+// grammar as SmartPickChip (accent dot = a system act; no accent-ink bg per
+// system rules; fully rounded pill). Lives by the SNAP/STRAIGHTEN pills.
+function SnapChip({
+  label,
+  hasAlternatives,
+  onCycle,
+}: {
+  label: string;
+  hasAlternatives: boolean;
+  onCycle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-snap-chip
+      onClick={onCycle}
+      disabled={!hasAlternatives}
+      title={hasAlternatives ? 'Tap to try another shape' : 'Only one reading — nothing to cycle'}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        borderRadius: 999,
+        border: '1px solid var(--dir-border)',
+        background: 'var(--dir-bg)',
+        padding: '6px 12px',
+        minWidth: 0,
+        flexShrink: 0,
+        cursor: hasAlternatives ? 'pointer' : 'default',
+        fontFamily: IS,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)', flexShrink: 0 }}
+      />
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--dir-text-primary)' }}>{label}</span>
+      {hasAlternatives && (
+        <span aria-hidden="true" style={{ fontSize: 11, color: 'var(--dir-text-secondary)' }}>
+          ▸
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -314,6 +365,157 @@ export function DrawPanel({
     },
     [],
   );
+
+  // ── SHAPE ASSIST (Rock F3) ──────────────────────────────────────────────────
+  // SEBS'S LAW: freehand is the DEFAULT. SNAP / STRAIGHTEN are action VERBS on
+  // the LAST stroke when tapped — no mode, no auto-fire, no suggestion on
+  // unprompted strokes. A user who never taps the pills never sees the feature.
+  // DrawSurface owns the strokes + the apply; this panel owns the pills + the
+  // chip (rendered by the pills, the SmartPickChip slot). The chip cycles the
+  // ranked candidates INCLUDING 'original' (Sebs's drew-a-triangle-but-wants-
+  // something-else case is first-class).
+  const snapApiRef = useRef<ShapeSnapApi | null>(null);
+  const handleSnapApi = useCallback((api: ShapeSnapApi) => {
+    snapApiRef.current = api;
+  }, []);
+  // The live snap chip: which stroke it targets, the ranked candidate list,
+  // the cycle index, and the remembered ORIGINAL points (so 'original'
+  // restores the drawn stroke without DrawSurface holding undo memory).
+  const [snapChip, setSnapChip] = useState<{
+    strokeId: string;
+    action: SnapAction;
+    candidates: ShapeCandidate[];
+    index: number;
+    originalPoints: StrokePoint[];
+    margin: number;
+  } | null>(null);
+
+  /** Log one shape-snap act into the unified decision log (training flywheel,
+   *  spec §2.5/§8). */
+  const logSnap = useCallback(
+    (
+      action: SnapAction,
+      outcome: ShapeSnapOutcome,
+      strokeId: string,
+      result: ShapeFitResult,
+      chosen: ShapeCandidate['kind'],
+      margin: number,
+    ) => {
+      pushShapeSnapEntry({
+        entryType: 'shape-snap',
+        surface: 'shape-snap',
+        action,
+        outcome,
+        strokeId,
+        accepted: result.accepted,
+        refusedReason: result.refusedReason,
+        candidates: result.candidates.map((c) => ({
+          kind: c.kind,
+          normErr: c.normErr,
+          score: c.score,
+        })),
+        chosen,
+        margin,
+      });
+    },
+    [],
+  );
+
+  /** Tap SNAP or STRAIGHTEN: fit the last stroke, apply the best candidate
+   *  (or refuse honestly), raise the chip. Refusal honesty: below threshold →
+   *  stroke UNTOUCHED, honest caption, full candidate table still logged. */
+  const runSnap = useCallback(
+    (action: SnapAction) => {
+      const api = snapApiRef.current;
+      if (!api) return;
+      const last = api.lastStroke();
+      if (!last) {
+        showFillNote('nothing to snap — draw a stroke first');
+        return;
+      }
+      const fit = api.fitLast(action);
+      if (!fit) {
+        showFillNote('that stroke is too small to snap');
+        return;
+      }
+      const { strokeId, result } = fit;
+      // Score margin between the top two real candidates (ambiguity signal).
+      const real = result.candidates.filter((c) => c.kind !== 'original');
+      const margin = real.length >= 2 ? real[0].score - real[1].score : real.length === 1 ? 1 : 0;
+      if (!result.accepted) {
+        // Honest no-snap — stroke untouched, full candidate table logged.
+        logSnap(action, 'evaluate', strokeId, result, 'original', 0);
+        showFillNote(
+          action === 'snap'
+            ? "didn't read as one clean shape — try Straighten"
+            : "couldn't straighten that — it reads as a scribble",
+        );
+        return;
+      }
+      // Apply the best candidate (index 0 of the chip set). Stays a stroke.
+      const best = result.candidates[0];
+      api.applyToStroke(strokeId, best, last.points);
+      logSnap(action, 'evaluate', strokeId, result, best.kind, margin);
+      setSnapChip({
+        strokeId,
+        action,
+        candidates: result.candidates,
+        index: 0,
+        originalPoints: last.points,
+        margin,
+      });
+    },
+    [logSnap, showFillNote],
+  );
+
+  /** Chip tap: cycle to the next ranked candidate (incl. 'original'), apply it
+   *  live, log the cycle/revert. */
+  const cycleSnapChip = useCallback(() => {
+    setSnapChip((chip) => {
+      if (!chip) return chip;
+      const api = snapApiRef.current;
+      if (!api) return chip;
+      const nextIndex = (chip.index + 1) % chip.candidates.length;
+      const cand = chip.candidates[nextIndex];
+      api.applyToStroke(chip.strokeId, cand, chip.originalPoints);
+      pushShapeSnapEntry({
+        entryType: 'shape-snap',
+        surface: 'shape-snap',
+        action: chip.action,
+        outcome: cand.kind === 'original' ? 'revert' : 'cycle',
+        strokeId: chip.strokeId,
+        accepted: true,
+        refusedReason: null,
+        candidates: chip.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
+        chosen: cand.kind,
+        margin: chip.margin,
+      });
+      return { ...chip, index: nextIndex };
+    });
+  }, []);
+
+  /** Dismiss the chip (keep the standing choice). Logged as 'keep'. Called on
+   *  next stroke / register flip / Sketch↔Style / input switch / Done. */
+  const dismissSnapChip = useCallback(() => {
+    setSnapChip((chip) => {
+      if (!chip) return chip;
+      const cand = chip.candidates[chip.index];
+      pushShapeSnapEntry({
+        entryType: 'shape-snap',
+        surface: 'shape-snap',
+        action: chip.action,
+        outcome: 'keep',
+        strokeId: chip.strokeId,
+        accepted: true,
+        refusedReason: null,
+        candidates: chip.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
+        chosen: cand.kind,
+        margin: chip.margin,
+      });
+      return null;
+    });
+  }, []);
+
   // Gap scrub → slider sync (DrawSurface fires once per ladder step; the
   // scrubbed value persists in the shared tool state — spec D-RF3).
   const handleGapChange = useCallback((gap: number) => {
@@ -531,6 +733,20 @@ export function DrawPanel({
   // sketching, pen-up commits nothing. Style = sketching pauses, the drawing
   // renders styled and the pen controls restyle it live. Flip freely.
   const [composeMode, setComposeMode] = useState<'draw' | 'style'>('draw');
+
+  // SHAPE-ASSIST chip dismissal (spec §3): the chip's claim is about the prior
+  // stroke, so it dismisses when a NEW stroke arrives, the register/compose
+  // mode changes, or the input switches — the smart-pick chip's exact
+  // lifecycle. A key gates the effect so it fires only on genuine change.
+  const snapDismissKey = `${strokes.length}|${penRegister}|${composeMode}|${input}`;
+  const prevSnapDismissKey = useRef(snapDismissKey);
+  useEffect(() => {
+    if (prevSnapDismissKey.current !== snapDismissKey) {
+      prevSnapDismissKey.current = snapDismissKey;
+      dismissSnapChip();
+    }
+  }, [snapDismissKey, dismissSnapChip]);
+
   const [stageName, setStageName] = useState('');
   const [stageWhy, setStageWhy] = useState('');
   // SIZE-CAP HONESTY: set when Place measured the staged svg over the 64KB
@@ -575,6 +791,10 @@ export function DrawPanel({
   function handleDone() {
     setCapNote(null);
     setShrunk(false);
+    // The snapped geometry already rides `strokes` (snap REPLACES the points,
+    // stays a stroke) — strokesToObjectMarkup below picks it up with no extra
+    // wiring. Dismiss the chip (logs 'keep' — the standing choice is final).
+    dismissSnapChip();
     if (input === 'draw' && (strokes.length > 0 || tone.length > 0)) {
       // Tone patches ride the markup UNDER the ink (flat band-greys the
       // style pipeline converts to marks at band density) AND the staged
@@ -984,6 +1204,57 @@ export function DrawPanel({
                   {r === 'ink' ? 'Ink' : 'Shade'}
                 </button>
               ))}
+              {/* SHAPE ASSIST (Rock F3) — Snap + Straighten action pills. Ink
+                  register only (snap is ink-only: tone patches don't snap, the
+                  pills are honestly disabled under Shade per SA item 6).
+                  Disabled until ≥1 stroke exists. The chip cycles ranked
+                  candidates and rides in this same row by the pills. */}
+              {composeMode === 'draw' && (
+                <>
+                  <span
+                    aria-hidden
+                    style={{ width: 1, alignSelf: 'stretch', background: 'var(--dir-border)', flexShrink: 0 }}
+                  />
+                  {(['snap', 'straighten'] as const).map((act) => {
+                    const enabled = penRegister === 'ink' && strokes.length > 0;
+                    return (
+                      <button
+                        key={act}
+                        data-snap-pill={act}
+                        onClick={() => runSnap(act)}
+                        disabled={!enabled}
+                        title={
+                          penRegister === 'shade'
+                            ? 'Snap works on ink — flip to Ink'
+                            : strokes.length === 0
+                              ? 'Draw a stroke first'
+                              : act === 'snap'
+                                ? 'Snap the last stroke to a clean shape'
+                                : 'Crisp the last stroke’s edges (keeps your proportions)'
+                        }
+                        style={{
+                          ...PILL,
+                          padding: '6px 14px',
+                          flexShrink: 0,
+                          opacity: enabled ? 1 : 0.45,
+                          cursor: enabled ? 'pointer' : 'default',
+                          background: 'var(--dir-bg)',
+                          color: 'var(--dir-text-primary)',
+                        }}
+                      >
+                        {act === 'snap' ? 'Snap' : 'Straighten'}
+                      </button>
+                    );
+                  })}
+                  {snapChip && (
+                    <SnapChip
+                      label={snapChip.candidates[snapChip.index]?.label ?? 'Shape'}
+                      hasAlternatives={snapChip.candidates.length > 1}
+                      onCycle={cycleSnapChip}
+                    />
+                  )}
+                </>
+              )}
               <span
                 role={removeNote || fillNote ? 'status' : undefined}
                 title={captionText}
@@ -1079,6 +1350,7 @@ export function DrawPanel({
                 onToneFillsChange={setTone}
                 onGapChange={handleGapChange}
                 onFillNote={showFillNote}
+                onSnapApi={handleSnapApi}
               />
 
               {/* Upload picker — no file yet. */}
