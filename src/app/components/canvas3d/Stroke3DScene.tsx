@@ -68,6 +68,140 @@ import { createHatchMaterial, updateHatchUniforms, type HatchInputs } from './ha
 
 const WARM_PAPER_FALLBACK = '#FDFCF9'; // theme.css --dir-bg (light direction)
 
+// ── Studio environment palette (named register — ink-black policy) ─────────
+// The baked <Environment> is what clearcoat/envmap channels REFLECT, and
+// specular reflection bypasses albedo — so any hue here lands on the object
+// at full strength regardless of the ink-black base color. Values live in ONE
+// named table so the material battery (tools/3d/material-battery) asserts
+// against the exact rig the product ships.
+//
+// RATIFIED COLOR POLICY (3d-mode-controls-spec footer, Sebs 2026-06-12):
+// everything renders as the single warm-graphite ink; presets differ ONLY in
+// how light sits. Broad warm-TAN area bands are banned at every orbit angle
+// (round-7 verifier measured rgb(142,118,91) on a Glossy Extrude slab —
+// reproduced by the battery at rgb(146,122,96), Δr−b 50). Root cause: the
+// original port "warmed" this palette for the paper world — env bg #8a8174
+// (mid warm grey) + fill #ffd9b0 (Δr−b 79) re-entered through clearcoat/
+// envmap ×1.8 as the tan flood. Same violation family as the sheenColor
+// flood; same cure: re-register the hue-carrying channel to warm graphite.
+//
+// PROVENANCE: the Free Stroke calibration ancestor (origin/main
+// viewport-3d.tsx, read via git show 2026-06-12) ran these EXACT material
+// params against a NEAR-BLACK env bg (#15171a) + #ffffff key — dark bg is
+// what the presets were tuned for (feedback_copy_implementation_before_
+// tweaking_numbers). Panels keep their positions/intensities so clearcoat
+// still has something to reflect (the Day-11 flat-black-blob bug was NO env;
+// killing the panels would regress it).
+export const STUDIO_ENV = {
+  /** Environment background — fills every direction the panels don't; it is
+   *  what tilted glossy faces mirror BROADLY. Warm-axis sibling of the FS
+   *  ancestor's #15171a, inside the D2-E ink family (#121110–#383632): broad
+   *  reflections read as dark warm graphite, never tan. */
+  bg: '#211e1a',
+  /** Big soft key panel (top-front) → broad clearcoat highlight. Whisper-warm
+   *  white (Δr−b 15 < the 25 warmth bound even at full mirror). */
+  key: { color: '#fffaf0', intensity: 3 },
+  /** Cool rim panel (back-left) → separates the form's dark side. */
+  rim: { color: '#bcd0e8', intensity: 1.6 },
+  /** Low fill (front-low) → soft underside glow for sheen. Was FS's #ffd9b0
+   *  (Δr−b 79 — safe on FS tubes against a near-black bg, but our FLAT slab
+   *  faces mirror it broadly at down-tilted angles) → de-saturated to the
+   *  whisper-warm register (Δr−b 20): warmth direction kept, tan killed. */
+  fill: { color: '#e8e0d4', intensity: 1.1 },
+  /** Tight bright streak → crisp specular accent on curvature. */
+  streak: { color: '#ffffff', intensity: 4 },
+} as const;
+
+/** The full studio rig (scene lights + baked Environment) — EXPORTED so the
+ *  material battery renders through the EXACT product rig (the tier-2 board
+ *  harness omitted the Environment bake, which is precisely the gap that let
+ *  the env-reflection tan band ship unseen). */
+export function StudioRig() {
+  return (
+    <>
+      {/* Studio rig — Free Stroke key+fill+rim structure (positions verbatim
+          from viewport-3d.tsx), re-balanced for white paper: hemisphere light
+          stands in for paper bounce (sky-warm above, paper-bounce below) and
+          the ambient floor drops so form shading keeps its gradient range.
+          The hatch/svg-port ShaderMaterial computes its own lambert from the
+          same key/fill directions — the rig stays for Native + shadows. */}
+      <ambientLight intensity={0.25} />
+      <hemisphereLight args={['#fff7e8', '#cdbfa6', 0.55]} />
+      <directionalLight position={[5, 8, 5]} intensity={1.45} color="#fff3e0" />
+      <directionalLight position={[-4, 2, -2]} intensity={0.5} color="#e3eaf2" />
+      <directionalLight position={[0, -3, -5]} intensity={0.3} />
+      {/* Soft near point light (white-paper adaptation): directionals shade a
+          FLAT camera-facing extrude face perfectly uniformly (constant N·L) —
+          a nearby point light varies with position, so flat faces get a real
+          brightness gradient instead of the blob read. decay 2 physical. */}
+      <pointLight position={[4, 5, 6.5]} intensity={75} decay={2} color="#fff6e6" />
+      {/* Offline studio environment (no HDR fetch) — ported from Free Stroke:
+          clearcoat/sheen need something to reflect or the physical material
+          collapses to flat diffuse. resolution 256, frames={1} bakes it ONCE
+          (static, deterministic, no per-frame cost). Palette = STUDIO_ENV. */}
+      <Environment resolution={256} frames={1} background={false}>
+        <color attach="background" args={[STUDIO_ENV.bg]} />
+        <Lightformer
+          form="rect"
+          intensity={STUDIO_ENV.key.intensity}
+          color={STUDIO_ENV.key.color}
+          position={[2.5, 4, 3]}
+          rotation={[-Math.PI / 3, 0, 0]}
+          scale={[8, 6, 1]}
+        />
+        <Lightformer
+          form="rect"
+          intensity={STUDIO_ENV.rim.intensity}
+          color={STUDIO_ENV.rim.color}
+          position={[-4, 1.5, -3]}
+          rotation={[0, Math.PI / 2.2, 0]}
+          scale={[5, 4, 1]}
+        />
+        <Lightformer
+          form="rect"
+          intensity={STUDIO_ENV.fill.intensity}
+          color={STUDIO_ENV.fill.color}
+          position={[1, -2.5, 2]}
+          rotation={[Math.PI / 2.5, 0, 0]}
+          scale={[6, 3, 1]}
+        />
+        <Lightformer
+          form="rect"
+          intensity={STUDIO_ENV.streak.intensity}
+          color={STUDIO_ENV.streak.color}
+          position={[-1.5, 3, 2.5]}
+          rotation={[-Math.PI / 4, 0, 0]}
+          scale={[0.6, 5, 1]}
+        />
+      </Environment>
+    </>
+  );
+}
+
+/** Native preset → MeshPhysicalMaterial — EXPORTED factory so the material
+ *  battery instantiates the EXACT product material (no harness re-typing of
+ *  the param table). `inkColor` = the legacy explicit override prop. */
+export function createNativeMaterial(
+  preset: MaterialPresetId,
+  inkColor?: string,
+): THREE.MeshPhysicalMaterial {
+  const p = MATERIAL_PARAMS_3D[preset];
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(inkColor ?? p.color),
+    roughness: p.roughness,
+    metalness: p.metalness,
+    clearcoat: p.clearcoat,
+    clearcoatRoughness: p.clearcoatRoughness,
+    reflectivity: p.reflectivity,
+    sheen: p.sheen,
+    sheenRoughness: p.sheenRoughness,
+    sheenColor: new THREE.Color(p.sheenColor),
+    emissive: new THREE.Color(p.emissive),
+    emissiveIntensity: p.emissiveIntensity,
+    envMapIntensity: p.envMapIntensity,
+  });
+}
+
 // ── Studio rig — PORTED from Free Stroke ───────────────────────────────────
 // PROVENANCE: free-stroke origin/main components/viewport-3d.tsx (ambient/key/
 // fill/rim + baked <Environment> with four Lightformer panels), read via
@@ -580,23 +714,7 @@ export function Stroke3DScene({
 
   // ── Native: FS preset MeshPhysicalMaterial (materials3d.ts, verbatim) ──
   const preset: MaterialPresetId = materialPreset ?? MODE_MATERIAL_DEFAULTS_3D[geometryMode];
-  const nativeMaterial = useMemo(() => {
-    const p = MATERIAL_PARAMS_3D[preset];
-    return new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color(inkColor ?? p.color),
-      roughness: p.roughness,
-      metalness: p.metalness,
-      clearcoat: p.clearcoat,
-      clearcoatRoughness: p.clearcoatRoughness,
-      reflectivity: p.reflectivity,
-      sheen: p.sheen,
-      sheenRoughness: p.sheenRoughness,
-      sheenColor: new THREE.Color(p.sheenColor),
-      emissive: new THREE.Color(p.emissive),
-      emissiveIntensity: p.emissiveIntensity,
-      envMapIntensity: p.envMapIntensity,
-    });
-  }, [preset, inkColor]);
+  const nativeMaterial = useMemo(() => createNativeMaterial(preset, inkColor), [preset, inkColor]);
   useEffect(() => {
     return () => nativeMaterial.dispose();
   }, [nativeMaterial]);
@@ -627,66 +745,7 @@ export function Stroke3DScene({
       style={{ width: '100%', height: '100%' }}
     >
       <color attach="background" args={[bg]} />
-      {/* Studio rig — Free Stroke key+fill+rim structure (positions verbatim
-          from viewport-3d.tsx), re-balanced for white paper: hemisphere light
-          stands in for paper bounce (sky-warm above, paper-bounce below) and
-          the ambient floor drops so form shading keeps its gradient range.
-          The hatch/svg-port ShaderMaterial computes its own lambert from the
-          same key/fill directions — the rig stays for Native + shadows. */}
-      <ambientLight intensity={0.25} />
-      <hemisphereLight args={['#fff7e8', '#cdbfa6', 0.55]} />
-      <directionalLight position={[5, 8, 5]} intensity={1.45} color="#fff3e0" />
-      <directionalLight position={[-4, 2, -2]} intensity={0.5} color="#e3eaf2" />
-      <directionalLight position={[0, -3, -5]} intensity={0.3} />
-      {/* Soft near point light (white-paper adaptation): directionals shade a
-          FLAT camera-facing extrude face perfectly uniformly (constant N·L) —
-          a nearby point light varies with position, so flat faces get a real
-          brightness gradient instead of the blob read. decay 2 physical. */}
-      <pointLight position={[4, 5, 6.5]} intensity={75} decay={2} color="#fff6e6" />
-      {/* Offline studio environment (no HDR fetch) — ported from Free Stroke:
-          clearcoat/sheen need something to reflect or the physical material
-          collapses to flat diffuse. resolution 256, frames={1} bakes it ONCE
-          (static, deterministic, no per-frame cost). Panels warmed to match
-          the paper-world palette. */}
-      <Environment resolution={256} frames={1} background={false}>
-        <color attach="background" args={['#8a8174']} />
-        {/* Big soft key panel (top-front) → broad clearcoat highlight */}
-        <Lightformer
-          form="rect"
-          intensity={3}
-          color="#fffaf0"
-          position={[2.5, 4, 3]}
-          rotation={[-Math.PI / 3, 0, 0]}
-          scale={[8, 6, 1]}
-        />
-        {/* Cool rim panel (back-left) → separates the form's dark side */}
-        <Lightformer
-          form="rect"
-          intensity={1.6}
-          color="#bcd0e8"
-          position={[-4, 1.5, -3]}
-          rotation={[0, Math.PI / 2.2, 0]}
-          scale={[5, 4, 1]}
-        />
-        {/* Warm low fill (front-low) → soft underside glow for sheen */}
-        <Lightformer
-          form="rect"
-          intensity={1.1}
-          color="#ffd9b0"
-          position={[1, -2.5, 2]}
-          rotation={[Math.PI / 2.5, 0, 0]}
-          scale={[6, 3, 1]}
-        />
-        {/* Tight bright streak → crisp specular accent on curvature */}
-        <Lightformer
-          form="rect"
-          intensity={4}
-          color="#ffffff"
-          position={[-1.5, 3, 2.5]}
-          rotation={[-Math.PI / 4, 0, 0]}
-          scale={[0.6, 5, 1]}
-        />
-      </Environment>
+      <StudioRig />
       {hatchMaterial && (
         <HatchUniformSync
           material={hatchMaterial}
