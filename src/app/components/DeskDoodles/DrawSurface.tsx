@@ -459,6 +459,65 @@ export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegi
   }));
 }
 
+/** Ink CENTERLINE polylines (raw stroke points, viewBox px) of the strokes
+ *  whose bbox plausibly BORDERS a fill region — the clean-edge conform input.
+ *
+ *  The fill is grown up to the centerline (the raw gesture path the ink is
+ *  drawn ON, half the ink width inside the visible OUTER edge): tone-at-
+ *  centerline is always covered by the ink-on-top (NO white sliver) and always
+ *  half-a-width inside the outer edge (NO bleed past the outline), and the
+ *  centerline carries the drawing's true sharp corners.
+ *
+ *  The region outline sits ~inkRadius·gap px INSIDE the ink centerline, so a
+ *  stroke borders the region if its bbox is within that inset of the region's
+ *  bbox. Pre-filtering by bbox (not feeding ALL strokes) keeps the rasterizer
+ *  window tight and prevents the fill from welding to unrelated far-away ink. */
+function strokeCenterlinesNear(
+  strokes: Stroke[],
+  regionOutline: [number, number][],
+  gapMult: number,
+): [number, number][][] {
+  if (regionOutline.length < 3) return [];
+  let rMinX = Infinity;
+  let rMinY = Infinity;
+  let rMaxX = -Infinity;
+  let rMaxY = -Infinity;
+  for (const [x, y] of regionOutline) {
+    if (x < rMinX) rMinX = x;
+    if (x > rMaxX) rMaxX = x;
+    if (y < rMinY) rMinY = y;
+    if (y > rMaxY) rMaxY = y;
+  }
+  // The gap inset (viewBox px) the boundary is pushed inward, + ink half-width
+  // + a couple of cells of slack so the bbox test never drops bordering ink.
+  const margin = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE + 6;
+  const lines: [number, number][][] = [];
+  for (const s of strokes) {
+    if (s.points.length < 2) continue;
+    let sMinX = Infinity;
+    let sMinY = Infinity;
+    let sMaxX = -Infinity;
+    let sMaxY = -Infinity;
+    for (const [x, y] of s.points) {
+      if (x < sMinX) sMinX = x;
+      if (x > sMaxX) sMaxX = x;
+      if (y < sMinY) sMinY = y;
+      if (y > sMaxY) sMaxY = y;
+    }
+    // bbox-overlap with the region bbox grown by the inset margin.
+    if (
+      sMaxX < rMinX - margin ||
+      sMinX > rMaxX + margin ||
+      sMaxY < rMinY - margin ||
+      sMinY > rMaxY + margin
+    ) {
+      continue;
+    }
+    lines.push(s.points.map(([x, y]) => [x, y] as [number, number]));
+  }
+  return lines;
+}
+
 /** Innermost PAPER region under a point — max containment depth wins, ties
  *  break to the smaller area (D-RF4: innermost wins; donut hole is a
  *  legitimate target). Returns the region index, or -1 (honest miss). */
@@ -1095,11 +1154,20 @@ export function DrawSurface({
     if (!grid) return;
     const r = regions[idx];
     const band = shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3;
+    // CLEAN EDGE (2026-06-13): hand the rasterizer the CENTERLINE polylines (raw
+    // gesture paths) of the ink that BORDERS this region (bbox-overlap
+    // pre-filter, + a generous margin = the gap inset so a far-inset boundary
+    // still reaches its ink). The fill grows up to those centerlines — tone at
+    // the centerline is covered by the ink-on-top (no white sliver) and sits
+    // half-a-width inside the outer edge (no bleed), with the drawing's true
+    // sharp corners. Independent of Gap (high Gap no longer rounds/insets it).
+    const inkCenterlines = strokeCenterlinesNear(strokes, r.outline, gapMult);
     rasterizeFillPatch(grid, r.outline, fillChildrenOf(regions, idx), band, 'fill', {
       gapTol: gapMult,
-      // Full-fill pushes the tone flush to (and under) the visible ink edge —
-      // no inset gap — so a closed shape reads as completely toned.
+      // Fallback only (no bordering ink): push the tone flush to (and under)
+      // the visible ink edge via dilation — no inset gap.
       dilatePx: fillDilatePx(gapMult, !!shadeRef.current?.fullFill),
+      inkCenterlines: inkCenterlines.length > 0 ? inkCenterlines : undefined,
     });
     setToneFills(extractToneFills(grid));
     lastMissRef.current = false;
@@ -1700,8 +1768,13 @@ export function DrawSurface({
           WYSIWYG gap SB-3: the styled pipeline reads the FULL band grey, so
           the raw preview must stop lying ~half a ladder light; exact value is
           a Sebs eyeball). Holes render via evenodd subpaths. Style mode skips
-          this layer — the patches ride the styled markup instead. */}
-      {!styled && toneFills.length > 0 && (
+          this layer — the patches ride the styled markup instead.
+          CLEAN-EDGE (2026-06-13): when the sketch layer (1b) is active it
+          RE-ASSERTS the tone over its paper halos (to kill the interior sliver),
+          so this base layer would double-paint and darken it — skip here in that
+          case (1b owns the tone then). This layer still carries the tone when
+          there are no strokes / after commit. */}
+      {!styled && toneFills.length > 0 && !(!committed && strokes.length > 0) && (
         <svg
           viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
           width="100%"
@@ -1826,33 +1899,69 @@ export function DrawSurface({
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
           aria-hidden
         >
-          {strokes.map((stroke) => {
-            const d = strokeToPolygonPath(stroke.points);
-            const isSelected = stroke.id === selectedStrokeId;
+          {/* CLEAN-EDGE z-order (2026-06-13): selection accents + paper halos
+              FIRST, then the tone fill RE-ASSERTED over them, then the ink
+              bodies LAST. The fill now tucks cleanly under the ink (the rasterizer
+              conforms it to the ink centerline), so painting it over the halo
+              removes the halo's interior paper SLIVER between fill and ink — the
+              bug Sebs flagged — while the halo still does its job under the ink
+              (and on bare-paper strokes, where there's no fill to re-assert).
+              The polygon d-string is computed ONCE per stroke (halo + ink share
+              it) — perfect-freehand isn't cheap. */}
+          {(() => {
+            const inkPaths = strokes.map((stroke) => ({
+              id: stroke.id,
+              d: strokeToPolygonPath(stroke.points),
+              selD: stroke.id === selectedStrokeId ? strokeToPolylinePath(stroke.points) : null,
+            }));
             return (
-              <g key={stroke.id}>
-                {/* SELECTION HIGHLIGHT (round-8): the tapped earlier stroke gets
-                    an accent halo so it's clear which one Snap/Straighten will
-                    target. Rendered as a wider accent stroke under the ink. */}
-                {isSelected && (
+              <>
+                {inkPaths.map((s) =>
+                  s.selD ? (
+                    <path
+                      key={`sel-${s.id}`}
+                      data-selected-stroke={s.id}
+                      d={s.selD}
+                      fill="none"
+                      stroke="var(--dir-accent)"
+                      strokeOpacity={0.5}
+                      strokeWidth={10}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : null,
+                )}
+                {inkPaths.map((s) => (
                   <path
-                    data-selected-stroke={stroke.id}
-                    d={strokeToPolylinePath(stroke.points)}
+                    key={`halo-${s.id}`}
+                    d={s.d}
                     fill="none"
-                    stroke="var(--dir-accent)"
-                    strokeOpacity={0.5}
-                    strokeWidth={10}
-                    strokeLinecap="round"
+                    stroke="var(--dir-bg)"
+                    strokeWidth={3}
                     strokeLinejoin="round"
                   />
-                )}
-                {/* Paper halo — only visible where ink overlaps dark tone; keeps
-                    the ink edge separated from a near-black band. */}
-                <path d={d} fill="none" stroke="var(--dir-bg)" strokeWidth={3} strokeLinejoin="round" />
-                <path d={d} fill="var(--dir-text-primary)" stroke="none" />
-              </g>
+                ))}
+                {/* Tone re-asserted over the halo (kills the interior sliver). */}
+                {sortedToneFills(toneFills).map((f) => {
+                  const hex = TONE_BAND_HEX[f.band];
+                  if (!hex || f.points.length < 3) return null;
+                  return (
+                    <path
+                      key={`tone-${f.id}`}
+                      d={tonePathD(f.points, f.holes)}
+                      fill={hex}
+                      fillRule="evenodd"
+                      stroke="none"
+                      opacity={0.9}
+                    />
+                  );
+                })}
+                {inkPaths.map((s) => (
+                  <path key={`ink-${s.id}`} d={s.d} fill="var(--dir-text-primary)" stroke="none" />
+                ))}
+              </>
             );
-          })}
+          })()}
         </svg>
       )}
       {/* Layer 2: live in-progress stroke / tone brush + pointer capture

@@ -280,22 +280,37 @@ export function rasterizeToneFills(grid: ToneMaskGrid, fills: ToneFill[]): void 
 // REPLACES its band (unconditional write — never average, never stack).
 // Band 0 = the Fill-mode eraser (lift the region back to paper).
 
-/** Rasterize one fill/lasso patch into the grid. `dilatePx` (Fill commits
- *  only) grows the patch outward so tone tucks under the VISIBLE ink edge:
- *  the extractor's enclosed-paper boundary sits inkRadius px inside the
- *  stroke centerline, but drawn ink is only ~3px wide — committing the raw
- *  outline would leave a paper ring between tone and line. Dilation by
- *  (inkRadius·gap − 1.5)px lands the tone edge at the visible ink edge; the
- *  overshoot is under ink (invisible) and bounded by the tolerance the user
- *  explicitly chose. Octagonal structuring element (alternating 8-/4-neighbor
- *  passes) — deterministic. */
+/** Rasterize one fill/lasso patch into the grid.
+ *
+ *  CLEAN-EDGE (2026-06-13, Sebs "fill must have a CLEAN EDGE — no sliver, no
+ *  bleed, clean corners; ink is drawn ON TOP of tone"): when `inkCenterlines`
+ *  (the raw gesture polylines of the bordering ink, SAME viewBox px as `points`)
+ *  are supplied, the fill is grown up to the ink CENTERLINE instead of blindly
+ *  dilated:
+ *    1. region mask = the extractor's enclosed-paper loop (sits inkRadius·gap
+ *       inside the centerline; sharp corners under crisp extraction);
+ *    2. wall        = the centerlines stamped as a WATERTIGHT capsule barrier
+ *       (the raw points are dense + connected, so the wall has no gaps and
+ *       carries the drawing's true corners);
+ *    3. interior    = cells the wall ENCLOSES (flood the window border through
+ *       non-wall cells; unreached cells are interior up to the centerline);
+ *    4. the patch   = (interior ∪ wall) 8-connected to the region seed.
+ *  The tone reaches the ink CENTERLINE — covered by the ink-on-top (NO white
+ *  sliver) and half-a-width inside the visible OUTER edge (NO bleed onto bare
+ *  paper), with CLEAN corners (the centerline defines them). Independent of the
+ *  Gap multiplier, so high Gap no longer rounds/insets the edge. The `dilatePx`
+ *  octagon path below is the FALLBACK (Lasso, or a fill with no bordering ink).
+ *
+ *  `dilatePx` (fallback only): grows the patch outward so tone tucks under the
+ *  visible ink edge via an octagonal structuring element (alternating
+ *  8-/4-neighbor passes) — deterministic. */
 export function rasterizeFillPatch(
   grid: ToneMaskGrid,
   points: [number, number][],
   holes: [number, number][][],
   band: number,
   src: 'fill' | 'lasso',
-  opts: { gapTol?: number; dilatePx?: number } = {},
+  opts: { gapTol?: number; dilatePx?: number; inkCenterlines?: [number, number][][] } = {},
 ): void {
   if (points.length < 3) return;
   const { bands, w, h } = grid;
@@ -303,8 +318,12 @@ export function rasterizeFillPatch(
   const gapQ =
     src === 'fill' && opts.gapTol ? Math.max(0, Math.min(255, Math.round(opts.gapTol * 4))) : 0;
   const dilate = Math.max(0, Math.round((opts.dilatePx ?? 0) / TONE_CELL_PX));
+  const inkLines =
+    opts.inkCenterlines && opts.inkCenterlines.length > 0 ? opts.inkCenterlines : null;
 
-  // Window bbox (cells) — patch bbox + dilation margin, clamped to the grid.
+  // Window bbox (cells) — patch bbox, grown to cover the bordering ink ribbon
+  // (conform mode) or the dilation margin (fallback). +2-cell ring so the
+  // ink-interior flood always has an empty border to start from.
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -315,10 +334,23 @@ export function rasterizeFillPatch(
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
   }
-  const c0 = Math.max(Math.floor(minX / TONE_CELL_PX) - dilate - 1, 0);
-  const c1 = Math.min(Math.ceil(maxX / TONE_CELL_PX) + dilate + 1, w - 1);
-  const r0 = Math.max(Math.floor(minY / TONE_CELL_PX) - dilate - 1, 0);
-  const r1 = Math.min(Math.ceil(maxY / TONE_CELL_PX) + dilate + 1, h - 1);
+  if (inkLines) {
+    for (const line of inkLines) {
+      for (const [x, y] of line) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  // Conform mode needs only a small ring margin (the centerline is already
+  // inside the grown bbox); the fallback path keeps the dilation margin.
+  const margin = inkLines ? 3 : dilate + 1;
+  const c0 = Math.max(Math.floor(minX / TONE_CELL_PX) - margin, 0);
+  const c1 = Math.min(Math.ceil(maxX / TONE_CELL_PX) + margin, w - 1);
+  const r0 = Math.max(Math.floor(minY / TONE_CELL_PX) - margin, 0);
+  const r1 = Math.min(Math.ceil(maxY / TONE_CELL_PX) + margin, h - 1);
   const bw = c1 - c0 + 1;
   const bh = r1 - r0 + 1;
   if (bw <= 0 || bh <= 0) return;
@@ -345,32 +377,241 @@ export function rasterizeFillPatch(
     }
   }
 
-  // 2 — dilate (alternating 8/4-neighbor ≈ octagonal ball), double-buffered.
-  let buf = new Uint8Array(bw * bh);
-  for (let pass = 0; pass < dilate; pass++) {
-    const eight = pass % 2 === 0;
-    buf.set(mask);
-    for (let r = 0; r < bh; r++) {
-      for (let c = 0; c < bw; c++) {
-        if (mask[r * bw + c]) continue;
-        const up = r > 0 && mask[(r - 1) * bw + c];
-        const dn = r < bh - 1 && mask[(r + 1) * bw + c];
-        const lf = c > 0 && mask[r * bw + c - 1];
-        const rt = c < bw - 1 && mask[r * bw + c + 1];
-        let on = up || dn || lf || rt;
-        if (!on && eight) {
-          on =
-            (r > 0 && c > 0 && mask[(r - 1) * bw + c - 1]) ||
-            (r > 0 && c < bw - 1 && mask[(r - 1) * bw + c + 1]) ||
-            (r < bh - 1 && c > 0 && mask[(r + 1) * bw + c - 1]) ||
-            (r < bh - 1 && c < bw - 1 && mask[(r + 1) * bw + c + 1]);
+  if (inkLines) {
+    // 2-conform — grow the fill up to the ink CENTERLINE (CLEAN EDGE).
+    //
+    // (a) stamp the bordering centerlines as TWO capsule masks:
+    //       · floodWall (radius 2 cells) — a WATERTIGHT barrier for the flood +
+    //         carve (a 1-cell wall can have diagonal gaps on curves that an
+    //         8-connected flood slips through — the donut-ring-eaten bug; 2
+    //         cells closes them for 4- AND 8-connected floods);
+    //       · fillWall  (radius 1 cell) — the tone's REACH: tone is grown to
+    //         here = the centerline ± ~1 cell, half-a-width inside the visible
+    //         OUTER edge. Both carry the drawing's true sharp corners (the raw
+    //         gesture points are dense + connected).
+    const floodWall = new Uint8Array(bw * bh);
+    const fillWall = new Uint8Array(bw * bh);
+    const stampWall = (maskArr: Uint8Array, rad: number) => {
+      const rad2 = rad * rad;
+      for (const line of inkLines) {
+        for (let i = 0; i + 1 < line.length; i++) {
+          const [ax, ay] = line[i];
+          const [bx2, by2] = line[i + 1];
+          const dx = bx2 - ax;
+          const dy = by2 - ay;
+          const lenSq = dx * dx + dy * dy;
+          const wc0 = Math.max(Math.floor((Math.min(ax, bx2) - rad) / TONE_CELL_PX - 0.5), c0);
+          const wc1 = Math.min(Math.ceil((Math.max(ax, bx2) + rad) / TONE_CELL_PX - 0.5), c1);
+          const wr0 = Math.max(Math.floor((Math.min(ay, by2) - rad) / TONE_CELL_PX - 0.5), r0);
+          const wr1 = Math.min(Math.ceil((Math.max(ay, by2) + rad) / TONE_CELL_PX - 0.5), r1);
+          for (let row = wr0; row <= wr1; row++) {
+            const y = (row + 0.5) * TONE_CELL_PX;
+            for (let col = wc0; col <= wc1; col++) {
+              const x = (col + 0.5) * TONE_CELL_PX;
+              let t = lenSq > 0 ? ((x - ax) * dx + (y - ay) * dy) / lenSq : 0;
+              t = t < 0 ? 0 : t > 1 ? 1 : t;
+              const ex = x - (ax + t * dx);
+              const ey = y - (ay + t * dy);
+              if (ex * ex + ey * ey <= rad2) maskArr[(row - r0) * bw + (col - c0)] = 1;
+            }
+          }
         }
-        if (on) buf[r * bw + c] = 1;
+      }
+    };
+    stampWall(floodWall, 2 * TONE_CELL_PX);
+    stampWall(fillWall, TONE_CELL_PX);
+    // (b) flood the window border through NON-floodWall cells. Cells the flood
+    //     does NOT reach are enclosed = interior. (Window has a ≥3-cell empty
+    //     ring so the flood always seeds, even when ink hugs the bbox.)
+    const outside = new Uint8Array(bw * bh);
+    const stack: number[] = [];
+    const pushOut = (i: number) => {
+      if (!outside[i] && !floodWall[i]) {
+        outside[i] = 1;
+        stack.push(i);
+      }
+    };
+    for (let c = 0; c < bw; c++) {
+      pushOut(c);
+      pushOut((bh - 1) * bw + c);
+    }
+    for (let r = 0; r < bh; r++) {
+      pushOut(r * bw);
+      pushOut(r * bw + bw - 1);
+    }
+    while (stack.length) {
+      const i = stack.pop()!;
+      const r = (i / bw) | 0;
+      const c = i - r * bw;
+      if (r > 0) pushOut(i - bw);
+      if (r < bh - 1) pushOut(i + bw);
+      if (c > 0) pushOut(i - 1);
+      if (c < bw - 1) pushOut(i + 1);
+    }
+    // (c) fill the region's whole ENCLOSED component (everything !outside, which
+    //     includes the floodWall's inner half — the interior tone reaches the
+    //     ink), seeded from the region so only the tapped component fills.
+    const out = new Uint8Array(bw * bh);
+    const seed: number[] = [];
+    const inComp = (i: number) => !outside[i] || fillWall[i];
+    for (let i = 0; i < bw * bh; i++) {
+      if (mask[i] && inComp(i)) {
+        out[i] = 1;
+        seed.push(i);
       }
     }
-    const t = mask;
-    mask = buf;
-    buf = t;
+    while (seed.length) {
+      const i = seed.pop()!;
+      const r = (i / bw) | 0;
+      const c = i - r * bw;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = r + dr;
+          const nc = c + dc;
+          if (nr < 0 || nr >= bh || nc < 0 || nc >= bw) continue;
+          const j = nr * bw + nc;
+          if (!out[j] && inComp(j)) {
+            out[j] = 1;
+            seed.push(j);
+          }
+        }
+      }
+    }
+    // (d) shave the OUTER overshoot: drop floodWall cells that are NOT fillWall
+    //     and touch the outside — the thick wall's outer ring sits PAST the
+    //     visible edge, so removing it stops the tone exactly at fillWall
+    //     (centerline ± 1 cell, under the ink) → no bleed. Interior floodWall
+    //     cells (wrapped by fill, not touching outside) stay → no sliver.
+    //     Iterate so the full ~1-cell ring peels (it can be 1-2 cells).
+    let shaved = true;
+    while (shaved) {
+      shaved = false;
+      for (let r = 0; r < bh; r++) {
+        for (let c = 0; c < bw; c++) {
+          const i = r * bw + c;
+          if (!out[i] || fillWall[i] || !floodWall[i]) continue;
+          const touchesOutside =
+            (r > 0 && outside[i - bw]) ||
+            (r < bh - 1 && outside[i + bw]) ||
+            (c > 0 && outside[i - 1]) ||
+            (c < bw - 1 && outside[i + 1]);
+          if (touchesOutside) {
+            out[i] = 0;
+            outside[i] = 1; // becomes new exterior so the next ring can peel
+            shaved = true;
+          }
+        }
+      }
+    }
+    // (e) carve the holes back to PAPER, CONFORMED to the inner ink centerline:
+    //     flood OUT from each hole's interior (the extractor hole polygon, inside
+    //     the inner ink) through cells that are NOT floodWall. The watertight
+    //     floodWall stops the carve at the inner centerline, so the carved paper
+    //     reaches the inner ink centerline and the gray ring tucks cleanly UNDER
+    //     the inner ink — no sliver on the hole edge (donut-hole mirror of the
+    //     outer-edge fix; fillWall cells in the hole rim are still carved so the
+    //     hole paper reaches the centerline). 4-connected to match the flood.
+    if (holes.length) {
+      // Stage 1 — flood the hole interior out through cells that are NOT
+      // floodWall (watertight, so the carve can't leak into the ring through a
+      // thin-wall gap). This reaches the floodWall's hole-side edge
+      // (≈ inner centerline − 2 cells), leaving a 1-cell tone ring still inside
+      // the hole between there and the inner ink.
+      const carved = new Uint8Array(bw * bh);
+      const carve: number[] = [];
+      const tryCarve = (j: number) => {
+        if (out[j] && !floodWall[j] && !carved[j]) {
+          out[j] = 0;
+          carved[j] = 1;
+          carve.push(j);
+        }
+      };
+      // Seed from each hole's CENTROID, NOT its whole span: the extractor's hole
+      // outline can be the inner-ink BODY (its outer edge sits PAST the inner
+      // centerline, on the ring side), so spanning it would seed the carve on
+      // the ring side of the inner floodWall and eat the ring. The centroid is
+      // always deep inside the hole; the floodWall-bounded flood then carves the
+      // hole interior up to the inner centerline exactly.
+      for (const hl of holes) {
+        let sx = 0;
+        let sy = 0;
+        for (const [x, y] of hl) {
+          sx += x;
+          sy += y;
+        }
+        const cxp = sx / hl.length;
+        const cyp = sy / hl.length;
+        const col = Math.round(cxp / TONE_CELL_PX - 0.5);
+        const row = Math.round(cyp / TONE_CELL_PX - 0.5);
+        if (col >= c0 && col <= c1 && row >= r0 && row <= r1) {
+          tryCarve((row - r0) * bw + (col - c0));
+        }
+      }
+      while (carve.length) {
+        const i = carve.pop()!;
+        const r = (i / bw) | 0;
+        const c = i - r * bw;
+        if (r > 0) tryCarve(i - bw);
+        if (r < bh - 1) tryCarve(i + bw);
+        if (c > 0) tryCarve(i - 1);
+        if (c < bw - 1) tryCarve(i + 1);
+      }
+      // Stage 2 — shave the floodWall's HOLE-side ring (floodWall cells that are
+      // NOT fillWall and touch carved paper) so the hole paper reaches fillWall
+      // (≈ inner centerline ± 1 cell). The remaining ring tone then stops where
+      // the inner ink covers it → no tone bleeding into the hole, no sliver.
+      // Iterate until no change (the ring is ≤1 cell thick → 1-2 passes).
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (let r = 0; r < bh; r++) {
+          for (let c = 0; c < bw; c++) {
+            const i = r * bw + c;
+            if (!out[i] || fillWall[i] || !floodWall[i]) continue;
+            const touchesCarved =
+              (r > 0 && carved[i - bw]) ||
+              (r < bh - 1 && carved[i + bw]) ||
+              (c > 0 && carved[i - 1]) ||
+              (c < bw - 1 && carved[i + 1]);
+            if (touchesCarved) {
+              out[i] = 0;
+              carved[i] = 1;
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+    mask = out;
+  } else {
+    // 2-fallback — octagonal dilation (Lasso, or fill with no bordering ink).
+    let buf = new Uint8Array(bw * bh);
+    for (let pass = 0; pass < dilate; pass++) {
+      const eight = pass % 2 === 0;
+      buf.set(mask);
+      for (let r = 0; r < bh; r++) {
+        for (let c = 0; c < bw; c++) {
+          if (mask[r * bw + c]) continue;
+          const up = r > 0 && mask[(r - 1) * bw + c];
+          const dn = r < bh - 1 && mask[(r + 1) * bw + c];
+          const lf = c > 0 && mask[r * bw + c - 1];
+          const rt = c < bw - 1 && mask[r * bw + c + 1];
+          let on = up || dn || lf || rt;
+          if (!on && eight) {
+            on =
+              (r > 0 && c > 0 && mask[(r - 1) * bw + c - 1]) ||
+              (r > 0 && c < bw - 1 && mask[(r - 1) * bw + c + 1]) ||
+              (r < bh - 1 && c > 0 && mask[(r + 1) * bw + c - 1]) ||
+              (r < bh - 1 && c < bw - 1 && mask[(r + 1) * bw + c + 1]);
+          }
+          if (on) buf[r * bw + c] = 1;
+        }
+      }
+      const t = mask;
+      mask = buf;
+      buf = t;
+    }
   }
 
   // 3 — write: unconditional REPLACE (spec §7 "re-fill same region → REPLACE
