@@ -12,7 +12,8 @@ _Last comb-through: 2026-06-13 (this session + prior context + round plan)._
 - 🔴 **Fill doesn't fill the WHOLE object** — need full-fill ability. 🟡 a5faecfd (FULL FILL control exists; verify completeness).
 - 🔴 **Circle draw + snap doesn't fully CLOSE** — closed circle + snap ADDS a separation/gap. [img 2026-06-13] — QUEUED fill/draw lane after a5faecfd (shapeFit/snap-close).
 - 🔴 **Select WHAT snaps** — user control over which strokes/shapes snap (not forced/auto on everything). [2026-06-13] 🔵 design + build.
-- 🟡 **RE-DRAW shows strokes zoomed/cropped** (not fit) — CASE-2. → a5faecfd.
+- 🔴 **RE-DRAW shows strokes CUT OFF / zoomed / cropped** (not fit to the modal) — CASE-2, CONFIRMED still broken [img 2026-06-13]. (agent a5faecfd documented but did NOT fix it; re-queued.)
+- 🔴 **RE-DRAW modal MISSING the drawing toggles/tools** — only SKETCH/STYLE + BACK/DONE; no brush/fill/snap/primitive controls like the main draw popup. [img 2026-06-13]
 - 🟡 **Elongated drawing shifts out of view** on SKETCH→STYLE flip — CASE-3. → a2a70592.
 - 🟢 Place doodle → move → disappears — FIXED (c6b087e).
 - 🟢 SVG upload freeze + truncation — FIXED (57a0359).
@@ -34,7 +35,8 @@ _Last comb-through: 2026-06-13 (this session + prior context + round plan)._
 ## ✨ FEATURES (card / sharing / space)
 - 🟡 **Card export → SVG (+PNG)** on the card detail modal. → aadc3aed.
 - 🟡 **Optional AUTHOR-NAME field** on the card (skippable; ties to onboarding handle). → aadc3aed.
-- 🟡 **Personal space MVP** — private desk (owner_id) + per-person drawer + onboarding handle (Keep/Reroll/Type, anon-auth). FULL feature. → af1ef603.
+- 🟡 **Personal space MVP** — private desk (owner_id) + per-person drawer + onboarding handle (Keep/Reroll/Type, anon-auth). FULL feature. → af1ef603 (scaffold committed UNWIRED; DeskPage wiring + 2 type fixes deferred to R9 integration).
+- 🔴 **Drawer in BOTH public AND personal** (Sebs 2026-06-13) — every person gets a drawer on the PUBLIC desk too, not just their personal space. Scaffold did personal-only; add public-desk drawer.
 
 ## ✨ FEATURES (conversion / 3D — R9/R10)
 - 🟡 **Image mode** (image→SVG; Quiver best-quality; output SIMPLER hand-drawn sketch). → a5efbbb8.
