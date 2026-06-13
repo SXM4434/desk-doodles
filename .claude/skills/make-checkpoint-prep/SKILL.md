@@ -44,6 +44,19 @@ From `docs/knowledge/08-the-stack.md`:
 4. **Group into ≤10-file upload prompts** in dependency-sane order (entry + config first: `package.json`, `index.html`, `vite.config.ts`, `src/main.tsx`, `src/app/App.tsx`, `routes.tsx`; then libs; then components; then pages/assets). Number the prompts.
 5. **Write the upload/routing prompt** — for each batch, the file list + a one-line "what this batch is" + the routing note (which routes/features it lights up). Include the standalone notes: new deps Make installs · `supabase/*.sql` is pasted into the dashboard not Make · test on the PUBLISHED `*.figma.site` URL not preview · og:image absolute URL baked + share-preview tested · keepalive verified fired.
 
+## Updating an existing checkpoint — STUB-FIRST + EDITOR-PASTE (CRITICAL, research-grounded)
+
+Full protocol + verbatim blocks: `docs/submission/make-checkpoint-paste-protocol.md`. The short version:
+
+Checkpoint #1 (~34 files) already exists, so checkpoint #2 is mostly **rewrites of existing files** — exactly where Make's #1 failure mode lives: the AI **duplicates instead of updates** (`Home_1`/`HomeNew`/suffixed copy, reroutes to it, orphans the original). **Figma documents the AI chat as a non-deterministic system — NO prompt phrasing reliably forces in-place updates.** Do NOT rely on a "match by path / overwrite contents" prompt (it was an assumption; the research disproved it). The duplication-proof path:
+
+1. **AI mints EMPTY stubs by EXACT path** (nothing to misplace). Stub-create prompt: *"Create empty files at these EXACT paths. If one already exists, skip it. Do NOT add `_1`/`New`/`Copy` suffixes, do NOT fork, do NOT reroute imports."*
+2. **Paste each file's CONTENTS by hand in Make's CODE EDITOR** — the editor edits files in place (makes a checkpoint, never duplicates). Content NEVER goes through the chat surface.
+3. **Verify after each batch:** no `_1`/`New` siblings · `App.tsx`/`routes.tsx` point only at canonical paths · file count moved by exactly the batch size.
+4. **Recovery if it duplicates anyway:** stop, re-point imports in the editor, delete the copy via chat (the explorer can't delete), or revert to the pre-batch checkpoint.
+
+GitHub repo-import / local-codebase mode would skip manual pasting BUT is Mac-only closed beta + could overwrite our GitHub (inverts local-canonical) → post-makeathon only, NOT checkpoint #2. See `feedback_make_checkpoint_workflow.md`.
+
 ## Hard rules
 
 - **Read-only assembly.** This skill produces a file list + prompts; it does NOT upload to Make (that's Sebs at the Make UI) and does NOT push to GitHub (Make is one-way deployment).

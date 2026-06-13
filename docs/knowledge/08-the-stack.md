@@ -1,6 +1,6 @@
 # 08 — The Stack: every technology in the app and its job
 
-**In one sentence:** Desk Doodles is a Vite-served React+TypeScript app where rough.js and perfect-freehand do the mark-making, culori does the color math, Supabase is the hosted backend, the 3D libraries (three/R3F/drei/cannon-es) sit installed-but-unwired waiting for Day 11, and everything is chosen to survive being drag-dropped into Figma Make.
+**In one sentence:** Desk Doodles is a Vite-served React+TypeScript app where rough.js and perfect-freehand do the mark-making, culori does the color math, Supabase is the hosted backend, the 3D libraries (three/R3F/drei/cannon-es) are now WIRED and shipping (Stroke3DScene + the GLSL hatch shader + geometry3d conversion — Rounds 7/7b/8, lazy-loaded behind Suspense as a ~461KB-gzip chunk), and everything is chosen to survive being drag-dropped into Figma Make.
 
 ---
 
