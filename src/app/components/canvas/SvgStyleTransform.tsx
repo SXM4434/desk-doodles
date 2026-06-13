@@ -2052,7 +2052,30 @@ export function transformElement(
           flat.push(...transformElement(child, rc, m, seed + idx * 17, ownerDoc, nextPivot, nextBBoxMin));
         }
       });
-      return flat;
+      // GROUP-TRANSFORM PRESERVATION (root cause A, 2026-06-13). The children
+      // above were re-rendered in the group's LOCAL coordinate space — their
+      // built paths carry no knowledge of the <g>'s own transform/opacity/
+      // clip-path. Flattening them straight to top level DROPS that group
+      // transform, so every transform-positioned group collapses onto its
+      // siblings at the same origin: dominoTiles (3 tiles `translate(0 12/44/
+      // 76)`) and lacroixRack (9 cans, each its own `translate`) both stacked
+      // into ONE pile (the audit's "dark-dropped" / "blob"). Re-wrap the
+      // flattened children in a fresh <g> that re-applies the source group's
+      // positioning attributes so each group lands where it belongs. Groups
+      // with NO such attributes (e.g. stackedSketchbooks, whose children carry
+      // absolute coords) return flat unchanged — zero behavior change there.
+      const gTransform = el.getAttribute('transform');
+      const gOpacity = el.getAttribute('opacity');
+      const gClip = el.getAttribute('clip-path');
+      if (gTransform === null && gOpacity === null && gClip === null) {
+        return flat;
+      }
+      const wrap = ownerDoc.createElementNS('http://www.w3.org/2000/svg', 'g');
+      if (gTransform !== null) wrap.setAttribute('transform', gTransform);
+      if (gOpacity !== null) wrap.setAttribute('opacity', gOpacity);
+      if (gClip !== null) wrap.setAttribute('clip-path', gClip);
+      for (const child of flat) wrap.appendChild(child);
+      return [wrap];
     }
     default:
       return [el.cloneNode(true) as SVGElement];
@@ -2127,17 +2150,60 @@ const RISO_INK_FLOOR = 0.18;
 /** Maps a fill color to its riso treatment.
  *  - paper (darkness < floor, or none/transparent/--dir-bg) → drop fill to 'none'
  *  - ink (darkness ≥ floor) → keep on primary; spot-color on secondary at an
- *    opacity scaled by darkness (mid greys read as pale tone, blacks solid). */
+ *    opacity scaled by darkness (mid greys read as pale tone, blacks solid).
+ *
+ *  PAPER-OCCLUSION (root causes B + D, 2026-06-13). A light region is paper —
+ *  but HOW it must render depends on what sits BENEATH it in z-order:
+ *    - paperKind 'opaque'  → the source explicitly painted PAPER (var(--dir-bg)
+ *      or a white literal) over something: a nested white emblem/label drawn ON
+ *      TOP of a dark body (collectorTin's white circle over the dark embossed
+ *      card; boxedGameCartridge's white art panel over the dark cartridge). If
+ *      we drop it to 'none', the DARK body beneath shows through and the white
+ *      region reads flooded (the bug). It must re-stamp as an OPAQUE paper fill
+ *      so it knocks the dark body out — same paper-knockout the smart-hachure
+ *      path already honors in index.ts.
+ *    - paperKind 'transparent' → none/transparent/WASH body (ampCombo's 8% wash
+ *      slatted body, cardBinder's transparent pockets). These sit over paper
+ *      already; dropping to 'none' correctly reveals it. Re-stamping would be
+ *      visually identical but we keep the minimal change to the WORKING cases. */
 function risoFillTreatment(
   fillVal: string | null,
-): { isInk: boolean; darkness: number } {
+): { isInk: boolean; darkness: number; paperKind: 'opaque' | 'transparent' } {
   if (!fillVal || fillVal === 'transparent' || fillVal === 'none') {
-    return { isInk: false, darkness: 0 };
+    return { isInk: false, darkness: 0, paperKind: 'transparent' };
   }
-  // Paper register — var(--dir-bg) is the substrate; never ink it (knockout).
-  if (fillVal.includes('--dir-bg')) return { isInk: false, darkness: 0 };
+  // Paper register — var(--dir-bg) is the substrate. It's an EXPLICIT paint of
+  // paper (often over a dark body), so it knocks out opaquely (never inked).
+  if (fillVal.includes('--dir-bg')) {
+    return { isInk: false, darkness: 0, paperKind: 'opaque' };
+  }
+  // White / near-white literals (uploaded art) are likewise explicit paper.
+  if (isWhitePaperLiteral(fillVal)) {
+    return { isInk: false, darkness: 0, paperKind: 'opaque' };
+  }
   const darkness = fillDarknessFactor(fillVal);
-  return { isInk: darkness >= RISO_INK_FLOOR, darkness };
+  // A light-but-not-substrate fill (e.g. an 8% WASH body) is paper too, but the
+  // 'transparent' kind — it sits over paper and drops to none (working cases).
+  return {
+    isInk: darkness >= RISO_INK_FLOOR,
+    darkness,
+    paperKind: 'transparent',
+  };
+}
+
+/** True for white / near-white literal fills (#fff, white, rgb(255,255,255),
+ *  hsl(...,100%)) — explicit paper paint in uploaded art. var() tokens are
+ *  handled by the caller's --dir-bg check; this covers literal colors only. */
+function isWhitePaperLiteral(fillVal: string): boolean {
+  const v = fillVal.trim().toLowerCase();
+  if (v === 'white') return true;
+  if (v.startsWith('var(') || v.includes('color-mix')) return false;
+  // fillDarknessFactor parses literal hex/rgb/hsl into a 0-1 darkness; treat the
+  // top luminance sliver (darkness ≤ 0.04, i.e. ~#f5+ white) as paper.
+  if (/^#|^rgb|^hsl/.test(v)) {
+    return fillDarknessFactor(fillVal) <= 0.04;
+  }
+  return false;
 }
 
 // Secondary-layer multiply-opacity ceiling (BUG2 fix, 2026-06-13). The
@@ -2216,7 +2282,11 @@ function applyRisographTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
   svgEl.appendChild(primary);
 }
 
-/** Recursively drop LIGHT/white fills to 'none' so the paper shows through.
+/** Recursively resolve LIGHT/white fills so the paper register reads right.
+ *  - opaque paper (var(--dir-bg) / white literal) → re-stamp var(--dir-bg) so a
+ *    nested white emblem/label KNOCKS OUT the dark body beneath it instead of
+ *    going transparent and letting the dark show through (root causes B + D).
+ *  - transparent/wash paper → 'none' (sits over paper, reveals it).
  *  Dark fills keep their source ink; strokes are untouched (line-art register).
  *  Walks into <g> subtrees so grouped catalog objects knockout correctly. */
 function knockOutLightFills(el: SVGElement): void {
@@ -2226,8 +2296,10 @@ function knockOutLightFills(el: SVGElement): void {
   if (tag !== 'text') {
     const fillVal = el.getAttribute('fill');
     if (fillVal !== null) {
-      const { isInk } = risoFillTreatment(fillVal);
-      if (!isInk) el.setAttribute('fill', 'none');
+      const { isInk, paperKind } = risoFillTreatment(fillVal);
+      if (!isInk) {
+        el.setAttribute('fill', paperKind === 'opaque' ? 'var(--dir-bg)' : 'none');
+      }
     }
   }
   Array.from(el.children).forEach((child) => knockOutLightFills(child as SVGElement));
@@ -2244,12 +2316,19 @@ function inkSecondaryLayer(el: SVGElement, spotColor: string): SVGElement {
     if (el.getAttribute('stroke')) el.setAttribute('stroke', spotColor);
     const fillVal = el.getAttribute('fill');
     if (fillVal !== null) {
-      const { isInk, darkness } = risoFillTreatment(fillVal);
+      const { isInk, darkness, paperKind } = risoFillTreatment(fillVal);
       if (isInk) {
         el.setAttribute('fill', spotColor);
         // Pale-tone ramp: mid greys ink lighter than blacks. Cap at 0.9 per
         // riso solid-area coverage best-practice (Spectrolite).
         el.setAttribute('fill-opacity', String(Math.min(0.9, 0.35 + darkness * 0.55)));
+      } else if (paperKind === 'opaque') {
+        // Opaque paper knockout on the OFFSET layer too (root causes B + D):
+        // the secondary is offset under the primary, so a nested white emblem/
+        // label must knock out the secondary's own inked dark body in that
+        // region — else the offset dark ink peeks past the primary's knockout.
+        el.setAttribute('fill', 'var(--dir-bg)');
+        el.removeAttribute('fill-opacity');
       } else {
         el.setAttribute('fill', 'none');
       }
