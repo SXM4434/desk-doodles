@@ -63,6 +63,11 @@ import {
   type HatchDirection,
 } from '../../src/app/components/canvas3d/hatchMaterial';
 import { rodAdornmentSpecs, type RodAdornmentSpec } from '../../src/app/components/canvas3d/rodAdornments';
+import {
+  buildDrawingReliefTexture,
+  applyPlanarReliefUVs,
+  RELIEF_BUMP_SCALE,
+} from '../../src/app/components/canvas3d/drawingTexture';
 import { PinShape } from '../../src/app/lib/items/PinShape';
 import { PegToolShape } from '../../src/app/lib/items/PegToolShape';
 import {
@@ -223,6 +228,11 @@ export interface VisState {
   hatchDirection?: HatchDirection;
   angleDeg: number;
   elevDeg: number;
+  /** VERIFY-ONLY A/B flag (not a product code path): when true the Solid/Extrude
+   *  body renders the OLD raised-tube face-ink overlay (the "lazy lines on top"
+   *  stopgap) INSTEAD of the new carved bas-relief bumpMap — so a single dist
+   *  produces the before/after board. Default false = the shipped relief. */
+  legacyTubes?: boolean;
 }
 
 // ─── Framing camera ──────────────────────────────────────────────────────────
@@ -344,36 +354,6 @@ function VisMeshes({
 
   useEffect(() => () => { for (const b of builds) b.geometry.dispose(); }, [builds]);
 
-  // SOLID FACE-INK (RC-2 fix) — PORT of Stroke3DScene StrokeMeshes. The pool-
-  // raster Solid buries the interior hand into a featureless slab; we overlay
-  // the user's actual strokes as raised glossy-ink ridges proud of the front
-  // face so the hand survives into the solid. Solid mode only → null otherwise.
-  const solidFaceInk = useMemo<THREE.BufferGeometry[] | null>(() => {
-    if (state.geometryMode !== 'solid' || builds.length === 0) return null;
-    const mass = builds[0];
-    mass.geometry.computeBoundingBox();
-    const bb = mass.geometry.boundingBox;
-    if (!bb || !Number.isFinite(bb.max.z)) return null;
-    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES);
-    if (pool.length === 0) return null;
-    const center = poolCenter(pool, SCENE_VIEWBOX);
-    const lift = bb.max.z + params.rod.radius * 0.5;
-    const geoms: THREE.BufferGeometry[] = [];
-    for (const points of pool) {
-      const rod = buildStrokeWithParams(points, SCENE_VIEWBOX, center, 'rod', params);
-      rod.geometry.translate(0, 0, lift);
-      geoms.push(rod.geometry);
-    }
-    return geoms;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [builds, state.geometryMode, JSON.stringify(params)]);
-  useEffect(() => () => { if (solidFaceInk) for (const g of solidFaceInk) g.dispose(); }, [solidFaceInk]);
-  const faceInkMaterial = useMemo<THREE.MeshPhysicalMaterial | null>(
-    () => (state.geometryMode === 'solid' ? createNativeMaterial('glossyPlastic', INK_3D_DEFAULT) : null),
-    [state.geometryMode],
-  );
-  useEffect(() => () => faceInkMaterial?.dispose(), [faceInkMaterial]);
-
   // Materials.
   const nativeProps: NativeProps3D = { ...DEFAULT_NATIVE_PROPS_3D, ...(state.nativeProps ?? {}) };
   const preset: MaterialPresetId = state.materialPreset ?? MODE_MATERIAL_DEFAULTS_3D[state.geometryMode];
@@ -392,6 +372,78 @@ function VisMeshes({
   useEffect(() => () => hatchMat?.dispose(), [hatchMat]);
 
   const material: THREE.Material = (hatchMat ?? nativeMat)!;
+
+  // BAS-RELIEF FACE (RC-2 fix) — PORT of Stroke3DScene StrokeMeshes. The pool-
+  // raster Solid (and closed-loop Extrude) bury the interior hand into a
+  // featureless slab; instead of floating ink TUBES on top we carve the drawing
+  // INTO the front face as a bumpMap height field (white = surface, ink =
+  // recessed grooves the light catches). Solid + Extrude, Native style only →
+  // null otherwise (rod/inflate already ARE the strokes).
+  const isNative = state.style3d === 'native';
+  const reliefBody =
+    !state.legacyTubes && (state.geometryMode === 'solid' || state.geometryMode === 'extrude');
+  const relief = useMemo(() => {
+    if (!isNative || !reliefBody || builds.length === 0) return null;
+    const mass = builds[0];
+    mass.geometry.computeBoundingBox();
+    const bb = mass.geometry.boundingBox;
+    if (!bb || !Number.isFinite(bb.min.x) || !Number.isFinite(bb.max.x)) return null;
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES);
+    if (pool.length === 0) return null;
+    const built = buildDrawingReliefTexture(pool, SCENE_VIEWBOX, {
+      minX: bb.min.x,
+      maxX: bb.max.x,
+      minY: bb.min.y,
+      maxY: bb.max.y,
+    });
+    if (!built) return null;
+    applyPlanarReliefUVs(mass.geometry, built.window);
+    return built.texture;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [builds, state.geometryMode, isNative, reliefBody, JSON.stringify(params)]);
+  useEffect(() => () => { if (relief) relief.dispose(); }, [relief]);
+  const reliefMaterial = useMemo<THREE.Material | null>(() => {
+    if (!relief || !(material instanceof THREE.MeshStandardMaterial)) return null;
+    const m = material.clone();
+    m.bumpMap = relief;
+    m.bumpScale = RELIEF_BUMP_SCALE;
+    m.needsUpdate = true;
+    return m;
+  }, [relief, material]);
+  useEffect(() => () => { if (reliefMaterial) reliefMaterial.dispose(); }, [reliefMaterial]);
+  const bodyMaterial: THREE.Material = reliefMaterial ?? material;
+
+  // VERIFY-ONLY A/B: the OLD raised-tube face-ink overlay (the lazy "lines on
+  // top" stopgap), reconstructed verbatim so the before/after board renders
+  // from one dist. Gated entirely behind state.legacyTubes — never the product
+  // path. Solid+Extrude only (the modes the relief now carves).
+  const legacyTubes = useMemo<THREE.BufferGeometry[] | null>(() => {
+    if (!state.legacyTubes) return null;
+    if (!(state.geometryMode === 'solid' || state.geometryMode === 'extrude')) return null;
+    if (builds.length === 0) return null;
+    const mass = builds[0];
+    mass.geometry.computeBoundingBox();
+    const bb = mass.geometry.boundingBox;
+    if (!bb || !Number.isFinite(bb.max.z)) return null;
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES);
+    if (pool.length === 0) return null;
+    const center = poolCenter(pool, SCENE_VIEWBOX);
+    const lift = bb.max.z + params.rod.radius * 0.5;
+    const geoms: THREE.BufferGeometry[] = [];
+    for (const points of pool) {
+      const rod = buildStrokeWithParams(points, SCENE_VIEWBOX, center, 'rod', params);
+      rod.geometry.translate(0, 0, lift);
+      geoms.push(rod.geometry);
+    }
+    return geoms;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [builds, state.legacyTubes, state.geometryMode, JSON.stringify(params)]);
+  useEffect(() => () => { if (legacyTubes) for (const g of legacyTubes) g.dispose(); }, [legacyTubes]);
+  const legacyTubeMaterial = useMemo<THREE.MeshPhysicalMaterial | null>(
+    () => (state.legacyTubes ? createNativeMaterial('glossyPlastic', INK_3D_DEFAULT) : null),
+    [state.legacyTubes],
+  );
+  useEffect(() => () => legacyTubeMaterial?.dispose(), [legacyTubeMaterial]);
 
   // SVG-port edges.
   const showEdges = state.style3d === 'svg-port';
@@ -470,7 +522,7 @@ function VisMeshes({
       {builds.map((b, i) => (
         <group key={i}>
           {hullMaterial && <mesh geometry={b.geometry} material={hullMaterial} />}
-          <mesh geometry={b.geometry} material={material} />
+          <mesh geometry={b.geometry} material={bodyMaterial} />
           {showEdges && edges[i] && <lineSegments geometry={edges[i]} material={edgeMaterial} />}
           {adornments[i]?.map((spec, j) => (
             <mesh
@@ -484,10 +536,13 @@ function VisMeshes({
           ))}
         </group>
       ))}
-      {solidFaceInk && faceInkMaterial && (
+      {/* (RC-2 fix: carved bas-relief bumpMap on the body itself — applied above
+          — replaces the old raised-tube face-ink overlay.) */}
+      {/* VERIFY-ONLY A/B: the OLD raised-tube overlay, only when legacyTubes. */}
+      {legacyTubes && legacyTubeMaterial && (
         <group>
-          {solidFaceInk.map((g, i) => (
-            <mesh key={`faceink${i}`} geometry={g} material={faceInkMaterial} />
+          {legacyTubes.map((g, i) => (
+            <mesh key={`legacytube${i}`} geometry={g} material={legacyTubeMaterial} />
           ))}
         </group>
       )}
@@ -618,6 +673,10 @@ declare global {
       sample: (index: number) => Promise<{ sampledElements: number; strokeCount: number }>;
       renderClean: (index: number) => Promise<{ ok: boolean }>;
       render3d: (state: VisState) => Promise<{ dataUrl: string; stats: VisStats }>;
+      /** Verify-only: inject custom strokes (viewBox 800×600) as the current
+       *  pool, so the bas-relief change can be exercised on a face / poster /
+       *  multi-feature drawing through the EXACT product render path. */
+      setStrokes: (strokes: StrokeInputPoint[][]) => void;
     };
   }
 }
@@ -659,6 +718,11 @@ window.__vis = {
     await nextFrame();
     await nextFrame();
     return { ok: true };
+  },
+
+  setStrokes(strokes: StrokeInputPoint[][]) {
+    currentStrokes = strokes;
+    statusEl.textContent = `custom strokes injected — ${strokes.length} stroke(s)`;
   },
 
   async render3d(state) {

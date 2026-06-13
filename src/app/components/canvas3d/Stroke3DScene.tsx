@@ -59,6 +59,11 @@ import {
   updateHatchLightDir,
   type HatchInputs,
 } from './hatchMaterial';
+import {
+  buildDrawingReliefTexture,
+  applyPlanarReliefUVs,
+  RELIEF_BUMP_SCALE,
+} from './drawingTexture';
 
 // ─── Stroke3DScene — R3F scene for the stroke→3D round-trip ────────────────
 // Round-7 chrome-split build (docs/design/3d-mode-controls-spec.md): the scene
@@ -516,6 +521,7 @@ function StrokeMeshes({
   viewBox,
   geometryMode,
   material,
+  isNative,
   modeParams,
   showEdges,
   edgeColor,
@@ -526,6 +532,9 @@ function StrokeMeshes({
   viewBox: ViewBoxSize;
   geometryMode: GeometryModeSetting;
   material: THREE.Material;
+  /** True when `material` is the lit Native MeshPhysicalMaterial (so the
+   *  bas-relief bumpMap is meaningful — the Hatch/SVG-port shaders ignore it). */
+  isNative: boolean;
   modeParams: Mode3DParams;
   showEdges: boolean;
   edgeColor: string;
@@ -580,62 +589,77 @@ function StrokeMeshes({
     };
   }, [builds]);
 
-  // ── SOLID FACE-INK (RC-2 fix) ──────────────────────────────────────────────
-  // The pool-raster Solid merges EVERY stroke into ONE watertight silhouette
-  // mass — faithful to the OUTLINE, but it buries the drawing's interior hand
-  // into a featureless dark slab (the exhaustive audit's RC-2: 144/197 shapes).
-  // rod + inflate preserve the hand because they're per-stroke; Solid is
-  // pool-level by nature, so the fix is not topology — it's wearing the marks.
-  // The mass stays the BODY; we overlay the user's ACTUAL strokes as ink rods
-  // riding PROUD of the front face, so the hand survives into the solid ("the
-  // 3D wears your own marks", CLAUDE.md). Solid mode ONLY — every other mode
-  // returns null → byte-identical default render. The overlay rods are NOT in
-  // `builds`, so they take their own glossy-ink material (read on the matte
-  // mass), and never pick up the mass's EdgesGeometry / adornments / framing.
-  const solidFaceInk = useMemo<THREE.BufferGeometry[] | null>(() => {
-    if (geometryMode !== 'solid' || builds.length === 0) return null;
+  // ── BAS-RELIEF FACE (RC-2 fix, replaces the raised-tube overlay) ───────────
+  // The pool-raster Solid (and the closed-loop Extrude) merge the drawing into
+  // ONE watertight silhouette mass — faithful to the OUTLINE, but the interior
+  // hand is buried into a featureless slab (the exhaustive audit's RC-2). The
+  // earlier stopgap floated the user's strokes as glossy ink TUBES riding proud
+  // of the front face — they read as wires plopped ON TOP, not as part of the
+  // form. We replace that with a real DIGITAL BAS-RELIEF: the drawing is
+  // rasterized to an offscreen canvas height field (white = surface, ink =
+  // recessed grooves) → a THREE.CanvasTexture → applied as the body material's
+  // `bumpMap` on the FRONT FACE, so the marks read as CARVED/ENGRAVED relief
+  // that the studio key light catches — a continuous surface, not separate
+  // geometry. bumpMap perturbs the normal from the height gradient WITHOUT
+  // moving vertices (three.js MeshStandardMaterial.bumpMap), which is exactly
+  // achievable on the single-step extruded cap (a displacementMap would only
+  // move the silhouette ring at steps:1, so bump is the premium result here).
+  //
+  // INK-BLACK POLICY HOLDS: the body stays the single warm-graphite ink at one
+  // value; the drawing reads purely through how light sits on the relief, never
+  // through colour. Solid + Extrude, NATIVE style only (the Hatch/SVG-port
+  // shaders ignore bumpMap). rod/inflate are per-stroke — they ALREADY are the
+  // strokes — so they keep null and render byte-identically.
+  const reliefBody = geometryMode === 'solid' || geometryMode === 'extrude';
+  const relief = useMemo(() => {
+    if (!isNative || !reliefBody || builds.length === 0) return null;
     const mass = builds[0];
     mass.geometry.computeBoundingBox();
     const bb = mass.geometry.boundingBox;
-    if (!bb || !Number.isFinite(bb.max.z)) return null;
+    if (!bb || !Number.isFinite(bb.min.x) || !Number.isFinite(bb.max.x)) return null;
     const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES_3D);
     if (pool.length === 0) return null;
-    const center = poolCenter(pool, viewBox);
-    // Raise the rod centerline ~half a radius above the front face so the marks
-    // sit PROUD as relief ridges (the lower arc still tucks into the mass, so
-    // they read as ink raised FROM the surface, not wires hovering over it).
-    // Relief + specular is how the hand reads at all under the ink-black-
-    // everything policy: same ink hue/value as the body, separated only by how
-    // the light sits on a raised glossy mark vs the flat matte mass.
-    const lift = bb.max.z + modeParams.rod.radius * 0.5;
-    const geoms: THREE.BufferGeometry[] = [];
-    for (const points of pool) {
-      const rod = buildStrokeWithParams(points, viewBox, center, 'rod', modeParams);
-      rod.geometry.translate(0, 0, lift);
-      geoms.push(rod.geometry);
-    }
-    return geoms;
+    const built = buildDrawingReliefTexture(pool, viewBox, {
+      minX: bb.min.x,
+      maxX: bb.max.x,
+      minY: bb.min.y,
+      maxY: bb.max.y,
+    });
+    if (!built) return null;
+    // Register the texture to the front face: rewrite the mass UVs as a planar
+    // projection over the SAME world window the height field was rasterized for.
+    applyPlanarReliefUVs(mass.geometry, built.window);
+    return built.texture;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [builds, key, paramsKey, geometryMode, viewBox.w, viewBox.h]);
+  }, [builds, key, paramsKey, geometryMode, isNative, reliefBody, viewBox.w, viewBox.h]);
   useEffect(() => {
     return () => {
-      if (solidFaceInk) for (const g of solidFaceInk) g.dispose();
+      if (relief) relief.dispose();
     };
-  }, [solidFaceInk]);
-  // Glossy-Plastic ink material for the face-ink rods — max clearcoat + low
-  // roughness so each raised mark catches a tight bright specular highlight,
-  // reading as wet ink against the matte-clay Solid body. Same ink hue/value as
-  // the body (ink-black policy holds); the SEPARATION is purely surface +
-  // relief + the light, never color. Solid mode only.
-  const faceInkMaterial = useMemo<THREE.MeshPhysicalMaterial | null>(
-    () => (geometryMode === 'solid' ? createNativeMaterial('glossyPlastic', edgeColor) : null),
-    [geometryMode, edgeColor],
-  );
+  }, [relief]);
+
+  // The body material wearing the carved relief: clone the lit Native material
+  // (so the shared instance the caller passed for non-relief modes / other
+  // meshes is never mutated) and hang the bumpMap on the clone. Non-relief
+  // modes (or non-native styles) use the passed `material` untouched →
+  // byte-identical default render.
+  const reliefMaterial = useMemo<THREE.Material | null>(() => {
+    if (!relief || !(material instanceof THREE.MeshStandardMaterial)) return null;
+    const m = material.clone();
+    m.bumpMap = relief;
+    m.bumpScale = RELIEF_BUMP_SCALE;
+    m.needsUpdate = true;
+    return m;
+  }, [relief, material]);
   useEffect(() => {
     return () => {
-      if (faceInkMaterial) faceInkMaterial.dispose();
+      if (reliefMaterial) reliefMaterial.dispose();
     };
-  }, [faceInkMaterial]);
+  }, [reliefMaterial]);
+  /** The material the BODY mesh renders with: relief-augmented when carved,
+   *  else the plain passed material. (MeshPhysicalMaterial extends
+   *  MeshStandardMaterial, so the Native presets qualify for the bumpMap.) */
+  const bodyMaterial = reliefMaterial ?? material;
 
   // Debug introspection (window.__dd_decisionLog house pattern, QW-2): the
   // verify harness + future calibration sweeps read what the scene actually
@@ -644,10 +668,10 @@ function StrokeMeshes({
     (window as unknown as Record<string, unknown>).__dd3d = {
       geometryMode,
       paramsKey,
-      // RC-2 receipt: how many ink-hand rods the Solid body is wearing (0 for
-      // every non-solid mode). The verify harness reads this from the live
-      // object — no sampled claims.
-      solidFaceInkRods: solidFaceInk ? solidFaceInk.length : 0,
+      // RC-2 receipt: whether the body wears the carved bas-relief height field
+      // (true on Solid/Extrude + Native, false otherwise). The verify harness
+      // reads this from the live object — no sampled claims.
+      reliefBump: relief != null,
       rodFamilies: {
         capStyle: modeParams.rod.capStyle,
         jointStyle: modeParams.rod.jointStyle,
@@ -663,7 +687,7 @@ function StrokeMeshes({
               : { kind: b.kind },
       ),
     };
-  }, [builds, geometryMode, paramsKey, modeParams.rod, solidFaceInk]);
+  }, [builds, geometryMode, paramsKey, modeParams.rod, relief]);
 
   // SVG-port ink outline: EdgesGeometry per mesh (30° crease threshold —
   // smooth tubes contribute almost nothing, slab rims read as drawn lines).
@@ -781,7 +805,9 @@ function StrokeMeshes({
         <group key={i}>
           {/* Native OUTLINE — inverted-hull backface pass UNDER the body. */}
           {hullMaterial && <mesh geometry={b.geometry} material={hullMaterial} />}
-          <mesh geometry={b.geometry} material={material} />
+          {/* Body — wears the carved bas-relief bumpMap on Solid/Extrude+Native
+              (bodyMaterial === material for every other mode → unchanged). */}
+          <mesh geometry={b.geometry} material={bodyMaterial} />
           {showEdges && edges[i] && (
             <lineSegments geometry={edges[i]} material={edgeMaterial} />
           )}
@@ -801,16 +827,9 @@ function StrokeMeshes({
           ))}
         </group>
       ))}
-      {/* SOLID FACE-INK (RC-2): the user's actual strokes as glossy-ink rods
-          riding proud of the matte Solid body — the hand survives into the
-          solid instead of being buried in a featureless slab. Solid mode only. */}
-      {solidFaceInk && faceInkMaterial && (
-        <group>
-          {solidFaceInk.map((g, i) => (
-            <mesh key={`faceink${i}`} geometry={g} material={faceInkMaterial} />
-          ))}
-        </group>
-      )}
+      {/* (RC-2 fix: the buried-hand problem is now solved by the bas-relief
+          bumpMap on the body itself — applied above — so there is no separate
+          face-ink overlay group. The drawing IS the surface.) */}
       {/* Soft ground-contact shadow (rig adaptation for white paper). frames={1}
           bakes ONCE per mount = deterministic; the key remounts it whenever
           the strokes/mode/params (and therefore the geometry) change. */}
@@ -952,6 +971,7 @@ export function Stroke3DScene({
         viewBox={viewBox}
         geometryMode={geometryMode}
         material={material}
+        isNative={style3d === 'native'}
         modeParams={modeParams}
         showEdges={style3d === 'svg-port'}
         edgeColor={ink}
