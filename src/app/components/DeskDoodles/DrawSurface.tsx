@@ -5,6 +5,15 @@ import { PILL, CTA } from '../../lib/chromeStyles';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 import { prepareSvgUpload } from '../../lib/svgUpload';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
+import {
+  createToneGrid,
+  beginToneStroke,
+  stampToneCapsule,
+  extractToneFills,
+  rasterizeToneFills,
+  type ToneMaskGrid,
+  type ToneFill,
+} from '../../lib/toneMask';
 
 // ─── DrawSurface — pointer-event freehand capture + SvgStyleTransform render ──
 // Extracted 2026-06-11 from DeskDoodlesCanvas.tsx (mechanical move, zero
@@ -121,7 +130,7 @@ export function strokeToPolylinePath(points: StrokePoint[]): string {
   );
 }
 
-// ─── TONE-FILL BRUSH (the SHADE register — round 7) ──────────────────────────
+// ─── TONE-FILL BRUSH (the SHADE register — round 7, band-mask rebuild R2) ─────
 // The explicit shading input (mark-intent spec §4: "the tone-fill brush is the
 // explicit register and ALWAYS beats inference" — D2-F). The user brushes TONE
 // in the discrete 8-band ladder (`coverage.ts` COVERAGE_BANDS — one band table,
@@ -130,16 +139,16 @@ export function strokeToPolylinePath(points: StrokePoint[]): string {
 // coords), band }>` — a SIBLING of strokes, band INDEX not raw alpha, never
 // only-baked-into-the-svg (the record keeps the tone editable; the svg is
 // always regenerable from strokes + toneFills, same contract as strokes).
+//
+// SESSION-TIME SOURCE OF TRUTH (shade-brush-behavior-spec §2 — the C1/C2/C3
+// fix): a per-cell BAND GRID in lib/toneMask.ts, not this patch list. The
+// brush stamps the grid through the ratified marker-model table (§3); pen-lift
+// extracts merged per-band island outlines (pool-raster contours, holes as
+// evenodd subpaths) into this same record shape — fewer, bigger patches,
+// non-self-intersecting by construction. The ToneFill type now lives with the
+// grid (re-exported here so every existing importer keeps working).
 
-export type ToneFill = {
-  id: string;
-  /** Brushed-outline polygon (closed), draw-frame viewBox coords (800×600
-   *  space — the same space strokes are captured in). */
-  points: [number, number][];
-  /** COVERAGE_BANDS index 1–7. Band 0 (paper) is the ABSENCE of tone — it is
-   *  the erase action, never a painted patch. */
-  band: number;
-};
+export type { ToneFill } from '../../lib/toneMask';
 
 /** sRGB transfer function (linear → gamma-encoded channel value 0..1). */
 function srgbFromLinear(lin: number): number {
@@ -174,8 +183,9 @@ const TONE_BRUSH_OPTS = {
   easing: (t: number) => t,
 };
 
-// Per-patch outline resolution cap — keeps the toneFills record small (the
-// outline is a soft region mask, not ink; 64 anchors hold the shape).
+// LIVE-PREVIEW outline resolution cap (the while-pen-down capsule sweep only —
+// SB-6: committed patches come from the grid extraction in lib/toneMask,
+// capped at TONE_MASK_MAX_PTS=128 there).
 const TONE_OUTLINE_MAX_PTS = 64;
 // Whole-record budget for render_config.toneFills (sibling of the ~45KB
 // strokes budget — tone is the smaller passenger by design).
@@ -203,27 +213,35 @@ export function toneOutline(centerline: [number, number][], radius: number): [nu
 /** Size-guard the toneFills record (mirror of capStrokes): round coords, then
  *  halve outline density (floor 12 pts — the patch must stay a region) until
  *  the JSON fits the budget. Never drops a patch — band statements are user
- *  data; only their outline resolution softens. */
+ *  data; only their outline resolution softens. Holes ride the same rounding
+ *  + decimation (floor 8 — holes are smaller loops by nature); `src`
+ *  provenance passes through untouched. */
 export function capToneFills(raw: ToneFill[]): ToneFill[] {
+  const round2 = (pts: [number, number][]) =>
+    pts.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as [number, number]);
   let fills: ToneFill[] = raw.map((f) => ({
     id: f.id,
     band: f.band,
-    points: f.points.map(
-      ([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as [number, number],
-    ),
+    points: round2(f.points),
+    ...(f.holes && f.holes.length > 0 ? { holes: f.holes.map(round2) } : {}),
+    ...(f.src ? { src: f.src } : {}),
   }));
   while (JSON.stringify(fills).length > TONE_FILLS_JSON_BUDGET) {
     const before = JSON.stringify(fills).length;
-    fills = fills.map((f) =>
-      f.points.length > 12 ? { ...f, points: f.points.filter((_, i) => i % 2 === 0) } : f,
-    );
+    const halve = (pts: [number, number][], floor: number) =>
+      pts.length > floor ? pts.filter((_, i) => i % 2 === 0) : pts;
+    fills = fills.map((f) => ({
+      ...f,
+      points: halve(f.points, 12),
+      ...(f.holes ? { holes: f.holes.map((hl) => halve(hl, 8)) } : {}),
+    }));
     if (JSON.stringify(fills).length >= before) break;
   }
   return fills;
 }
 
-/** Closed polygon d-string for a patch outline. */
-function tonePathD(points: [number, number][]): string {
+/** Closed polygon d-string for one loop. */
+function loopD(points: [number, number][]): string {
   return (
     points.reduce(
       (acc, [x, y], i) =>
@@ -231,6 +249,15 @@ function tonePathD(points: [number, number][]): string {
       '',
     ) + ' Z'
   );
+}
+
+/** Patch d-string: outer outline + hole loops as separate subpaths — paired
+ *  with fill-rule="evenodd" everywhere it renders (spec §2: holes mirror the
+ *  extractor's outer/hole roles in ONE path). */
+function tonePathD(points: [number, number][], holes?: [number, number][][]): string {
+  let d = loopD(points);
+  if (holes) for (const hl of holes) d += ` ${loopD(hl)}`;
+  return d;
 }
 
 /** Stable paint order for patches: band ASCENDING (darker paints over
@@ -259,7 +286,8 @@ function toneFillsMarkup(
       const hex = TONE_BAND_HEX[f.band];
       if (!hex || f.points.length < 3) return '';
       const pts = mapPt ? f.points.map(mapPt) : f.points;
-      return `<path d="${tonePathD(pts)}" fill="${hex}" stroke="none" data-tone-band="${f.band}"/>`;
+      const holes = mapPt ? f.holes?.map((hl) => hl.map(mapPt)) : f.holes;
+      return `<path d="${tonePathD(pts, holes)}" fill="${hex}" fill-rule="evenodd" stroke="none" data-tone-band="${f.band}"/>`;
     })
     .join('');
 }
@@ -537,12 +565,36 @@ export function DrawSurface({
   const [committed, setCommitted] = useState(false);
   const [uploadedSvg, setUploadedSvg] = useState<{ name: string; markup: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  // TONE PATCHES — the shade register's pool (sibling of `strokes`).
+  // TONE PATCHES — the shade register's pool (sibling of `strokes`). Display/
+  // record mirror of the grid below; pen-lift extraction refreshes it whole.
   const [toneFills, setToneFills] = useState<ToneFill[]>(() =>
     (initialToneFills ?? []).map((f, i) => ({ ...f, id: f.id || `loaded-tone-${i}` })),
   );
-  // The brush centerline being actively dragged (shade register's `current`).
+  // THE BAND GRID — session-time source of truth for the shade register
+  // (shade-brush spec §2). Lazily created on first render; Re-draw preloads
+  // re-rasterize stored patches at their band (ascending, darker wins —
+  // stored patches are already RESOLVED statements, §3 rules apply only at
+  // brush time). Lives only as long as this surface — never stored.
+  const toneGridRef = useRef<ToneMaskGrid | null>(null);
+  if (toneGridRef.current === null) {
+    toneGridRef.current = createToneGrid(VIEWBOX_W, VIEWBOX_H);
+    if (initialToneFills && initialToneFills.length > 0) {
+      rasterizeToneFills(toneGridRef.current, initialToneFills);
+    }
+  }
+  // The brush centerline being actively dragged (shade register's `current`) —
+  // drives the cheap while-pen-down preview overlay (SB-6); the grid carries
+  // the truth in parallel.
   const [toneBrush, setToneBrush] = useState<[number, number][] | null>(null);
+  // Last stamped centerline point — capsule segments connect consecutive
+  // pointer events so fast drags leave no gaps in the grid.
+  const lastTonePtRef = useRef<[number, number] | null>(null);
+  // Pre-stroke band snapshot — Escape mid-gesture restores it (true gesture
+  // CANCEL; a 120KB copy per pen-down is trivially cheap). Without this, a
+  // mid-stroke Escape fell through to the host popup's close handler, which
+  // saw empty strokes/tone state and silently ATE the in-progress gesture
+  // (caught by the rock-F1 break battery).
+  const toneSnapshotRef = useRef<Uint8Array | null>(null);
   // Pointer position while the shade register is active — drives the honest
   // brush-footprint ring (the radius is in viewBox units, so a CSS cursor
   // could not show the true footprint).
@@ -638,32 +690,58 @@ export function DrawSurface({
   // paused) — same gating as ink, different tool in the hand.
   const shadeActive = !!shade?.active && !styled && input === 'draw' && mode !== '3d';
 
-  /** Patch hit-test for the eraser: inside the outline polygon, or within the
-   *  eraser radius of any outline anchor (forgiving on thin patches). */
-  function toneHit(f: ToneFill, x: number, y: number, radius: number): boolean {
-    let inside = false;
-    const pts = f.points;
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      const [xi, yi] = pts[i];
-      const [xj, yj] = pts[j];
-      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-    }
-    if (inside) return true;
-    const r2 = radius * radius;
-    for (const [px, py] of pts) {
-      const dx = px - x;
-      const dy = py - y;
-      if (dx * dx + dy * dy <= r2) return true;
-    }
-    return false;
+  /** Stamp one brush segment into the band grid — paint goes through the §3
+   *  marker table; erase is the band-0 stamp (per-cell partial carve, §4 —
+   *  the whole-patch lift this replaces couldn't carve). */
+  function stampSegment(to: [number, number]) {
+    const grid = toneGridRef.current;
+    if (!grid || !shade) return;
+    const from = lastTonePtRef.current ?? to;
+    stampToneCapsule(grid, from[0], from[1], to[0], to[1], shade.radius, shade.erase ? 0 : shade.band);
+    lastTonePtRef.current = to;
   }
 
-  /** Erase = lift whole patches the eraser touches (patch-level granularity —
-   *  per-pixel boolean subtraction is post-makeathon per addendum ch.2.3;
-   *  repaint = brush again). */
-  function eraseToneAt(x: number, y: number, radius: number) {
-    setToneFills((prev) => prev.filter((f) => !toneHit(f, x, y, radius)));
+  /** Pen-lift: the grid is the truth — extract merged per-band islands
+   *  (pool-raster contours + holes) into the patch pool. Deterministic:
+   *  same gestures → same grid → byte-identical record. */
+  function commitToneStroke() {
+    const grid = toneGridRef.current;
+    if (grid) setToneFills(extractToneFills(grid));
+    toneGestureRef.current = false;
+    setToneBrush(null);
+    lastTonePtRef.current = null;
   }
+
+  // Whether a TONE gesture is mid-flight (pen down) — ref, not state, so the
+  // Escape-cancel listener below never goes stale across pointermoves.
+  const toneGestureRef = useRef(false);
+
+  // ESCAPE = CANCEL THE IN-PROGRESS GESTURE (capture phase, ahead of the host
+  // popup's layered-Escape handler — rock-F1 break battery caught the popup
+  // closing mid-first-stroke and eating the gesture, because the host's guard
+  // sees only COMMITTED strokes/tone). Mid-stroke Escape aborts just the
+  // stroke: ink discards the in-progress points; tone restores the pre-stroke
+  // grid snapshot (erase included — true cancel). The gesture is the topmost
+  // "layer", so stopPropagation keeps every other Escape layer untouched;
+  // with the pen up this listener isn't even mounted.
+  const gestureActive = current !== null || toneBrush !== null;
+  useEffect(() => {
+    if (!gestureActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setCurrent(null);
+      if (toneGestureRef.current) {
+        const grid = toneGridRef.current;
+        if (grid && toneSnapshotRef.current) grid.bands.set(toneSnapshotRef.current);
+        toneGestureRef.current = false;
+        setToneBrush(null);
+        lastTonePtRef.current = null;
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [gestureActive]);
 
   function handlePointerDown(e: React.PointerEvent) {
     // Style mode pauses drawing — flip back to Draw to keep sketching.
@@ -672,12 +750,12 @@ export function DrawSurface({
     (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
     if (shadeActive) {
       const [x, y] = eventToSvgPoint(e);
-      if (shade!.erase) {
-        eraseToneAt(x, y, shade!.radius);
-        setToneBrush([[x, y]]); // marks an erase-drag in progress (never rendered)
-      } else {
-        setToneBrush([[x, y]]);
-      }
+      beginToneStroke(toneGridRef.current!); // new stroke — reset the §3 dirty bitset
+      toneSnapshotRef.current = toneGridRef.current!.bands.slice(); // Escape = cancel
+      toneGestureRef.current = true;
+      lastTonePtRef.current = null;
+      stampSegment([x, y]); // a tap is a dab (paint) / a dab-lift (erase)
+      setToneBrush([[x, y]]);
       return;
     }
     setCurrent({ id: `s-${Date.now()}`, points: [eventToSvgPoint(e)] });
@@ -688,8 +766,8 @@ export function DrawSurface({
       const [x, y] = eventToSvgPoint(e);
       setHoverPt([x, y]);
       if (toneBrush) {
-        if (shade!.erase) eraseToneAt(x, y, shade!.radius);
-        else setToneBrush((b) => (b ? [...b, [x, y]] : b));
+        stampSegment([x, y]);
+        setToneBrush((b) => (b ? [...b, [x, y]] : b));
       }
       return;
     }
@@ -699,18 +777,7 @@ export function DrawSurface({
 
   function handlePointerUp() {
     if (toneBrush) {
-      if (!shade?.erase) {
-        // Sweep the centerline into the patch outline at the picked band —
-        // a tap is a dab, a drag is a soft region.
-        const outline = toneOutline(toneBrush, shade?.radius ?? 24);
-        if (outline.length >= 3 && shade) {
-          setToneFills((prev) => [
-            ...prev,
-            { id: `t-${Date.now()}`, points: outline, band: shade.band },
-          ]);
-        }
-      }
-      setToneBrush(null);
+      commitToneStroke();
       return;
     }
     if (!current || current.points.length < 2) { setCurrent(null); return; }
@@ -728,6 +795,8 @@ export function DrawSurface({
     setCurrent(null);
     setToneFills([]);
     setToneBrush(null);
+    lastTonePtRef.current = null;
+    toneGridRef.current?.bands.fill(0); // the grid IS the tone truth — clear it too
     setCommitted(false);
   }
 
@@ -790,13 +859,17 @@ export function DrawSurface({
           dangerouslySetInnerHTML={{ __html: backdropDisplayMarkup(backdrop) }}
         />
       )}
-      {/* Layer 0t — TONE PATCHES, raw (Sketch mode): flat translucent band-
-          grey UNDER the ink strokes (round-7 contract), above any upload
-          backdrop. One <g> per band at one opacity — overlap WITHIN a band
-          composites solid-then-fades, so it never compounds into a band the
-          user didn't brush (flat by construction); bands ascend so darker
-          paints over lighter. Style mode skips this layer — the patches ride
-          the styled markup instead and render as marks. */}
+      {/* Layer 0t — TONE PATCHES, raw (Sketch mode): flat band-grey UNDER the
+          ink strokes (round-7 contract), above any upload backdrop. One <g>
+          per band at one opacity — overlap WITHIN a band composites solid-
+          then-fades, so it never compounds into a band the user didn't brush
+          (flat by construction; post-rebuild the extraction merges per-band
+          islands so there's at most a handful of disjoint paths per band);
+          bands ascend so darker paints over lighter. Opacity 0.9 (was 0.55 —
+          WYSIWYG gap SB-3: the styled pipeline reads the FULL band grey, so
+          the raw preview must stop lying ~half a ladder light; exact value is
+          a Sebs eyeball). Holes render via evenodd subpaths. Style mode skips
+          this layer — the patches ride the styled markup instead. */}
       {!styled && toneFills.length > 0 && (
         <svg
           viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
@@ -812,9 +885,15 @@ export function DrawSurface({
             const fills = toneFills.filter((f) => f.band === band && f.points.length >= 3);
             if (fills.length === 0) return null;
             return (
-              <g key={band} opacity={0.55}>
+              <g key={band} opacity={0.9}>
                 {fills.map((f) => (
-                  <path key={f.id} d={tonePathD(f.points)} fill={hex} stroke="none" />
+                  <path
+                    key={f.id}
+                    d={tonePathD(f.points, f.holes)}
+                    fill={hex}
+                    fillRule="evenodd"
+                    stroke="none"
+                  />
                 ))}
               </g>
             );
@@ -869,8 +948,9 @@ export function DrawSurface({
                 return (
                   <path
                     key={f.id}
-                    d={tonePathD(f.points)}
+                    d={tonePathD(f.points, f.holes)}
                     fill={hex}
+                    fillRule="evenodd"
                     stroke="none"
                     data-tone-band={f.band}
                   />
@@ -940,14 +1020,26 @@ export function DrawSurface({
             stroke="none"
           />
         )}
-        {/* Live tone sweep — the patch forming under the brush, previewed at
-            the same flat translucency the committed raw layer uses. */}
+        {/* Live tone sweep — the while-pen-down preview (SB-6: the cheap
+            swept capsule; the grid is the truth in parallel and lands at
+            pen-lift). Paint previews at the SAME 0.9 the committed raw layer
+            uses; erase previews as a dashed accent sweep showing the carve
+            footprint (the carve itself lands at pen-lift). */}
         {shadeActive && toneBrush && !shade?.erase && (
           <path
             d={tonePathD(toneOutline(toneBrush, shade?.radius ?? 24))}
             fill={TONE_BAND_HEX[shade?.band ?? 3] ?? '#888888'}
-            fillOpacity={0.55}
+            fillOpacity={0.9}
             stroke="none"
+          />
+        )}
+        {shadeActive && toneBrush && shade?.erase && (
+          <path
+            d={tonePathD(toneOutline(toneBrush, shade?.radius ?? 24))}
+            fill="none"
+            stroke="var(--dir-accent)"
+            strokeWidth={1.25}
+            strokeDasharray="5 4"
           />
         )}
         {/* Brush-footprint ring — paint mode shows the band grey; erase mode
@@ -1124,7 +1216,8 @@ export type ShadeToolState = {
   band: number;
   /** Brush radius, draw-frame viewBox px. */
   radius: number;
-  /** Erase mode — lifts whole patches (band 0 = paper = absence). */
+  /** Erase mode — the band-0 stamp: a per-cell partial carve out of whatever
+   *  tone is there (band 0 = paper = absence). */
   erase: boolean;
 };
 
@@ -1185,7 +1278,7 @@ export function ToneShadeCluster({
         onClick={() => onChange({ ...value, erase: !value.erase })}
         aria-pressed={value.erase}
         data-tone-erase
-        title="Paper (band 0) — touch a patch to lift it; brush again to repaint"
+        title="Paper (band 0) — brush to carve tone away; lighten = erase, then re-brush lighter"
         style={{
           ...PILL,
           padding: '5px 12px',

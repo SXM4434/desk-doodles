@@ -247,6 +247,12 @@ export function DrawPanel({
   // Live mirror of the TONE-PATCH pool (the shade register's output) — same
   // stable-setState contract. Staged into render_config.toneFills at Done.
   const [tone, setTone] = useState<ToneFill[]>([]);
+  // Inspection mirror (the __dd_decisionLog idiom): batteries + calibration
+  // tooling read the live tone record without driving Done/Place — the
+  // determinism check diffs JSON.stringify of this across scripted runs.
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__dd_toneFills = tone;
+  }, [tone]);
   // INK | SHADE — which tool the pointer wields while sketching (round 7).
   // Ink = strokes (the existing draw). Shade = the tone-fill brush: discrete
   // band-grey soft regions under the ink. A register, not a render mode —
@@ -699,7 +705,7 @@ export function DrawPanel({
     : composeMode === 'draw'
       ? penRegister === 'shade'
         ? shadeTool.erase
-          ? 'lifting tone — touch a patch to erase it'
+          ? 'erasing tone — brush carves it back to paper'
           : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
         : input === 'upload-svg' && backdropFrame
           ? 'raw ink over your upload — keep sketching'
