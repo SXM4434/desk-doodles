@@ -1549,6 +1549,13 @@ export function extractPoolRegions(
     inkRadius?: number;
     resolution?: number;
     closedFlags?: boolean[];
+    /** CRISP mode (2026-06-13, fill-conform): skip the Chaikin corner-rounding
+     *  pass so the region outline keeps the drawn shape's SHARP corners. The
+     *  default (Chaikin on) rounds an RDP rectangle into an octagon/blob — fine
+     *  for a soft 3D-solid contour, WRONG for a tone FILL that must conform to
+     *  a drawn rectangle's corners (Sebs: "fill doesn't conform, edges not
+     *  clean"). Fill passes crisp:true. */
+    crisp?: boolean;
   } = {},
 ): RegionExtraction {
   const inkRadius = opts.inkRadius ?? SOLID_INK_RADIUS;
@@ -1560,13 +1567,15 @@ export function extractPoolRegions(
   if (!raster) return { extractorVersion: REGION_EXTRACTOR_VERSION, regions: [] };
   const { rawLoops, depths, originX, originY, cell } = raster;
 
-  // Same simplify treatment as the Solid contours (RDP in cell units + one
-  // Chaikin pass), mapped to world coords.
+  // Same simplify treatment as the Solid contours (RDP in cell units), mapped
+  // to world coords. Chaikin corner-rounding runs UNLESS crisp mode is set —
+  // crisp keeps the drawn shape's sharp corners so a FILL conforms to the
+  // boundary instead of rounding into a blob.
   const simplifyToWorld = (loop: Array<[number, number]>): Array<[number, number]> => {
     const open = [...loop, loop[0]] as Array<[number, number]>;
     const simple = rdpPoints(open, SOLID_RDP_EPSILON_CELLS);
     simple.pop();
-    const rounded = simple.length >= 3 ? chaikinClosed(simple) : simple;
+    const rounded = opts.crisp || simple.length < 3 ? simple : chaikinClosed(simple);
     return rounded.map(([x, y]) => [originX + x * cell, originY + y * cell]);
   };
 

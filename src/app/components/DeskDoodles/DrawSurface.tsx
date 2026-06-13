@@ -25,6 +25,7 @@ import {
   RDP_EPSILON,
   WORLD_SCALE,
   SOLID_INK_RADIUS,
+  SOLID_MAX_GRID_RESOLUTION,
   REGION_EXTRACTOR_VERSION,
   type StrokeInputPoint,
 } from '../../lib/geometry3d/strokeTo3d';
@@ -381,6 +382,12 @@ export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegi
     // INK-ONLY TOPOLOGY (see the header comment): enclosure comes from the
     // stamped ink alone — the gap slider is the only thing that closes gaps.
     closedFlags: world.map(() => false),
+    // FILL-CONFORM (2026-06-13): crisp = keep the drawn shape's SHARP corners
+    // (no Chaikin rounding -> a rectangle fills as a rectangle, not a blob);
+    // max resolution = the finest grid so the boundary staircases the least and
+    // the fill hugs the drawn line (Sebs: "fill doesn't conform, edges dirty").
+    crisp: true,
+    resolution: SOLID_MAX_GRID_RESOLUTION,
   });
   // The world→viewBox inverse adapter: normalizeStrokePoints is
   //   wx = (x − cx)·s,  wy = −(y − cy)·s   →   x = wx/s + cx,  y = cy − wy/s.
