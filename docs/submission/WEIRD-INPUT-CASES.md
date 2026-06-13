@@ -15,3 +15,9 @@ drawing arbitrary things to "see what breaks":
 - **Repro:** open a placed doodle → RE-DRAW ("your original strokes, editable"). The loaded source strokes render at the wrong scale — zoomed in + overflowing/cropped by the re-draw canvas, instead of fit to the frame.
 - **Root area:** the re-draw/reopen path (ObjectSurface → DrawSurface loading source strokes) doesn't fit the strokes' bbox to the edit canvas viewBox (same class as the upload-oversize fit the DrawSurface lane fixed, but for re-draw strokes).
 - **Fix:** scale/translate the loaded strokes to fit the re-draw canvas (fit-to-frame), like the upload path. VERIFY: re-draw a multi-stroke doodle → strokes appear whole + centered, editable.
+
+## CASE-3: elongated drawing shifts out of view on SKETCH→STYLE flip
+- **Repro:** draw a LONG object (e.g. a big arrow spanning the canvas) in SKETCH/INK → flip to STYLE. The styled render is SHIFTED/offset (up-left) and the far end (arrowhead) is cropped out of the frame — doesn't align with the sketch.
+- **Root area:** SvgStyleTransform styled-render viewBox/transform doesn't match the sketch's framing for elongated / edge-positioned content (sibling of the RC-4 3D-elongated-framing class, but on the 2D style path).
+- **Fix:** the styled SVG must share the sketch's viewBox/extent so the transform aligns (no shift/crop) regardless of stroke extent or position. VERIFY: draw a canvas-spanning arrow → STYLE keeps it whole + aligned.
+- Sebs: "the type of stuff to test for — just an example."
