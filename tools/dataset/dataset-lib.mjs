@@ -57,6 +57,10 @@ export const KNOWN_SOURCES = new Set([
   'input-pick',
   'fidelity-2d',
   'fidelity-3d',
+  // The two collectors that were emitting labels into __dd_decisionLog with no
+  // adapter to land them — their labels were evaporating (gap-hunt H9):
+  'shade-fill', // src/app/lib/shadeFillLog.ts  (entryType 'shade-fill')
+  'shape-snap', // src/app/lib/shapeSnapLog.ts  (entryType 'shape-snap')
 ]);
 
 const KNOWN_LABEL_KINDS = new Set(['role', 'correct-or-not', 'treatment', 'fidelity']);
@@ -380,6 +384,104 @@ export function fidelity3dRecordToExample(r, idx) {
       bbox: r.bbox ?? null,
     },
     // gauntlet runs the conversion engine at its canonical RDP epsilon.
+    regime: { ...CANONICAL_REGIME },
+  };
+}
+
+/** shade-fill log entry (the 'shade-fill' decision-log surface, rock F2) → a
+ *  'treatment' example when the act committed a band (the user choosing a tone
+ *  level onto a region) or a 'correct-or-not' GROUND-TRUTH example when the act
+ *  was a miss / cancel (the extractor-miss + lasso-after-miss labels — the
+ *  user's correction of where fill SHOULD have landed). The collector runs on
+ *  the draw surface under the canonical RDP extractor (it records
+ *  `extractorVersion`); stamp canonical, but honestly stamp UNKNOWN if a future
+ *  entry ever omits it.
+ *
+ *  Entries carry no svgHash (the drawn pool isn't a catalog shape); the exampleId
+ *  keys on the act's stable signature (tool · gesture · band · outcome · index),
+ *  so a re-fed export updates in place rather than duplicating. */
+export function shadeFillEntryToExample(e, idx) {
+  const isMiss = e.outcome === 'miss' || e.outcome === 'lasso-after-miss';
+  const isCancel = e.outcome === 'cancelled';
+  const isCorrection = isMiss || isCancel;
+  // The committed band IS the label for a treatment; for a correction the label
+  // is the outcome itself (what went wrong / was abandoned).
+  const label = isCorrection
+    ? String(e.outcome ?? 'cancelled')
+    : (e.erase ? 'erase' : `band-${e.band ?? 0}`);
+  // extractorVersion is the only regime signal the collector carries; the act
+  // ran at the canonical RDP extractor. If a future entry omits it, stay honest.
+  const regime = typeof e.extractorVersion === 'number'
+    ? { ...CANONICAL_REGIME, extractorVersion: e.extractorVersion }
+    : { ...UNKNOWN_REGIME };
+  return {
+    exampleId: `shade-fill:${e.tool ?? 'fill'}:${e.gesture ?? 'tap'}:${e.band ?? 0}:${e.outcome ?? 'committed'}:${idx}`,
+    source: 'shade-fill',
+    labelKind: isCorrection ? 'correct-or-not' : 'treatment',
+    label,
+    confidence: null,
+    rawScore: null,
+    margin: null,
+    firedRules: [],
+    // a miss / lasso-after-miss is the user telling us the extractor was wrong →
+    // ground-truth correction. A clean commit is the user's pick, not truth.
+    classifiedBy: isCorrection ? 'manual-override' : 'rules',
+    isGroundTruth: isMiss,
+    svgHash: null,
+    regionPath: e.tool ?? null,
+    renderSurface: e.surface ?? 'shade-fill',
+    features: {
+      tool: e.tool ?? null,
+      gesture: e.gesture ?? null,
+      band: typeof e.band === 'number' ? e.band : null,
+      erase: e.erase ?? null,
+      gapTol: typeof e.gapTol === 'number' ? e.gapTol : null,
+      regionDepth: e.regionDepth ?? null,
+      regionAreaWorld: e.regionAreaWorld ?? null,
+      outcome: e.outcome ?? null,
+      regionCount: typeof e.regionCount === 'number' ? e.regionCount : null,
+    },
+    regime,
+  };
+}
+
+/** shape-snap log entry (the 'shape-snap' decision-log surface, rock F3) → the
+ *  snap/straighten training tuple. evaluate = the offered pick ('treatment');
+ *  cycle / keep / revert are the user RESOLVING the offer → 'correct-or-not'
+ *  ground truth (keep = accepted the snap, revert = rejected it, cycle = moved
+ *  to a different candidate). The full ranked candidate table + ambiguity margin
+ *  ride in features (the richest preference signal). Drawn strokes run under the
+ *  canonical extractor → canonical regime. */
+export function shapeSnapEntryToExample(e, idx) {
+  const isResolution = e.outcome === 'keep' || e.outcome === 'revert' || e.outcome === 'cycle';
+  return {
+    // strokeId links a cycle/keep/revert back to its originating evaluate; the
+    // outcome makes each act in that chain a distinct example.
+    exampleId: `shape-snap:${e.strokeId ?? idx}:${e.outcome ?? 'evaluate'}`,
+    source: 'shape-snap',
+    labelKind: isResolution ? 'correct-or-not' : 'treatment',
+    // label = the shape the user is sitting on after the act (the resolved pick).
+    label: String(e.chosen ?? (e.accepted ? 'accepted' : 'refused')),
+    confidence: null,
+    rawScore: null,
+    margin: typeof e.margin === 'number' ? e.margin : null,
+    firedRules: [],
+    classifiedBy: isResolution ? 'manual-override' : 'rules',
+    // keep = the user blessed the snap; revert = the user blessed 'original'.
+    // Both are ground-truth preference. cycle is a mid-flight move, not final.
+    isGroundTruth: e.outcome === 'keep' || e.outcome === 'revert',
+    svgHash: null,
+    regionPath: e.strokeId ?? null,
+    renderSurface: e.surface ?? 'shape-snap',
+    features: {
+      action: e.action ?? null,
+      outcome: e.outcome ?? null,
+      accepted: e.accepted ?? null,
+      refusedReason: e.refusedReason ?? null,
+      chosen: e.chosen ?? null,
+      // the full ranked candidate table — the spec's training pair.
+      candidates: Array.isArray(e.candidates) ? e.candidates : [],
+    },
     regime: { ...CANONICAL_REGIME },
   };
 }

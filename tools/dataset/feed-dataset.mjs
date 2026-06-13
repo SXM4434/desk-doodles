@@ -21,6 +21,11 @@
 //   --from-fidelity-2d <path>   fold a 2D audit-style-sweep results.json
 //                               (the breakage curriculum, stream 2).
 //   --from-fidelity-3d <path>   fold a geometry-gauntlet gauntlet-report.json.
+//   --from-shade-fill <path>    fold a saved __dd_shadeFillLog JSON export
+//                               (the 'shade-fill' tone-fill labels, rock F2).
+//   --from-shape-snap <path>    fold a saved __dd_shapeSnapLog JSON export
+//                               (the shape-snap evaluate/cycle/keep/revert
+//                               training tuples, rock F3).
 //   --url <u>                   override the /audit URL for --from-audit.
 //   --captured-at <ISO>         optional manifest timestamp (NOT read from clock).
 //   --dry-run                   compute + print the diff, write NOTHING.
@@ -49,6 +54,8 @@ import {
   inputPickEntryToExample,
   fidelity2dRecordToExample,
   fidelity3dRecordToExample,
+  shadeFillEntryToExample,
+  shapeSnapEntryToExample,
 } from './dataset-lib.mjs';
 
 const DEFAULT_GOLDEN = path.join(REPO_ROOT, 'audit-runs', 'golden-labels.v2.json');
@@ -62,6 +69,8 @@ function parseArgs(argv) {
     fromInputPick: null,
     fromFidelity2d: null,
     fromFidelity3d: null,
+    fromShadeFill: null,
+    fromShapeSnap: null,
     url: DEFAULT_AUDIT_URL,
     capturedAt: null,
     dryRun: false,
@@ -74,6 +83,8 @@ function parseArgs(argv) {
     else if (k === '--from-input-pick') a.fromInputPick = argv[++i];
     else if (k === '--from-fidelity-2d') a.fromFidelity2d = argv[++i];
     else if (k === '--from-fidelity-3d') a.fromFidelity3d = argv[++i];
+    else if (k === '--from-shade-fill') a.fromShadeFill = argv[++i];
+    else if (k === '--from-shape-snap') a.fromShapeSnap = argv[++i];
     else if (k === '--url') a.url = argv[++i];
     else if (k === '--captured-at') a.capturedAt = argv[++i];
     else if (k === '--dry-run') a.dryRun = true;
@@ -142,15 +153,22 @@ async function pullAudit(url) {
       await page.waitForTimeout(POLL);
     }
     const raw = await page.evaluate(() => window.__dd_decisionLog.get());
-    // The unified log carries shading + conversion entries; split by entryType.
+    // The unified log carries shading + conversion + shade-fill + shape-snap
+    // entries; split by entryType (shadeFillLog.ts / shapeSnapLog.ts wrap the
+    // same window face, so their entries surface here too — without this split
+    // their labels would evaporate, gap-hunt H9).
     const shading = raw.filter((e) => !e.entryType || e.entryType === 'shading');
     const conv = raw.filter((e) => e.entryType === 'conversion');
     const convCorr = raw.filter((e) => e.entryType === 'conversion-correction');
-    console.log(`  audit: ${raw.length} raw log entries (${shading.length} shading · ${conv.length} conversion · ${convCorr.length} corrections)`);
+    const shadeFill = raw.filter((e) => e.entryType === 'shade-fill');
+    const shapeSnap = raw.filter((e) => e.entryType === 'shape-snap');
+    console.log(`  audit: ${raw.length} raw log entries (${shading.length} shading · ${conv.length} conversion · ${convCorr.length} corrections · ${shadeFill.length} shade-fill · ${shapeSnap.length} shape-snap)`);
     return [
       ...shading.map(decisionLogEntryToExample),
       ...conv.map(conversionReceiptToExample),
       ...convCorr.map(conversionCorrectionToExample),
+      ...shadeFill.map((e, i) => shadeFillEntryToExample(e, i)),
+      ...shapeSnap.map((e, i) => shapeSnapEntryToExample(e, i)),
     ];
   } finally {
     await browser.close();
@@ -192,6 +210,26 @@ function pullFidelity3d(p) {
   return rows.map((r, i) => fidelity3dRecordToExample(r, i));
 }
 
+// A __dd_shadeFillLog / __dd_shapeSnapLog export is a raw array (the get()
+// snapshot), or wrapped {entries|log:[...]}. Both pullers tolerate either, and
+// also a unified __dd_decisionLog export — they filter by entryType so a single
+// dump of the whole log can be fed through either flag safely.
+function pullShadeFill(p) {
+  const j = readJson(p);
+  let rows = Array.isArray(j) ? j : (j.entries ?? j.log ?? []);
+  rows = rows.filter((e) => !e.entryType || e.entryType === 'shade-fill');
+  console.log(`  shade-fill: ${rows.length} rows`);
+  return rows.map((e, i) => shadeFillEntryToExample(e, i));
+}
+
+function pullShapeSnap(p) {
+  const j = readJson(p);
+  let rows = Array.isArray(j) ? j : (j.entries ?? j.log ?? []);
+  rows = rows.filter((e) => !e.entryType || e.entryType === 'shape-snap');
+  console.log(`  shape-snap: ${rows.length} rows`);
+  return rows.map((e, i) => shapeSnapEntryToExample(e, i));
+}
+
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -199,7 +237,8 @@ async function main() {
 
   const requested =
     !!args.fromGolden || args.fromAudit || !!args.fromConversion ||
-    !!args.fromInputPick || !!args.fromFidelity2d || !!args.fromFidelity3d;
+    !!args.fromInputPick || !!args.fromFidelity2d || !!args.fromFidelity3d ||
+    !!args.fromShadeFill || !!args.fromShapeSnap;
   if (!requested) {
     console.error('No source flag given. See header for --from-* options.');
     console.error('Quick seed:  node tools/dataset/feed-dataset.mjs --from-golden audit-runs/golden-labels.v2.json');
@@ -219,6 +258,8 @@ async function main() {
   if (args.fromInputPick) { batch = batch.concat(pullInputPick(args.fromInputPick)); feedingSources.push('input-pick'); }
   if (args.fromFidelity2d) { batch = batch.concat(pullFidelity2d(args.fromFidelity2d)); feedingSources.push('fidelity-2d'); }
   if (args.fromFidelity3d) { batch = batch.concat(pullFidelity3d(args.fromFidelity3d)); feedingSources.push('fidelity-3d'); }
+  if (args.fromShadeFill) { batch = batch.concat(pullShadeFill(args.fromShadeFill)); feedingSources.push('shade-fill'); }
+  if (args.fromShapeSnap) { batch = batch.concat(pullShapeSnap(args.fromShapeSnap)); feedingSources.push('shape-snap'); }
 
   const { added, updated } = upsertExamples(byId, batch);
 
