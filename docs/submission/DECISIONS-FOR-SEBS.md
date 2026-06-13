@@ -19,6 +19,9 @@ Everything parked for your call, in one place so nothing's forgotten. Grouped: q
 - [ ] **Make checkpoint #2** (your-side: you run Make uploads) — full current code → Make → publish. Gates the live URL + working-file link + makes the Make-version the public repo. Claude preps the clean file list + importability re-check + upload prompt.
 - [ ] **Push origin/main?** — ~31 commits unpushed. Entangled with the Make-repo plan: do we also push this local repo, or is the public/submission repo the Make version only? Your call.
 - [x] **Figma Agent access — CONFIRMED (Sebs has the beta, 2026-06-13).** Agent goes back into the workflow story as the 5th suite tool (strengthens Innovative-Workflow criterion #4). ⚠️ HONESTY: must actually USE Agent on real work (the Community Figma file / the intro graphic / video design assets — things we're doing anyway) so "built across Make+MCP+Local+Weave+Agent" is TRUE, not just "we have access." Reintegration across narrative docs is QUEUED (fires when the doc-editing fleet lands).
+- [ ] **Ask Contra host: does +5 Community-share stack?** Rule says "projects" (singular) — don't assume two shares = +10. Score-plan on the Make share alone; design-file share = upside. (hello@contra.com)
+- [ ] **Create a Figma Community profile** (needed to publish the design-system file) + confirm Pro/Full seat active (unlocks Make→Community).
+- [ ] **Order of ops** (recommended): checkpoint #2 → Make→Community publish → design-system file→Community (rides the 06-16 identity pass) → Motion Spec page lives inside that file.
 - [ ] **Identity / 06-16 pass** — the own design+motion language pass (design decision, comes to you).
 - [ ] **First-visit intro animation** — your Weave creative direction (not auto-built so it doesn't clash with your aesthetic).
 
