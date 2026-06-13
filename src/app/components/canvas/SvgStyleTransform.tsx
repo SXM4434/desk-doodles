@@ -51,13 +51,13 @@ export const STYLE_PRESETS: Record<F3SvgStyle, Partial<F3ModifiersState>> = {
   // Rough-family styles set wobble: 1.0 (playground calibration baseline per I-11).
   'clean':           { wobble: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'none', fillStyle: 'hachure' },
   'outline-only':    { wobble: 0, bowing: 0, strokeWidth: 1.0, inkIntensity: 1.0, fillOpacity: 0,   texture: 'none' },
-  // 'wireframe' is RETIRED (Rock B 2026-06-12, Sebs ratified — the SVG
-  // bounding-box stub rendered garbage on real art; real wireframe rides the
-  // 3D work post-makeathon). The id stays in the F3SvgStyle union so legacy
-  // persisted configs + per-style tables keep typechecking, which keeps this
-  // Record total — the entry is unreachable (no dropdown option, parsers
-  // reject the id), kept as the union's required key only.
-  'wireframe':       { wobble: 0, bowing: 0, strokeWidth: 0.8, inkIntensity: 1.0, fillOpacity: 0, texture: 'none' },
+  // Rock Y 2026-06-12 — wireframe rebuilt as a REAL schematic register
+  // (applyWireframeSchematic below). strokeWidth is in SCREEN px here
+  // (non-scaling-stroke): 0.75 = the hairline default. fillOpacity drives
+  // fill-BOUNDARY line prominence — 1.0 default (full ink; construction-line
+  // feel is opt-in by dialing it down). Hand-feel keys pinned to 0 so a
+  // switch from a rough style reads instantly as the clean counterpoint.
+  'wireframe':       { wobble: 0, jaggedness: 0, bowing: 0, strokeWidth: 0.75, simplification: 1.0, inkIntensity: 1.0, fillOpacity: 1.0, texture: 'none' },
   // 2026-06-08 default calibration bump per Sebs: each style should READ as
   // itself at the default thumbnail scale (~140px), not as near-clean. Prior
   // values made wet-ink / charcoal / newsprint / risograph almost
@@ -2184,17 +2184,244 @@ function cloneSvg(srcContainer: HTMLDivElement | null, dstContainer: HTMLDivElem
   return clone;
 }
 
-// (applyWireframeTransform REMOVED — Rock B 2026-06-12, Sebs ratified. The
-// SVG "wireframe" stub replaced every child with its axis-aligned bounding
-// rect, which rendered bounding-box garbage on real drawn art. The option is
-// gone from F3_SVG_STYLES (no dropdown pick, parsers reject persisted ids →
-// legacy rows fall back to rough-handdrawn). Real wireframe = Three.js
-// WireframeGeometry on the 3D path, post-makeathon.)
+// ─── WIREFRAME — true-geometry uniform-hairline schematic (Rock Y rebuild) ──
+//
+// Sebs 2026-06-12 "build it fr real" — supersedes the Rock B stub removal.
+// The OLD stub replaced every child with its axis-aligned bounding rect
+// (bounding-box garbage on real art — that render is the explicit
+// anti-fixture; never reintroduce it). The rebuild renders every piece of the
+// artwork as its TRUE GEOMETRY in clean technical linework:
+//
+//   - every renderable leaf goes stroke-only at ONE uniform weight
+//     (m.strokeWidth, interpreted in SCREEN px via
+//     vector-effect:non-scaling-stroke — a 682×986-viewBox upload and an
+//     800×600 drawn doodle render the SAME hairline; without it, user-space
+//     hairlines vanish on large-viewBox uploads)
+//   - painted fills are REMOVED and their boundary (the element's own
+//     geometry — for SVG the fill region's edge IS the path) renders as a
+//     line. Fill-boundary lines take the lighter construction register:
+//     0.75× weight + stroke-opacity from m.fillOpacity. Source-stroked
+//     geometry = primary contour: full weight, full opacity. (Pen-tip ink
+//     ribbons and tone-fill band patches are filled geometry → they render
+//     as their outline, which is their true geometry.)
+//   - ink is fixed to the page ink (var(--dir-text-primary)) — ink-black
+//     schematic register; palettes deliberately not exposed
+//   - NO hand-feel: this branch never enters the rough/smartHachure pipeline
+//     (wobble/multiStroke/penTip structurally inert) and applyTexture is
+//     skipped at the call site — wireframe is the clean schematic
+//     counterpoint to every other style
+//   - Simplify rides along (doc 22 semantics, ε(s) = 3.0 × 4^(s−1), s=1 ≡
+//     canonical ε=3.0): RDP applies to POLYLINE geometry only — polygon/
+//     polyline elements + paths whose d is pure move/line (drawn commit-layer
+//     strokes, traced art like the rose). Curve commands stay untouched —
+//     faceting a circle into segments would betray "true geometry".
+//   - pass-through: text stays legible; <image> is raster (no contour to
+//     extract) → honest pass-through, NEVER a bounding box; defs/clipPath/
+//     mask/pattern/marker/symbol/gradient/filter subtrees untouched.
+
+const WIREFRAME_INK = 'var(--dir-text-primary)';
+/** Fill-boundary lines render at this fraction of the primary weight — the
+ *  light "construction line" register vs primary contours. */
+const WIREFRAME_BOUNDARY_RATIO = 0.75;
+const WIREFRAME_RENDERABLE = new Set(['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon']);
+// Non-rendered containers — geometry inside these is referenced, not drawn;
+// restyling it would corrupt clip shapes / gradient stops / marker glyphs.
+// SVG tagNames are case-preserving, so both exact and lowercase are listed.
+const WIREFRAME_SKIP_CONTAINERS = new Set([
+  'defs', 'clipPath', 'clippath', 'mask', 'pattern', 'marker', 'symbol',
+  'linearGradient', 'lineargradient', 'radialGradient', 'radialgradient', 'filter',
+]);
+
+/** True when a computed paint value actually puts ink on the page. */
+function wireframePaintVisible(paint: string | null | undefined): boolean {
+  if (!paint) return false;
+  const p = paint.trim();
+  if (p === 'none' || p === 'transparent') return false;
+  const rgba = p.match(/^rgba\([^)]*,\s*([\d.]+)\s*\)$/);
+  if (rgba && parseFloat(rgba[1]) === 0) return false;
+  return true;
+}
+
+function wireframeInsideSkipContainer(el: Element, root: Element): boolean {
+  let p = el.parentElement;
+  while (p && p !== root) {
+    if (WIREFRAME_SKIP_CONTAINERS.has(p.tagName)) return true;
+    p = p.parentElement;
+  }
+  return false;
+}
+
+type WireframeSubPath = { points: Array<[number, number]>; closed: boolean };
+
+/** Parse a path `d` into absolute polylines IFF it contains only move/line
+ *  commands (M m L l H h V v Z z). Returns null for anything with curves —
+ *  those keep their true geometry (no resample-faceting). */
+function parseLinearPathD(d: string): WireframeSubPath[] | null {
+  if (/[^MmLlHhVvZz0-9eE+\-.,\s]/.test(d)) return null;
+  const tokens = d.match(/[MmLlHhVvZz]|[+-]?(?:\d*\.\d+|\d+)(?:[eE][+-]?\d+)?/g);
+  if (!tokens || tokens.length === 0) return null;
+  const subs: WireframeSubPath[] = [];
+  let cur: WireframeSubPath | null = null;
+  let x = 0;
+  let y = 0;
+  let i = 0;
+  let cmd = '';
+  let guard = tokens.length * 2 + 8; // malformed-d safety, never spins
+  const num = () => parseFloat(tokens[i++] ?? 'NaN');
+  while (i < tokens.length && guard-- > 0) {
+    const t = tokens[i];
+    if (/^[MmLlHhVvZz]$/.test(t)) {
+      cmd = t;
+      i++;
+      if (cmd === 'Z' || cmd === 'z') {
+        if (cur && cur.points.length > 0) {
+          cur.closed = true;
+          [x, y] = cur.points[0];
+        }
+        continue;
+      }
+      if (i >= tokens.length) break;
+    } else if (cmd === '' || cmd === 'Z' || cmd === 'z') {
+      return null; // bare number with no live command — malformed
+    }
+    const rel = cmd === cmd.toLowerCase();
+    switch (cmd.toUpperCase()) {
+      case 'M': {
+        const nx = num();
+        const ny = num();
+        x = rel ? x + nx : nx;
+        y = rel ? y + ny : ny;
+        cur = { points: [[x, y]], closed: false };
+        subs.push(cur);
+        cmd = rel ? 'l' : 'L'; // implicit lineto after moveto per spec
+        break;
+      }
+      case 'L': {
+        const nx = num();
+        const ny = num();
+        x = rel ? x + nx : nx;
+        y = rel ? y + ny : ny;
+        cur?.points.push([x, y]);
+        break;
+      }
+      case 'H': {
+        const nx = num();
+        x = rel ? x + nx : nx;
+        cur?.points.push([x, y]);
+        break;
+      }
+      case 'V': {
+        const ny = num();
+        y = rel ? y + ny : ny;
+        cur?.points.push([x, y]);
+        break;
+      }
+      default:
+        return null;
+    }
+    if (Number.isNaN(x) || Number.isNaN(y)) return null;
+  }
+  if (guard <= 0) return null;
+  return subs.length > 0 ? subs : null;
+}
+
+function buildLinearPathD(subs: WireframeSubPath[]): string {
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return subs
+    .map(({ points, closed }) => {
+      if (points.length === 0) return '';
+      const [first, ...rest] = points;
+      const head = `M ${r2(first[0])} ${r2(first[1])}`;
+      const body = rest.map(([px, py]) => `L ${r2(px)} ${r2(py)}`).join(' ');
+      return `${head}${body ? ` ${body}` : ''}${closed ? ' Z' : ''}`;
+    })
+    .filter(Boolean)
+    .join(' ');
+}
+
+function applyWireframeSchematic(svgEl: SVGSVGElement, m: F3ModifiersState) {
+  const primaryW = Math.max(0.25, m.strokeWidth);
+  const boundaryW = Math.max(0.25, m.strokeWidth * WIREFRAME_BOUNDARY_RATIO);
+  const boundaryOpacity = Math.min(1, Math.max(0, m.fillOpacity));
+  // Doc-22 Simplify mapping — same ε math as the drawn-path pipeline.
+  const eps = 3.0 * Math.pow(4, m.simplification - 1);
+
+  const all = Array.from(svgEl.querySelectorAll('*')) as SVGElement[];
+  for (const el of all) {
+    const tag = el.tagName.toLowerCase();
+    if (!WIREFRAME_RENDERABLE.has(tag)) continue; // text/image/etc pass through
+    if (wireframeInsideSkipContainer(el, svgEl)) continue;
+
+    let cs: CSSStyleDeclaration;
+    try {
+      cs = getComputedStyle(el);
+    } catch {
+      continue;
+    }
+    // Effective paints via computed style — resolves inheritance from <g>
+    // fill attrs, CSS classes, currentColor, var() tokens AND the SVG
+    // default black fill on bare elements (the rose's traced paths).
+    const hasStroke =
+      wireframePaintVisible(cs.stroke) &&
+      parseFloat(cs.strokeWidth || '1') > 0 &&
+      parseFloat(cs.strokeOpacity || '1') > 0;
+    // <line> never paints fill — fill is meaningless on it.
+    const hasFill =
+      tag !== 'line' &&
+      wireframePaintVisible(cs.fill) &&
+      parseFloat(cs.fillOpacity || '1') > 0;
+    // Invisible helper geometry stays invisible — schematic never invents ink.
+    if (!hasStroke && !hasFill) continue;
+
+    // Source-stroked geometry = primary contour. Fill-only geometry = its
+    // boundary as a construction line (lighter register).
+    const isBoundary = !hasStroke;
+
+    // Inline style wins over presentation attributes, inherited <g> attrs and
+    // non-!important CSS — the schematic owns these paints unconditionally.
+    el.style.setProperty('fill', 'none');
+    el.style.setProperty('stroke', WIREFRAME_INK);
+    el.style.setProperty('stroke-width', String(isBoundary ? boundaryW : primaryW));
+    el.style.setProperty('stroke-opacity', String(isBoundary ? boundaryOpacity : 1));
+    el.style.setProperty('stroke-linecap', 'round');
+    el.style.setProperty('stroke-linejoin', 'round');
+    // Uniform weight in SCREEN px regardless of the source viewBox scale.
+    el.setAttribute('vector-effect', 'non-scaling-stroke');
+    el.setAttribute('data-f3-wireframe', isBoundary ? 'boundary' : 'contour');
+
+    // ── Simplify (linear geometry only) ──────────────────────────────────
+    if (tag === 'path') {
+      const d = el.getAttribute('d');
+      if (d) {
+        const subs = parseLinearPathD(d);
+        if (subs) {
+          const simplified = subs.map((s) => ({ ...s, points: rdp(s.points, eps) }));
+          el.setAttribute('d', buildLinearPathD(simplified));
+        }
+      }
+    } else if (tag === 'polyline' || tag === 'polygon') {
+      const ptsAttr = el.getAttribute('points');
+      if (ptsAttr) {
+        const nums = ptsAttr.match(/[+-]?(?:\d*\.\d+|\d+)(?:[eE][+-]?\d+)?/g);
+        if (nums && nums.length >= 4) {
+          const pts: Array<[number, number]> = [];
+          for (let k = 0; k + 1 < nums.length; k += 2) {
+            pts.push([parseFloat(nums[k]), parseFloat(nums[k + 1])]);
+          }
+          const simplified = rdp(pts, eps);
+          el.setAttribute('points', simplified.map(([px, py]) => `${Math.round(px * 100) / 100},${Math.round(py * 100) / 100}`).join(' '));
+        }
+      }
+    }
+    // rect/circle/ellipse/line carry exact parametric geometry — nothing to
+    // simplify without faceting them (true-geometry rule).
+  }
+}
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────
 
 const NEEDS_DOM_CLONE: F3SvgStyle[] = [
-  'rough-handdrawn', 'sketchy', 'bold-ink', 'stipple', 'risograph', 'wet-ink', 'charcoal', 'newsprint',
+  'rough-handdrawn', 'sketchy', 'bold-ink', 'stipple', 'risograph', 'wet-ink', 'charcoal', 'newsprint', 'wireframe',
 ];
 
 export function SvgStyleTransform({
@@ -2264,8 +2491,16 @@ export function SvgStyleTransform({
         applyRoughTransform(clone, m);
       } else if (style === 'risograph') {
         applyRisographTransform(clone, m);
+      } else if (style === 'wireframe') {
+        applyWireframeSchematic(clone, m);
       }
-      applyTexture(clone, m.texture, style, m);
+      // Wireframe is the clean schematic counterpoint — grain/dot textures are
+      // hand-feel surface noise and structurally suppressed for it (its
+      // modifier set doesn't expose texture, so a stale texture value carried
+      // over from another style must not leak in).
+      if (style !== 'wireframe') {
+        applyTexture(clone, m.texture, style, m);
+      }
     } catch (err) {
       // ── DEGRADE-TO-RAW (Rock B resilience) ─────────────────────────────
       // The style engine threw mid-pass. Blanking the art (or letting the

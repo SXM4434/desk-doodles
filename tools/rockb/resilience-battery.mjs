@@ -19,7 +19,7 @@ import fs from 'node:fs';
 const require = createRequire(import.meta.url);
 const { chromium } = require('/Users/sebs/Desktop/Projects/portfolio/tools/lab-screenshots/node_modules/playwright');
 
-const BASE = 'http://localhost:5182';
+const BASE = process.env.DD_BASE || 'http://localhost:5182';
 const OUT = '/tmp/dd-rockb';
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -359,7 +359,12 @@ const runPhase = (k) => !ONLY || ONLY.includes(k);
         restored === baselineCount, `count=${restored}/${baselineCount}`);
     }
 
-    // C4 — wireframe legacy-config fallback via synthetic INSERT (+ control)
+    // C4 — persisted-style round-trip via synthetic INSERT (+ control).
+    // ROCK Y UPDATE 2026-06-12 (Sebs "build it fr real" — overrides the Rock B
+    // stub removal): wireframe is BACK in F3_SVG_STYLES as a real schematic
+    // register, so persisted 'wireframe' configs now parse AS wireframe and
+    // render through applyWireframeSchematic — no more fallback. C4.1 flipped
+    // accordingly.
     const synthSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><circle cx="50" cy="50" r="40" fill="none" stroke="#1a1a1a" stroke-width="3"/></svg>';
     const mkRow = (id, x, cfg) => ({
       id, session_id: 'synthetic-foreign-session', svg: synthSvg,
@@ -376,8 +381,8 @@ const runPhase = (k) => !ONLY || ONLY.includes(k);
     await page.waitForTimeout(900);
     const wireObj = await wrapperAt(page, 4242);
     const sketchObj = await wrapperAt(page, 4444);
-    record('C4.1', 'persisted wireframe config falls back to rough-handdrawn at parse',
-      !!wireObj && wireObj.svgStyle === 'rough-handdrawn',
+    record('C4.1', 'persisted wireframe config pins the REAL wireframe register (Rock Y)',
+      !!wireObj && wireObj.svgStyle === 'wireframe',
       `data-svg-style=${wireObj && wireObj.svgStyle}`);
     record('C4.2', 'control: valid sketchy config DOES pin its style (assertion not vacuous)',
       !!sketchObj && sketchObj.svgStyle === 'sketchy',
@@ -388,7 +393,7 @@ const runPhase = (k) => !ONLY || ONLY.includes(k);
     await ctx.close();
   }
 
-  // ════ PHASE D — WIREFRAME GONE FROM THE DROPDOWN ══════════════════════════
+  // ════ PHASE D — STYLE DROPDOWN INVENTORY (Rock Y: Wireframe is BACK) ═════
   if (runPhase('D')) {
     const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
     const page = await ctx.newPage();
@@ -399,12 +404,15 @@ const runPhase = (k) => !ONLY || ONLY.includes(k);
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${OUT}/13-style-dropdown.png` });
     const body = await page.evaluate(() => document.body.innerText);
+    // Rock Y 2026-06-12: Wireframe rebuilt for real — it must be PRESENT now,
+    // with the honest schematic detail line. 11 styles total.
     const hasWire = /Wireframe/i.test(body);
+    const hasHonestDetail = /Uniform hairline schematic — contours only/i.test(body);
     const optionCount = await page.evaluate(() =>
-      ['Clean', 'Outline only', 'Rough hand-drawn', 'Sketchy', 'Bold ink', 'Wet ink', 'Stipple', 'Charcoal', 'Risograph', 'Newsprint']
+      ['Clean', 'Outline only', 'Rough hand-drawn', 'Sketchy', 'Bold ink', 'Wet ink', 'Stipple', 'Charcoal', 'Risograph', 'Newsprint', 'Wireframe']
         .filter((l) => document.body.innerText.includes(l)).length);
-    record('D1', 'style dropdown: 10 styles present, Wireframe absent',
-      !hasWire && optionCount === 10, `wireframe=${hasWire} others=${optionCount}/10`);
+    record('D1', 'style dropdown: 11 styles present incl. real Wireframe + honest detail',
+      hasWire && hasHonestDetail && optionCount === 11, `wireframe=${hasWire} detail=${hasHonestDetail} count=${optionCount}/11`);
     await ctx.close();
   }
 

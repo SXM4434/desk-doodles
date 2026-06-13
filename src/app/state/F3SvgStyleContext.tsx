@@ -17,14 +17,14 @@ export type F3SvgStyle =
   | 'charcoal'
   | 'risograph'
   | 'newsprint'
-  // RETIRED (Rock B 2026-06-12, Sebs ratified): 'wireframe' is no longer in
-  // F3_SVG_STYLES — the SVG bounding-box stub rendered garbage on real art.
-  // The id stays in the union so persisted legacy render_configs and the
-  // per-style Record tables (STYLE_PRESETS, MODIFIER_SETS_BY_STYLE) keep
-  // typechecking; every parser validates against F3_SVG_STYLES membership,
-  // so legacy 'wireframe' rows fall back to rough-handdrawn at parse.
-  // Real wireframe rides the 3D path (Three.js WireframeGeometry),
-  // post-makeathon.
+  // REBUILT FOR REAL (Rock Y 2026-06-12, Sebs: "build it fr real" — overrides
+  // the Rock B stub removal): wireframe is now a true schematic register —
+  // every path/shape renders as its TRUE GEOMETRY in uniform hairline strokes
+  // (fills become their outline boundary, no hand-feel jitter, ink black).
+  // Implementation: applyWireframeSchematic in SvgStyleTransform.tsx. The old
+  // bounding-box stub (replaced children with bbox rects) is the explicit
+  // anti-fixture — never reintroduce it. Persisted legacy 'wireframe'
+  // render_configs now parse as wireframe again and get the real treatment.
   | 'wireframe';
 
 export type F3SvgStyleMeta = {
@@ -46,10 +46,10 @@ export const F3_SVG_STYLES: F3SvgStyleMeta[] = [
   { id: 'charcoal',        label: 'Charcoal',        detail: 'feTurbulence filter overlay on strokes — graphite register.', isRoughFamily: false },
   { id: 'risograph',       label: 'Risograph',       detail: 'Each path duplicated in 2 colors with offset — print-shop register.', isRoughFamily: false },
   { id: 'newsprint',       label: 'Newsprint',       detail: 'Dot-pattern fills via SVG pattern — newspaper register.', isRoughFamily: false },
-  // 'wireframe' REMOVED from this list (Rock B 2026-06-12 — see the union
-  // type note above). Membership in THIS array is what the dropdowns render
-  // and what every render_config parser validates against, so removal here
-  // both kills the option and makes persisted legacy ids fall back at parse.
+  // Rock Y 2026-06-12: wireframe RESTORED as a real style (see union note
+  // above). Membership here re-enables the dropdown option and makes every
+  // render_config parser accept persisted 'wireframe' ids again.
+  { id: 'wireframe',       label: 'Wireframe',       detail: 'Uniform hairline schematic — contours only. True geometry, no hand-feel.', isRoughFamily: false },
 ];
 
 type Ctx = {

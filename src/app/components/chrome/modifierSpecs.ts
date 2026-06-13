@@ -46,7 +46,24 @@ export const UNIVERSAL_MODIFIERS = ['inkIntensity', 'fillOpacity', 'strokePalett
 export const MODIFIER_SETS_BY_STYLE: Record<F3SvgStyle, readonly string[]> = {
   'clean':           ['inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
   'outline-only':    ['strokeWidth', 'inkIntensity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
-  'wireframe':       ['strokeWidth', 'inkIntensity', 'strokePalette', 'fillPalette', 'texture', 'textureIntensity'],
+  // Rock Y 2026-06-12 — wireframe rebuilt as a REAL schematic register.
+  // Honest set, nothing fake:
+  //   strokeWidth    → THE uniform line weight, in screen px (the transform
+  //                    sets vector-effect:non-scaling-stroke; hairline 0.75
+  //                    default via STYLE_PRESETS)
+  //   simplification → doc-22 Simplify, rides along: RDP on polyline geometry
+  //                    (drawn strokes, traced M/L paths, polygons); curve
+  //                    commands keep their true geometry
+  //   fillOpacity    → fill-BOUNDARY line prominence (fills render as outline
+  //                    lines at 0.75× weight; this slider is their
+  //                    stroke-opacity — dial down for construction-line feel)
+  //   inkIntensity   → universal wrapper opacity
+  // Deliberately ABSENT (suppressed by the register, not hidden-but-active):
+  // wobble/jaggedness/bowing/multiStroke/penTip/sketching (no hand-feel — the
+  // branch never enters the rough pipeline), texture/textureIntensity
+  // (applyTexture is skipped for wireframe), palettes (ink is fixed black —
+  // the clean schematic counterpoint to every other style).
+  'wireframe':       ['strokeWidth', 'simplification', 'fillOpacity', 'inkIntensity'],
   'wet-ink':         ['blurAmount', 'bleed', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'textureIntensity'],
   'charcoal':        ['grainIntensity', 'smudgeAmount', 'pressureVariance', 'inkIntensity', 'fillOpacity', 'strokePalette', 'fillPalette', 'textureIntensity'],
   // 2026-06-09: dotSize + dotSpacing now wired in TextureFilterDefs stipple
