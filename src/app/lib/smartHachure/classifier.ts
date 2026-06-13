@@ -104,14 +104,50 @@ const RULE_text_label: Rule = {
 // Cluster B — STRUCTURAL FRAMES
 // Outer rectangles that enclose other content. Render as clean outlines.
 
+// Dark band floor (I-2, 09-LOCKED-MODEL §I-2): source darkness ≥ 0.55 is the
+// "Dark" identity band. At/above it a region MUST read as filled tonal content,
+// never as paper-white reservation. A frame border is a LIGHT wash (darkness
+// ≈ 0.08); a full-bleed near-black poster body, document cover, dark photo, or
+// TV screen is FILLED CONTENT that happens to enclose siblings (knockout text /
+// logos painted on top). Treating it as a structural frame — or dropping it to
+// the paper fallback when it encloses only 1–2 knockout siblings (below the
+// frame rule's ≥3 floor yet above the root-tonal rules' "encloses 0" guard) —
+// drops its fill → the empty-outline bug (shading-conversion-fidelity-catalog
+// P11: outer-frame-encloses-all + paper-fallback, same dark-fill-dropped root).
+// The darkness-aware branch below keeps LIGHT enclosing rects as frames and
+// routes DARK ones to the fillable tonal role their darkness band deserves.
+const DARK_BAND_FLOOR = 0.55;
+const NEAR_BLACK_FLOOR = 0.8;
+
 const RULE_outer_frame_encloses_all: Rule = {
   id: 'outer-frame-encloses-all',
   description:
-    'Z-index 0 element that encloses ≥3 siblings + has area > 80% of parent → structural frame',
+    'Z-index 0 element that fills > 80% of its parent and encloses siblings. ' +
+    'LIGHT (darkness < 0.55) + ≥3 enclosed siblings → structural frame (clean outline). ' +
+    'DARK (darkness ≥ 0.55) + ≥1 enclosed knockout sibling → filled content body ' +
+    '(poster/cover/screen): routes to its darkness-band tonal role so it SHADES (I-2), ' +
+    'never an empty outline.',
   evaluate: (s) => {
     if (s.zIndex !== 0) return null;
-    if (s.enclosesSiblingCount < 3) return null;
     if (s.areaFractionOfParent < 0.8) return null;
+    // Darkness gate. A large enclosing rect in the Dark/Near-black band is a
+    // filled poster body, not a frame border. Even ONE knockout sibling (logo
+    // or title painted on top) is enough to recognize it as content — without
+    // this the 1–2-sibling dark posters fall through both the frame floor (≥3)
+    // and the root-tonal "encloses 0" guard, landing on paper (empty). Route
+    // it to the fillable role its band assigns (I-2: Dark 0.55–0.80 →
+    // dense-tonal; Near-black 0.80–1.00 → solid-content).
+    if (s.darknessL >= DARK_BAND_FLOOR) {
+      if (s.enclosesSiblingCount < 1) return null; // a 0-sibling dark rect is root-tonal's job
+      return {
+        role: s.darknessL >= NEAR_BLACK_FLOOR ? 'solid-content' : 'dense-tonal',
+        confidence: 0.85,
+      };
+    }
+    // LIGHT enclosing rect: the original frame heuristic, UNCHANGED — needs ≥3
+    // enclosed siblings to read as a wash-bordered card frame. No regression
+    // for thin wash-bordered cards (darkness ≈ 0.08).
+    if (s.enclosesSiblingCount < 3) return null;
     return { role: 'structural-frame', confidence: 0.85 };
   },
 };
