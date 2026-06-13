@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- 2D audit-catalog STYLE sweep harness — repo-side tool only, NOT part of the
+     Make drag-drop set and NOT wired into the app. Served by an isolated vite
+     preview build. Renders the REAL /audit inventory (deduped 197 shapes:
+     93 Trophy Wall PinShape + 104 Pegboard PegToolShape) through the REAL
+     SvgStyleTransform 2D path (smartHachure ON), wrapped in the REAL providers.
+     The window.__sweep API forces any of the 11 F3 SVG styles globally and
+     reports the rendered inventory, so tools/2d/audit-style-sweep.mjs can drive
+     one style at a time, screenshot every fixed-size cell, and pixel-analyze.
+     This is the 2D twin of tools/3d/audit-sweep.html. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>2D audit-catalog style sweep harness</title>
+    <style>
+      :root { --dir-bg: #fdfcf9; --dir-text-primary: #3b362e; --dir-border: #d8d2c6; }
+      html, body { margin: 0; padding: 0; background: #fdfcf9; }
+      body { font: 12px/1.4 monospace; color: #3b362e; }
+      /* Fixed-size cell so screenshots are deterministic. Each audit cell is a
+         square art frame (paper bg) the playwright driver clips by data-shape. */
+      #grid { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tools/2d/audit-style-sweep-harness.tsx"></script>
+  </body>
+</html>
