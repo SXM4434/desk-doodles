@@ -38,6 +38,7 @@ import {
 import {
   CollapsiblePanel,
   PanelToggle,
+  useElementNarrow,
   useMinimizeUi,
   usePanelOpen,
 } from '../chrome/CollapsiblePanel';
@@ -910,8 +911,17 @@ export function DeskPage() {
       try {
         open = await getOpenDesk();
       } catch {
-        // getOpenDesk threw (table absent / network) — flat fallback below.
-        open = null;
+        // getOpenDesk REJECTED. publish.ts only rejects getOpenDesk on a real
+        // connection failure (timeout / network / non-missing-table error) —
+        // a pre-v2 DB resolves null, it never throws. So a throw here means the
+        // link is down: surface OFFLINE immediately instead of chaining a
+        // SECOND full-length probe (the flat-fallback listDoodles) that is
+        // guaranteed to time out the same way (that double timeout = ~16s of
+        // "Connecting", the demo-killer). The 5s auto-retry / Retry pill / the
+        // navigator 'online' event all re-run this resolve, so recovery is
+        // automatic once the link is back.
+        if (!cancelled) setFeedStatus('offline');
+        return;
       }
       if (cancelled) return;
 
@@ -1038,6 +1048,16 @@ export function DeskPage() {
   const deskRef = useRef<HTMLDivElement>(null);
   // Monotonic counter for object ids — deterministic within a session.
   const counterRef = useRef(0);
+
+  // NARROW-VIEWPORT HEADER (responsive chrome fix): the header's three control
+  // clusters (identity · zoom unit · scope/panel/live) overflow horizontally
+  // once the header box gets tight (the sweep confirmed overflow at ~820px).
+  // Measure the HEADER's own box (not the viewport — open panels eat width) and
+  // switch to a wrapping two-row layout below the breakpoint so the clusters
+  // stack cleanly instead of spilling off the right edge. 880px gives the wide
+  // layout headroom before it would clip; below it, wrap.
+  const headerRef = useRef<HTMLElement>(null);
+  const headerNarrow = useElementNarrow(headerRef, 880);
 
   // ── Camera state ─────────────────────────────────────────────────────────
   // State drives the render; the ref mirror is updated inside the setter so
@@ -1688,20 +1708,40 @@ export function DeskPage() {
           pushing them off the row axis; the LIVE chip centers with the
           pill row because everything centers on the same single row. */}
       <header
+        ref={headerRef}
         style={{
           padding: '16px 24px',
           borderBottom: '1px solid var(--dir-border)',
-          display: 'grid',
-          gridTemplateColumns: '1fr auto 1fr',
+          // WIDE: the crafted 3-column row (identity · Add · controls) on one
+          // baseline. NARROW: a wrapping flex so the clusters stack instead of
+          // overflowing the right edge — identity + Add on row 1, the control
+          // clusters wrap onto row 2. The grid is restored the instant the
+          // header has room again (measured, not a static viewport query).
+          display: headerNarrow ? 'flex' : 'grid',
+          flexWrap: headerNarrow ? 'wrap' : undefined,
+          gridTemplateColumns: headerNarrow ? undefined : '1fr auto 1fr',
           alignItems: 'center',
-          gap: 20,
+          // Tighter cross-cluster gap when wrapped (the inter-cluster rhythm is
+          // 20px; on two rows the row-gap is what reads, kept a touch tighter).
+          gap: headerNarrow ? '12px 16px' : 20,
+          rowGap: headerNarrow ? 14 : undefined,
           background: 'var(--dir-bg)',
         }}
       >
         {/* IDENTITY side — [wordmark · desk name · count] on one shared
             baseline (12px intra), then the DRAWER toggle with breathing room
             (20px inter; toggles-always-in-chrome, #30 left panel). */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20, minWidth: 0 }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 20,
+            minWidth: 0,
+            // NARROW: take the row-1 leading space so the Add CTA sits at the
+            // trailing edge; WIDE: the grid's first 1fr column owns sizing.
+            flex: headerNarrow ? '1 1 auto' : undefined,
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
             <NavLink
               to="/"
@@ -1749,14 +1789,31 @@ export function DeskPage() {
           />
         </div>
 
-        <button onClick={() => setDrawOpen(true)} style={CTA}>
+        <button onClick={() => setDrawOpen(true)} style={{ ...CTA, flexShrink: 0 }}>
           Add doodle
         </button>
 
         {/* CONTROL side — four clusters at the 20px inter-cluster rhythm:
-            scope gate · zoom unit · panel toggle · live chip. One row, one
-            vertical center — nothing two-line in flow. */}
-        <div style={{ justifySelf: 'end', display: 'flex', gap: 20, alignItems: 'center' }}>
+            scope gate · zoom unit · panel toggle · live chip. WIDE: one row,
+            grid-end aligned, one vertical center. NARROW: wraps to its own full
+            row (flexBasis 100%) and its four sub-clusters may wrap among
+            themselves at very tight widths — no horizontal overflow. The
+            row-1→row-2 gap (header rowGap) plus a little bottom padding here
+            leaves the absolutely-positioned Pen|Desk caption its hang space. */}
+        <div
+          style={{
+            justifySelf: headerNarrow ? undefined : 'end',
+            display: 'flex',
+            gap: headerNarrow ? '10px 16px' : 20,
+            alignItems: 'center',
+            flexWrap: headerNarrow ? 'wrap' : undefined,
+            flexBasis: headerNarrow ? '100%' : undefined,
+            justifyContent: headerNarrow ? 'flex-start' : undefined,
+            // Room for the scope caption that hangs below the Pen|Desk pills
+            // when the cluster is the last thing on a wrapped row.
+            paddingBottom: headerNarrow ? 10 : undefined,
+          }}
+        >
           {/* THE PEN|DESK GATE (D-7 ratified) — scope is always visible, never
               implicit. Pen: the panel styles the draw popup + your NEXT doodle;
               placed records hold their own looks. Desk: the viewer-local sweep

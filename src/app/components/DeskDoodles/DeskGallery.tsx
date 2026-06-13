@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
-import { SECTION_LABEL, CHIP } from '../../lib/chromeStyles';
+import { PILL, SECTION_LABEL, CHIP } from '../../lib/chromeStyles';
 import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import {
@@ -20,9 +20,13 @@ import { sanitizeSvgMarkup } from '../../lib/svgUpload';
 // first ~6 doodles scattered on a tiny warm-paper surface — see MiniDesk).
 // Clicking a card opens that desk at /desk?desk=<desk_index> (DeskPage reads).
 //
-// Two load states are not crashes: a pre-v2 DB makes listDesks return [] and a
-// thrown listDesks (any other failure) is caught here — both show a friendly
-// empty state per the prompt's GRACEFUL FALLBACK requirement.
+// Load states are not crashes. A pre-v2 DB makes listDesks return [] (a clean
+// EMPTY state); a thrown/timed-out listDesks is caught into a distinct ERROR
+// state (honest "couldn't reach the wall" + Retry), NOT folded into the empty
+// placeholder — a hang or network failure is a different truth than "no desks
+// yet", and the live demo must say which it is. listDesks() is timeout-bounded
+// in publish.ts, so a slow/unreachable backend rejects here instead of leaving
+// the gallery stuck on "Loading the wall…" forever (the demo-killer fix).
 
 type LoadState =
   | { phase: 'loading' }
@@ -31,27 +35,33 @@ type LoadState =
 
 export function DeskGallery() {
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
+  // Bumped by the Retry pill — re-runs the load effect from scratch.
+  const [reloadNonce, setReloadNonce] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
+    setState({ phase: 'loading' });
     listDesks()
       .then((desks) => {
         if (!cancelled) setState({ phase: 'ready', desks });
       })
       .catch(() => {
-        // Table absent / network / RLS — never crash the gallery.
+        // Table absent / network / RLS / TIMEOUT — never crash, never hang;
+        // surface the honest error state with a Retry affordance.
         if (!cancelled) setState({ phase: 'error' });
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadNonce]);
+
+  const retry = useCallback(() => setReloadNonce((n) => n + 1), []);
 
   const desks = state.phase === 'ready' ? state.desks : [];
-  // "Empty" covers both the genuine no-desks-yet case and the caught error —
-  // both render the same friendly placeholder rather than a crash.
-  const isEmpty = state.phase === 'error' || (state.phase === 'ready' && desks.length === 0);
+  // EMPTY is now ONLY the genuine no-desks-yet case (connected, nothing there).
+  // ERROR is its own state below — honest copy + Retry, not the empty placeholder.
+  const isEmpty = state.phase === 'ready' && desks.length === 0;
 
   return (
     <div
@@ -118,7 +128,21 @@ export function DeskGallery() {
           <div style={centeredNoteStyle}>Loading the wall…</div>
         )}
 
-        {state.phase !== 'loading' && isEmpty && (
+        {/* ERROR — honest "couldn't reach" + Retry. Distinct from empty: a
+            timeout / network failure is not "no desks yet". */}
+        {state.phase === 'error' && (
+          <div style={centeredNoteStyle}>
+            Couldn’t reach the wall.<br />
+            Check your connection — the desks are still there.
+            <div style={{ marginTop: 16 }}>
+              <button type="button" onClick={retry} style={{ ...PILL }}>
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+
+        {state.phase === 'ready' && isEmpty && (
           <div style={centeredNoteStyle}>
             No desks on the wall yet.<br />
             Be the first — start doodling and your desk shows up here.

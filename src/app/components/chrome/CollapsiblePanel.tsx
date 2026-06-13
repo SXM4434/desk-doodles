@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { PILL } from '../../lib/chromeStyles';
 
@@ -13,6 +14,41 @@ import { PILL } from '../../lib/chromeStyles';
 // transition stays under 300ms to bound the layout-reflow cost.
 const DURATION = 260;
 const EASE = 'cubic-bezier(0.2, 0, 0, 1)';
+
+/**
+ * Measure an element against a width breakpoint via ResizeObserver — returns
+ * true while the element's content-box width is at or below `breakpoint`.
+ *
+ * Why measured, not a window media query (per feedback_no_static_pixels_when_
+ * viewport_relative): a page header's available width is NOT the viewport — open
+ * side panels eat into it, and the same header renders inside the desk page,
+ * the playground and (post-makeathon) embeds at different widths. The header
+ * cluster overflow the narrow-viewport fix targets is a function of the
+ * HEADER's box, so the header's box is what we watch. Defaults false on the
+ * server / before first measure so the desktop (wide) layout is the SSR-safe
+ * default and only collapses once a real narrow measurement lands.
+ */
+export function useElementNarrow(
+  ref: RefObject<HTMLElement>,
+  breakpoint: number,
+): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      // content-box width — the space the header's children actually share.
+      const w = entries[0]?.contentRect.width ?? el.clientWidth;
+      setNarrow(w <= breakpoint);
+    });
+    ro.observe(el);
+    // Seed from the current width so the first paint after mount is correct
+    // even before the observer's initial callback.
+    setNarrow(el.clientWidth <= breakpoint);
+    return () => ro.disconnect();
+  }, [ref, breakpoint]);
+  return narrow;
+}
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(

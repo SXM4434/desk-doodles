@@ -84,6 +84,66 @@ export interface PublishDoodleResult {
 const TABLE = 'doodles';
 const DESKS_TABLE = 'desks';
 
+// ─── CONNECTION TIMEOUT (offline/hang fix — demo-killer) ────────────────────
+// supabase-js does NOT impose a request deadline: a slow or unreachable
+// backend (cold project, throttled network, dead realtime socket) leaves the
+// awaited promise PENDING FOREVER — it neither resolves nor rejects. Every
+// load path below (getOpenDesk / listDesks / listDoodles / listDoodlesForDesk)
+// is awaited by a page that shows "Connecting…" / "Loading…" until it settles,
+// so a hung request strands the UI on that spinner with no error and no retry —
+// exactly the live-demo failure mode. withTimeout() races the real promise
+// against a deadline and REJECTS with a typed TimeoutError if the deadline wins,
+// converting an infinite hang into the same honest error path a real rejection
+// takes (the page's .catch → offline state + Retry). The underlying request is
+// left to settle on its own (we can't cancel the in-flight fetch from here);
+// the timeout only frees the UI from waiting on it.
+
+/** Default deadline for a single load request. ~8s is generous enough that a
+ *  merely-slow-but-alive backend still succeeds, tight enough that a true hang
+ *  surfaces the offline state well inside a demo's patience window. */
+export const LOAD_TIMEOUT_MS = 8000;
+
+/** Error thrown when a load request misses its deadline. A distinct class so
+ *  callers / tests can tell "timed out" from "the server said no". */
+export class TimeoutError extends Error {
+  constructor(label: string, ms: number) {
+    super(`${label} timed out after ${ms}ms`);
+    this.name = 'TimeoutError';
+  }
+}
+
+/** Race a promise against a deadline. Resolves/rejects with the original
+ *  promise if it settles first; rejects with TimeoutError if the deadline wins.
+ *  The timer is always cleared so it can't leak or fire late. */
+export function withTimeout<T>(
+  promise: PromiseLike<T>,
+  label: string,
+  ms: number = LOAD_TIMEOUT_MS,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new TimeoutError(label, ms));
+    }, ms);
+    Promise.resolve(promise).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 // Postgres error code for "relation does not exist" — the signal that the user
 // has not pasted schema-v2-desks.sql yet. PostgREST surfaces it as 42P01.
 const UNDEFINED_TABLE = '42P01';
@@ -139,8 +199,18 @@ export async function publishDoodle(
   // desk; if that's unavailable (pre-v2), the RPC path is moot anyway. The
   // peeked row is REUSED below to resolve the landed desk, so publish costs
   // one desks read total, not two.
+  // The peek is best-effort: a slow/timed-out peek must NOT abort a publish the
+  // RPC could still complete. On any peek failure (timeout, pre-v2, network) we
+  // publish without a precomputed next-desk name — the RPC still writes the row;
+  // only the post-state desk resolution below loses its fast path (it falls back
+  // to the explicit desks read, or null on a pre-v2 DB).
   let nextDeskName: string | null = null;
-  const openDesk = await getOpenDesk();
+  let openDesk: DeskRow | null = null;
+  try {
+    openDesk = await getOpenDesk();
+  } catch {
+    openDesk = null;
+  }
   if (openDesk) nextDeskName = deskName(openDesk.desk_index + 1);
 
   const { data, error } = await supabase.rpc('publish_to_open_desk', {
@@ -211,14 +281,19 @@ export async function publishDoodle(
  * callers fall back to flat single-desk behavior.
  */
 export async function getOpenDesk(): Promise<DeskRow | null> {
-  const { data, error } = await supabase
-    .from(DESKS_TABLE)
-    .select('*')
-    .eq('is_open', true)
-    .is('owner_id', null)
-    .order('desk_index', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // withTimeout: a hung backend must reject (→ flat-fallback / offline path),
+  // never leave the awaiting page stuck on its spinner forever.
+  const { data, error } = await withTimeout(
+    supabase
+      .from(DESKS_TABLE)
+      .select('*')
+      .eq('is_open', true)
+      .is('owner_id', null)
+      .order('desk_index', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    'getOpenDesk',
+  );
   if (error) {
     if (isMissingV2(error)) return null; // pre-v2 DB → flat fallback
     throw new Error(`getOpenDesk failed: ${error.message}`);
@@ -233,12 +308,15 @@ export async function getOpenDesk(): Promise<DeskRow | null> {
  * rather than crashing.
  */
 export async function listDesks(limit = 100): Promise<DeskRow[]> {
-  const { data, error } = await supabase
-    .from(DESKS_TABLE)
-    .select('*')
-    .is('owner_id', null)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  const { data, error } = await withTimeout(
+    supabase
+      .from(DESKS_TABLE)
+      .select('*')
+      .is('owner_id', null)
+      .order('created_at', { ascending: false })
+      .limit(limit),
+    'listDesks',
+  );
   if (error) {
     if (isMissingV2(error)) return []; // pre-v2 DB → empty gallery
     throw new Error(`listDesks failed: ${error.message}`);
@@ -254,11 +332,14 @@ export async function listDesks(limit = 100): Promise<DeskRow[]> {
  * multi-desk pagination).
  */
 export async function listDoodles(limit = 200): Promise<DoodleRow[]> {
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  const { data, error } = await withTimeout(
+    supabase
+      .from(TABLE)
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit),
+    'listDoodles',
+  );
   if (error) throw new Error(`listDoodles failed: ${error.message}`);
   return (data ?? []) as DoodleRow[];
 }
@@ -272,12 +353,15 @@ export async function listDoodlesForDesk(
   deskId: string,
   limit = 200,
 ): Promise<DoodleRow[]> {
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .eq('desk_id', deskId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  const { data, error } = await withTimeout(
+    supabase
+      .from(TABLE)
+      .select('*')
+      .eq('desk_id', deskId)
+      .order('created_at', { ascending: false })
+      .limit(limit),
+    'listDoodlesForDesk',
+  );
   if (error) throw new Error(`listDoodlesForDesk failed: ${error.message}`);
   return (data ?? []) as DoodleRow[];
 }
