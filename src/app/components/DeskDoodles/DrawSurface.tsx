@@ -47,11 +47,15 @@ import {
 // stroke state directly. `originalPoints` lets the host restore the drawn
 // stroke (chip → Original) without DrawSurface keeping per-stroke undo memory.
 export interface ShapeSnapApi {
-  /** The last committed stroke's id + raw points, or null when none exists.
-   *  Snap/Straighten target THIS (spec §3). */
+  /** The stroke Snap/Straighten will target — the SELECTED stroke if the user
+   *  tapped an earlier one, else the LAST committed stroke (spec §3 + round-8
+   *  "select different part"). Null when none exists. The name stays `lastStroke`
+   *  so the host's existing call site is unchanged; "target stroke" is the
+   *  precise meaning now. */
   lastStroke: () => { id: string; points: StrokePoint[] } | null;
-  /** Fit the last stroke under the given action — pure, no mutation. The host
-   *  decides whether to apply (accept) or surface a refusal note. */
+  /** Fit the TARGET stroke (selected, else last) under the given action — pure,
+   *  no mutation. The host decides whether to apply (accept) or surface a
+   *  refusal note. */
   fitLast: (action: SnapAction) => { strokeId: string; result: ShapeFitResult } | null;
   /** Replace a stroke's points with a candidate's clean geometry (Apply /
    *  chip cycle). Pass the chip's remembered ORIGINAL points for the candidate
@@ -172,6 +176,54 @@ export function strokeToPolylinePath(points: StrokePoint[]): string {
     (acc, [x, y], i) => acc + (i === 0 ? `M ${x.toFixed(2)} ${y.toFixed(2)}` : ` L ${x.toFixed(2)} ${y.toFixed(2)}`),
     '',
   );
+}
+
+/** Squared distance from point p to segment ab (viewBox px²). Used by the
+ *  tap-to-select hit test (round-8 stroke selection). */
+function distSqToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return (px - cx) * (px - cx) + (py - cy) * (py - cy);
+}
+
+/** Nearest stroke to a tapped point within a hit radius (viewBox px) — the
+ *  tap-to-select hit test (round-8 "select a different part"). Returns the
+ *  stroke id, or null if the tap landed on bare paper. Ties break to the
+ *  CLOSEST stroke (min distance), so overlapping strokes pick the one under
+ *  the finger. */
+export function strokeAtPoint(
+  strokes: Stroke[],
+  x: number,
+  y: number,
+  hitRadiusPx: number,
+): string | null {
+  const hit2 = hitRadiusPx * hitRadiusPx;
+  let bestId: string | null = null;
+  let bestD = Infinity;
+  for (const s of strokes) {
+    const pts = s.points;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const d = distSqToSegment(x, y, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
+      if (d < bestD) {
+        bestD = d;
+        bestId = s.id;
+      }
+    }
+    // A single-point stroke: distance to the point.
+    if (pts.length === 1) {
+      const d = (x - pts[0][0]) ** 2 + (y - pts[0][1]) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        bestId = s.id;
+      }
+    }
+  }
+  return bestD <= hit2 ? bestId : null;
 }
 
 // ─── TONE-FILL BRUSH (the SHADE register — round 7, band-mask rebuild R2) ─────
@@ -486,11 +538,33 @@ function decimateLoop(pts: [number, number][]): [number, number][] {
   return out;
 }
 
-/** The Fill commit's outward dilation in px: tone tucks under the VISIBLE ink
- *  edge (3px stroke → 1.5px half-width) instead of stopping at the extractor
- *  boundary inkRadius px inside the centerline (see rasterizeFillPatch). */
-function fillDilatePx(gapMult: number): number {
-  return Math.max(0, (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE - 1.5);
+/** The Fill commit's outward dilation in px: how far the tone is pushed back
+ *  OUT from the extractor boundary (which sits inkRadius·gap px inside the ink
+ *  centerline) toward — and at full fill, past — the VISIBLE ink edge.
+ *
+ *  ROUND-8 (Sebs: "ability to fully fill" + the Gap slider was inert on closed
+ *  shapes): the dilation now SCALES with the Gap multiplier, so the Gap slider
+ *  is LIVE on a closed shape — low gap leaves a small inset paper ring, high
+ *  gap fills flush to the ink edge. Previously the dilation reached the inner
+ *  ink edge at every tick (gap only changed the gap-LEAP tolerance), so on an
+ *  already-closed shape the slider did nothing visible. Now:
+ *    · the extractor boundary is inkRadius·gap px inside the centerline;
+ *    · dilation = that whole inset MINUS an inset-ring bias that SHRINKS as
+ *      gap rises — at gap 1× the ring is ~1.5px (the original tucked look),
+ *      at the top of the ladder the ring is 0 and the tone reaches the
+ *      centerline (flush);
+ *    · `full` (the explicit Full-fill option) overrides to push a small bias
+ *      PAST the centerline so the tone always sits flush under the ink, no
+ *      inset, regardless of gap.
+ *  Clamped ≥ 0 (never a negative dilation = never pulled further inward). */
+const FULL_FILL_EDGE_BIAS = 2;
+function fillDilatePx(gapMult: number, full = false): number {
+  const toCenterline = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE;
+  if (full) return toCenterline + FULL_FILL_EDGE_BIAS;
+  // Inset ring fades from ~1.5px at gap 1× to 0px by gap ~3× (ladder top) —
+  // higher gap = flusher fill, making the slider visibly live on closed shapes.
+  const insetRing = Math.max(0, 1.5 * (2 - gapMult));
+  return Math.max(0, toCenterline - insetRing);
 }
 
 /** The honest-miss caption (spec §5.4 — never silent, never flood). */
@@ -543,6 +617,52 @@ export type BackdropFrame = {
   vbW: number;
   vbH: number;
 };
+
+/** Normalize an uploaded root <svg> so it FITS the draw frame instead of
+ *  overflowing/clipping (round-8, Sebs "uploaded SVG renders oversized/clipped
+ *  on /canvas"). Root cause (diagnosed via Playwright box-measure on /canvas):
+ *  the old transform set the svg width/height = 100%, but the SvgStyleTransform
+ *  cleanRef wrapper has NO definite height, so `height:100%` doesn't resolve —
+ *  the browser falls back to the viewBox aspect height at the resolved width
+ *  (e.g. a 682×986 rose at 862px wide → 1246px tall inside a 648px frame =
+ *  clipped). The fix:
+ *    1. Derive a viewBox from width/height when the svg has none (so raw pixel
+ *       coords map into a viewport — without this, forced 100% has no mapping).
+ *    2. preserveAspectRatio="xMidYMid meet" — letterbox the viewBox into the
+ *       viewport (the established fit-into-frame technique), so the whole
+ *       drawing is visible, centered, never clipped.
+ *    3. position:absolute; inset:0 inline style — the svg sizes against the
+ *       nearest positioned ancestor (SvgStyleTransform's position:relative
+ *       wrapper, which IS the frame box via its 100%×100% wrapperOverride),
+ *       so height:100% finally resolves to the frame height. width/height 100%
+ *       belt-and-suspenders for the absolute box.
+ *  Desk-object normalization (~180px, normalizeSvgSize) still happens at the
+ *  desk-canvas add boundary per the locked auto-resize decision — this is the
+ *  in-frame PREVIEW fit only. */
+export function fitUploadMarkup(rawMarkup: string): string {
+  return rawMarkup.replace(/<svg\b([^>]*)>/i, (_m, attrs: string) => {
+    let viewBox = '';
+    if (!/viewBox=/i.test(attrs)) {
+      const w = parseFloat((attrs.match(/\swidth="([\d.]+)/i) || [])[1] ?? '');
+      const h = parseFloat((attrs.match(/\sheight="([\d.]+)/i) || [])[1] ?? '');
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        viewBox = ` viewBox="0 0 ${w} ${h}"`;
+      }
+    }
+    const cleaned = attrs
+      .replace(/\swidth="[^"]*"/i, '')
+      .replace(/\sheight="[^"]*"/i, '')
+      .replace(/\spreserveAspectRatio="[^"]*"/i, '')
+      // Strip any inline width/height/position in an existing style attr so our
+      // sizing wins (sanitized markup may carry a style attr).
+      .replace(/\sstyle="[^"]*"/i, '');
+    return (
+      `<svg${cleaned}${viewBox} width="100%" height="100%"` +
+      ` preserveAspectRatio="xMidYMid meet"` +
+      ` style="position:absolute;inset:0;width:100%;height:100%">`
+    );
+  });
+}
 
 /** Parse sanitized upload markup into a BackdropFrame. Returns null when the
  *  svg has no usable size info (no viewBox AND no positive width/height) —
@@ -781,6 +901,16 @@ export function DrawSurface({
     radius: number;
     erase: boolean;
     gap: number;
+    /** FULL FILL (round-8, Sebs "ability to fully fill"): when on, the Fill
+     *  tool commits flush to the ink EDGE with NO inset gap — the dilation
+     *  pushes the tone out under the visible ink so a closed shape reads as
+     *  completely toned, edge to edge. Default (off) keeps the boundary tucked
+     *  just inside the ink. Optional so hosts that don't forward it keep the
+     *  original behavior. NOTE: the Gap ladder ALSO drives flushness (its top
+     *  tick reaches the edge) so the Gap slider is live on closed shapes even
+     *  when this isn't wired — full-fill is the explicit, always-flush escape
+     *  hatch on top of that. */
+    fullFill?: boolean;
   } | null;
   /** Fill-tool gap scrub → host slider sync (press-hold-drag walks the
    *  ladder LIVE; the chrome slider follows and the value persists — both
@@ -811,6 +941,12 @@ export function DrawSurface({
   );
   // CURRENT stroke — the one being actively dragged.
   const [current, setCurrent] = useState<Stroke | null>(null);
+  // SELECTED stroke (round-8, Sebs "select different part"): a TAP on an
+  // earlier committed stroke (Ink register, no drag) selects it so Snap /
+  // Straighten target THAT one instead of the latest. null = no selection →
+  // the API falls back to the last stroke (the original behavior). Cleared
+  // whenever a new stroke is drawn or the selected stroke disappears.
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
   // COMMITTED — flip to true when user hits "Done." Only then do the
   // strokes flow through SvgStyleTransform / Smart Hachure. Until then
   // pen-up just adds another stroke to the preview pool. Sebs: "if I stop
@@ -951,7 +1087,9 @@ export function DrawSurface({
     const band = shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3;
     rasterizeFillPatch(grid, r.outline, fillChildrenOf(regions, idx), band, 'fill', {
       gapTol: gapMult,
-      dilatePx: fillDilatePx(gapMult),
+      // Full-fill pushes the tone flush to (and under) the visible ink edge —
+      // no inset gap — so a closed shape reads as completely toned.
+      dilatePx: fillDilatePx(gapMult, !!shadeRef.current?.fullFill),
     });
     setToneFills(extractToneFills(grid));
     lastMissRef.current = false;
@@ -1053,22 +1191,35 @@ export function DrawSurface({
   // does the points-replace (stays a stroke, same id, renders in the pen).
   const strokesRef = useRef<Stroke[]>(strokes);
   strokesRef.current = strokes;
+  // Selected stroke id via ref so the install-once API never reads a stale
+  // selection (round-8 "select a different part").
+  const selectedStrokeIdRef = useRef<string | null>(selectedStrokeId);
+  selectedStrokeIdRef.current = selectedStrokeId;
+  /** The stroke Snap/Straighten targets: the SELECTED stroke if one is set and
+   *  still in the pool, else the LAST stroke (the original behavior). */
+  const targetStroke = (): Stroke | null => {
+    const pool = strokesRef.current;
+    if (pool.length === 0) return null;
+    const sel = selectedStrokeIdRef.current;
+    if (sel) {
+      const found = pool.find((s) => s.id === sel);
+      if (found) return found;
+    }
+    return pool[pool.length - 1];
+  };
   const snapApiRef = useRef<ShapeSnapApi | null>(null);
   if (snapApiRef.current === null) {
     snapApiRef.current = {
       lastStroke: () => {
-        const pool = strokesRef.current;
-        if (pool.length === 0) return null;
-        const last = pool[pool.length - 1];
-        return { id: last.id, points: last.points };
+        const t = targetStroke();
+        return t ? { id: t.id, points: t.points } : null;
       },
       fitLast: (action) => {
-        const pool = strokesRef.current;
-        if (pool.length === 0) return null;
-        const last = pool[pool.length - 1];
-        if (last.points.length < 2) return null;
-        const result = fitStroke(last.points as StrokeInputPoint[], action);
-        return { strokeId: last.id, result };
+        const t = targetStroke();
+        if (!t) return null;
+        if (t.points.length < 2) return null;
+        const result = fitStroke(t.points as StrokeInputPoint[], action);
+        return { strokeId: t.id, result };
       },
       applyToStroke: (strokeId, candidate, originalPoints) => {
         const next =
@@ -1097,33 +1248,7 @@ export function DrawSurface({
     // hrefs, <foreignObject>, etc.). Returns ok+name+markup or ok:false+error.
     const result = await prepareSvgUpload(file);
     if (result.ok) {
-      // SIZE NORMALIZATION at the upload boundary — an <svg> with a viewBox
-      // but no width/height renders 0×0 when injected (found 2026-06-11 via
-      // fixture diagnostic: rose worked only because it carried explicit
-      // attrs). Force the root svg to fill its frame; the viewBox letterboxes
-      // content. Desk-object normalization (~180px, normalizeSvgSize) stays
-      // at the desk-canvas boundary per the locked auto-resize decision.
-      const markup = result.markup.replace(
-        /<svg\b([^>]*)>/i,
-        (_m, attrs: string) => {
-          // No viewBox? Derive one from the source width/height BEFORE
-          // stripping them — otherwise forcing 100% leaves raw pixel coords
-          // with no mapping and big files overflow the frame (rose bug,
-          // Sebs 2026-06-12: "this still not resizing stuff").
-          let viewBox = '';
-          if (!/viewBox=/i.test(attrs)) {
-            const w = parseFloat((attrs.match(/\swidth="([\d.]+)/i) || [])[1] ?? '');
-            const h = parseFloat((attrs.match(/\sheight="([\d.]+)/i) || [])[1] ?? '');
-            if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-              viewBox = ` viewBox="0 0 ${w} ${h}"`;
-            }
-          }
-          const cleaned = attrs
-            .replace(/\swidth="[^"]*"/i, '')
-            .replace(/\sheight="[^"]*"/i, '');
-          return `<svg${cleaned}${viewBox} width="100%" height="100%">`;
-        },
-      );
+      const markup = fitUploadMarkup(result.markup);
       setUploadedSvg({ name: result.name, markup });
       setUploadError(null);
     } else {
@@ -1209,6 +1334,17 @@ export function DrawSurface({
   // Whether a TONE gesture is mid-flight (pen down) — ref, not state, so the
   // Escape-cancel listener below never goes stale across pointermoves.
   const toneGestureRef = useRef(false);
+
+  // TAP-TO-SELECT bookkeeping (round-8): the ink pointer-down's start point +
+  // a moved flag. A pen-up that never moved past TAP_SLOP_PX is a TAP, not a
+  // stroke — in the Ink register a tap on an earlier committed stroke SELECTS
+  // it for Snap/Straighten (it stops being a rejected 1-point micro-stroke and
+  // becomes a selection gesture). Refs so the move/up handlers read fresh
+  // values without re-render churn.
+  const inkDownPtRef = useRef<[number, number] | null>(null);
+  const inkMovedRef = useRef(false);
+  const TAP_SLOP_PX = 6;
+  const SELECT_HIT_RADIUS_PX = 16;
 
   // ESCAPE = CANCEL THE IN-PROGRESS GESTURE (capture phase, ahead of the host
   // popup's layered-Escape handler — rock-F1 break battery caught the popup
@@ -1311,7 +1447,11 @@ export function DrawSurface({
       setToneBrush([[x, y]]);
       return;
     }
-    setCurrent({ id: `s-${Date.now()}`, points: [eventToSvgPoint(e)] });
+    // INK gesture begins — record the start for tap-vs-drag classification.
+    const startPt = eventToSvgPoint(e);
+    inkDownPtRef.current = [startPt[0], startPt[1]];
+    inkMovedRef.current = false;
+    setCurrent({ id: `s-${Date.now()}`, points: [startPt] });
   }
 
   function handlePointerMove(e: React.PointerEvent) {
@@ -1374,7 +1514,14 @@ export function DrawSurface({
       return;
     }
     if (!current) return;
-    setCurrent((s) => (s ? { ...s, points: [...s.points, eventToSvgPoint(e)] } : null));
+    const pt = eventToSvgPoint(e);
+    // Mark the gesture as a real drag once it travels past the tap slop — a
+    // pen-up below that never set this is a TAP (select), not a stroke.
+    const start = inkDownPtRef.current;
+    if (start && Math.hypot(pt[0] - start[0], pt[1] - start[1]) > TAP_SLOP_PX) {
+      inkMovedRef.current = true;
+    }
+    setCurrent((s) => (s ? { ...s, points: [...s.points, pt] } : null));
   }
 
   function handlePointerUp() {
@@ -1405,9 +1552,26 @@ export function DrawSurface({
       commitToneStroke();
       return;
     }
+    // TAP-TO-SELECT (round-8): a pen-up that never moved past the tap slop is a
+    // TAP. If it landed on an earlier committed stroke, SELECT that stroke for
+    // Snap/Straighten instead of committing a degenerate micro-stroke. A tap on
+    // bare paper clears any selection (deselect). Only in the Ink register —
+    // shade/fill/lasso have their own pointer-up paths above.
+    if (current && !inkMovedRef.current) {
+      const tap = current.points[0];
+      const hitId = strokeAtPoint(strokes, tap[0], tap[1], SELECT_HIT_RADIUS_PX);
+      setSelectedStrokeId(hitId); // hit → select; miss → deselect (null)
+      setCurrent(null);
+      inkDownPtRef.current = null;
+      return;
+    }
     if (!current || current.points.length < 2) { setCurrent(null); return; }
+    // A genuine new stroke supersedes any selection (the latest stroke is the
+    // implicit target again, matching the pre-round-8 behavior).
+    setSelectedStrokeId(null);
     setStrokes((prev) => [...prev, current]);
     setCurrent(null);
+    inkDownPtRef.current = null;
   }
 
   function handlePointerLeave() {
@@ -1419,6 +1583,7 @@ export function DrawSurface({
   function clearAll() {
     setStrokes([]);
     setCurrent(null);
+    setSelectedStrokeId(null);
     setToneFills([]);
     setToneBrush(null);
     lastTonePtRef.current = null;
@@ -1628,7 +1793,20 @@ export function DrawSurface({
         </div>
       )}
       {/* Layer 1b — while NOT committed (and not live-styling), render strokes
-          raw as perfect-freehand polygons so user sees what they drew, unstyled. */}
+          raw as perfect-freehand polygons so user sees what they drew, unstyled.
+          INK READS ON TOP OF TONE (Sketch preview, round-8 fix): this layer is
+          emitted AFTER Layer 0t so the DOM paint order already puts ink over
+          tone — but the ink color (var(--dir-text-primary), near-black) and the
+          darkest tone band (band 7, also near-black at 0.9 opacity) are the SAME
+          value, so a dark band visually SWALLOWED the ink (the "tone over ink,
+          inverted vs styled" report). The styled render never has this problem
+          (tone becomes sparse marks, ink stays a distinct stroke on top). The
+          fix mirrors that legibility: each ink polygon carries a thin
+          paper-colored halo UNDERNEATH it (a slightly-wider paper stroke on the
+          same path), so against ANY tone darkness the ink keeps a paper rim and
+          reads clearly on top — no z-reorder needed, the order was already
+          right. The halo only matters where ink crosses a dark band; on bare
+          paper it's invisible (paper on paper). */}
       {!committed && !styled && strokes.length > 0 && (
         <svg
           viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
@@ -1638,14 +1816,33 @@ export function DrawSurface({
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
           aria-hidden
         >
-          {strokes.map((stroke) => (
-            <path
-              key={stroke.id}
-              d={strokeToPolygonPath(stroke.points)}
-              fill="var(--dir-text-primary)"
-              stroke="none"
-            />
-          ))}
+          {strokes.map((stroke) => {
+            const d = strokeToPolygonPath(stroke.points);
+            const isSelected = stroke.id === selectedStrokeId;
+            return (
+              <g key={stroke.id}>
+                {/* SELECTION HIGHLIGHT (round-8): the tapped earlier stroke gets
+                    an accent halo so it's clear which one Snap/Straighten will
+                    target. Rendered as a wider accent stroke under the ink. */}
+                {isSelected && (
+                  <path
+                    data-selected-stroke={stroke.id}
+                    d={strokeToPolylinePath(stroke.points)}
+                    fill="none"
+                    stroke="var(--dir-accent)"
+                    strokeOpacity={0.5}
+                    strokeWidth={10}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+                {/* Paper halo — only visible where ink overlaps dark tone; keeps
+                    the ink edge separated from a near-black band. */}
+                <path d={d} fill="none" stroke="var(--dir-bg)" strokeWidth={3} strokeLinejoin="round" />
+                <path d={d} fill="var(--dir-text-primary)" stroke="none" />
+              </g>
+            );
+          })}
         </svg>
       )}
       {/* Layer 2: live in-progress stroke / tone brush + pointer capture
@@ -1999,7 +2196,10 @@ export type ShadeToolState = {
    *  lifts the tapped region; Lasso lifts its loop (band 0 = paper). */
   erase: boolean;
   /** Fill gap-tolerance multiplier (GAP_LADDER tick, persists per session —
-   *  the Procreate remembered-threshold behavior, spec §6). */
+   *  the Procreate remembered-threshold behavior, spec §6). ROUND-8: the Gap
+   *  ladder now drives FILL FLUSHNESS too (low = tucked inset, top tick = flush
+   *  to the ink edge = "fully fill"), so the slider is live on closed shapes
+   *  and the Full-fill pill is just a one-tap jump to the top tick. */
   gap: number;
 };
 
@@ -2184,6 +2384,38 @@ export function ToneShadeCluster({
             {value.gap}×
           </span>
         </label>
+      )}
+      {/* FULL FILL (round-8, Sebs "ability to fully fill") — Fill tool only:
+          one tap snaps the Gap to the top of the ladder, which fills flush to
+          the ink edge with no inset gap (fillDilatePx: the inset ring → 0 at
+          the ladder top). Lit when already at the flush tick. This is the
+          explicit "fully fill" affordance riding the same Gap field the host
+          already forwards — no stub control, no extra wiring. */}
+      {value.tool === 'fill' && (
+        <button
+          onClick={() =>
+            onChange({
+              ...value,
+              gap: value.gap >= GAP_LADDER[GAP_LADDER.length - 1] ? GAP_LADDER[2] : GAP_LADDER[GAP_LADDER.length - 1],
+            })
+          }
+          aria-pressed={value.gap >= GAP_LADDER[GAP_LADDER.length - 1]}
+          data-tone-fullfill
+          title="Full fill — fill flush to the ink edge with no inset gap (tap again to return to a tucked-in fill)"
+          style={{
+            ...PILL,
+            padding: '5px 12px',
+            flexShrink: 0,
+            background:
+              value.gap >= GAP_LADDER[GAP_LADDER.length - 1]
+                ? 'var(--dir-text-primary)'
+                : 'var(--dir-bg)',
+            color:
+              value.gap >= GAP_LADDER[GAP_LADDER.length - 1] ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+          }}
+        >
+          Full fill
+        </button>
       )}
     </div>
   );
