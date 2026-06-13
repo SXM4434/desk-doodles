@@ -2082,6 +2082,14 @@ function applyRoughTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
 
 // ─── RISOGRAPH — clone twice with color + offset (style-specific modifiers) ──
 
+// Secondary-layer multiply-opacity ceiling (BUG2 fix, 2026-06-13). The
+// colorShift→group-opacity curve is identity up to RISO_KNEE (= the default
+// preset's colorShift 0.7, so the default render is byte-identical) and
+// compresses the top range toward RISO_CEIL at colorShift 1.0 — a strong offset
+// that never multiplies to a full-opacity black stamp over the body.
+const RISO_KNEE = 0.7;
+const RISO_CEIL = 0.82;
+
 function applyRisographTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
   const originals = Array.from(svgEl.children) as SVGElement[];
   const renderable = originals.filter((c) => {
@@ -2108,7 +2116,26 @@ function applyRisographTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
   const secondary = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   secondary.setAttribute('data-riso-layer', 'secondary');
   secondary.setAttribute('transform', `translate(${rdx},${rdy})`);
-  secondary.setAttribute('style', `mix-blend-mode: multiply; opacity: ${m.colorShift};`);
+  // §7.B-3 ceiling fix (2026-06-13): the secondary offset layer multiplies over
+  // the body via this GROUP opacity (= colorShift). At colorShift 1.0 a
+  // full-opacity multiply obliterates light/mid-tone artwork to a near-solid
+  // black mass (bandPatch / bandTshirt / conferenceLanyard) — the secondary
+  // stops reading as an offset and becomes a black stamp over the body. Fix:
+  // COMPRESS the top of the colorShift→group-opacity curve so 1.0 reads as a
+  // strong-but-not-obliterating offset. The curve is identity (linear) up to
+  // RISO_KNEE so the default preset (colorShift 0.7) is byte-identical; the
+  // (knee, 1.0] range compresses toward RISO_CEIL — still strictly monotonic
+  // (the slider always does something across its full range), never reaching
+  // full multiply, so the source artwork stays visible at every colorShift.
+  // (Fill-opacity is already honored on the secondary's fills by the
+  // [data-f3-stroke] svg [fill] { fill-opacity: var(--f3-fill-opacity) } rule —
+  // verified in the live DOM — so it is NOT re-folded here.)
+  const csClamped = Math.min(1, Math.max(0, m.colorShift));
+  const secondaryOpacity =
+    csClamped <= RISO_KNEE
+      ? csClamped
+      : RISO_KNEE + (csClamped - RISO_KNEE) * ((RISO_CEIL - RISO_KNEE) / (1 - RISO_KNEE));
+  secondary.setAttribute('style', `mix-blend-mode: multiply; opacity: ${secondaryOpacity};`);
 
   // §7.B-3: secondary color is user-picked via risoSecondaryColor (was hardcoded
   // #D4574A). 'source' falls back to accent — risograph by definition needs a
@@ -2418,10 +2445,81 @@ function applyWireframeSchematic(svgEl: SVGSVGElement, m: F3ModifiersState) {
   }
 }
 
+// ─── OUTLINE-ONLY — synthesize contours for fill-only-no-stroke geometry ────
+//
+// "Outline only" strips every fill to transparent (CSS §7.B-1) and keeps the
+// existing stroke. That's correct for stroked artwork, but a SOLID FILL-ONLY
+// shape — a poster rect drawn as `fill={STROKE}` with NO stroke attribute and
+// knockout text in `fill={BG}` (psPoster / pitchDeckCover / ppvPoster, plus the
+// frame of framedMoviePoster) — has nothing left to draw and renders BLANK once
+// its fill is gone. The general fix (NOT per-catalog-item): any element that
+// puts ink on the page via FILL but has NO visible stroke gets a synthesized
+// hairline outline of its own boundary — its fill region's edge IS its
+// geometry, exactly how the wireframe register derives a contour from a
+// fill-only leaf. Stroked elements are untouched here; the CSS rules continue
+// to recolor their strokes + strip their fills. This runs as a DOM-clone pass
+// (outline-only joined NEEDS_DOM_CLONE) so the synthesized strokes are real
+// attributes the palette CSS can still recolor.
+/** Resolve a leaf's SOURCE paint (fill or stroke) from attributes + inherited
+ *  <g> attributes + the SVG UA default — deliberately NOT via getComputedStyle,
+ *  because the outline-only CSS forces `fill: transparent !important` on the live
+ *  DOM, which would poison a computed-style read (every fill would look empty).
+ *  `prop` is 'fill' | 'stroke'. Returns the effective paint string, or null. */
+function resolveSourcePaint(el: Element, root: Element, prop: 'fill' | 'stroke'): string | null {
+  let cur: Element | null = el;
+  while (cur && cur !== root.parentElement) {
+    const inlineStyle = (cur as SVGElement).style?.getPropertyValue(prop);
+    if (inlineStyle && inlineStyle.trim()) return inlineStyle.trim();
+    const attr = cur.getAttribute(prop);
+    if (attr && attr.trim()) return attr.trim();
+    if (cur === root) break;
+    cur = cur.parentElement;
+  }
+  // SVG UA default: fill is black, stroke is none.
+  return prop === 'fill' ? 'black' : null;
+}
+
+function applyOutlineOnlySynthesis(svgEl: SVGSVGElement, m: F3ModifiersState) {
+  // Match the outline-only preset weight (CSS forces var(--f3-stroke-width) on
+  // every [stroke-width]; we write the same value so a synthesized contour reads
+  // identically to a source-stroked one). Floor mirrors the wireframe register.
+  const w = Math.max(0.25, m.strokeWidth);
+  const all = Array.from(svgEl.querySelectorAll('*')) as SVGElement[];
+  for (const el of all) {
+    const tag = el.tagName.toLowerCase();
+    if (!WIREFRAME_RENDERABLE.has(tag)) continue; // text/image/etc untouched
+    if (wireframeInsideSkipContainer(el, svgEl)) continue;
+
+    // Resolve SOURCE paints from attributes/inheritance (NOT computed style —
+    // the outline-only fill→transparent CSS has already nuked computed fill).
+    const srcStroke = resolveSourcePaint(el, svgEl, 'stroke');
+    const hasStroke = wireframePaintVisible(srcStroke);
+    // Already stroked → leave it for the CSS path (don't double-paint or change
+    // a deliberately hairline source stroke). <line> never has a fill region.
+    if (hasStroke || tag === 'line') continue;
+    const hasFill = wireframePaintVisible(resolveSourcePaint(el, svgEl, 'fill'));
+    if (!hasFill) continue; // invisible helper geometry stays invisible
+
+    // Synthesize the boundary: drop the fill, draw the element's own edge as a
+    // hairline at the page ink. The stroke is written as an ATTRIBUTE (not just
+    // inline style) so the data-f3-stroke palette CSS — which selects on the
+    // [stroke] attribute — recolors it like any source-stroked geometry. The
+    // outline-only fill→transparent CSS keeps the fill stripped.
+    el.style.setProperty('fill', 'none');
+    el.setAttribute('stroke', 'var(--dir-text-primary)');
+    el.setAttribute('stroke-width', String(w));
+    el.style.setProperty('stroke-linecap', 'round');
+    el.style.setProperty('stroke-linejoin', 'round');
+    el.setAttribute('vector-effect', 'non-scaling-stroke');
+    el.setAttribute('data-f3-outline-synth', '1');
+  }
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────
 
 const NEEDS_DOM_CLONE: F3SvgStyle[] = [
   'rough-handdrawn', 'sketchy', 'bold-ink', 'stipple', 'risograph', 'wet-ink', 'charcoal', 'newsprint', 'wireframe',
+  'outline-only',
 ];
 
 export function SvgStyleTransform({
@@ -2493,6 +2591,11 @@ export function SvgStyleTransform({
         applyRisographTransform(clone, m);
       } else if (style === 'wireframe') {
         applyWireframeSchematic(clone, m);
+      } else if (style === 'outline-only') {
+        // Synthesize a hairline contour for any fill-only-no-stroke leaf so
+        // solid posters/knockouts show their outline instead of vanishing.
+        // Stroked artwork is left to the existing CSS outline-only rules.
+        applyOutlineOnlySynthesis(clone, m);
       }
       // Wireframe is the clean schematic counterpoint — grain/dot textures are
       // hand-feel surface noise and structurally suppressed for it (its
