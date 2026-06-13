@@ -7,6 +7,14 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
+    // CRITICAL (2026-06-13): force a SINGLE React copy. Concurrent agent Vite
+    // servers symlink this node_modules and share node_modules/.vite, which
+    // corrupted the optimized-deps cache → "Invalid hook call / more than one
+    // copy of React / null useState" → blank page on every route. dedupe makes
+    // every instance resolve the one on-disk react@18, so a shared/again-stale
+    // cache can't produce a second copy. (Agent servers should ALSO pass their
+    // own --cacheDir; this is the belt-and-suspenders.)
+    dedupe: ['react', 'react-dom'],
   },
   server: {
     port: 5182,
