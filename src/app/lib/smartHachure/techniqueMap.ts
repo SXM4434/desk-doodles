@@ -282,9 +282,27 @@ function applyStyleModulation(
       // But a DARK TONAL BODY must NEVER render to nothing (Tone-band-visibility
       // law SA-2 / "tone may change grammar but never vanish"): strip-to-empty
       // is the same dark-blob root, opposite symptom. Dark roles fall back to a
-      // sparse-but-present hatch (single direction, wider gap, lighter opacity)
-      // — reads as a loose draft shade, keeps the body legibly toned.
+      // sparse-but-present hatch (single direction, wider gap) — reads as a
+      // loose draft shade, keeps the body legibly toned.
+      //
+      // DARK-BODY LEGIBILITY (2026-06-13, empty-poster residual): a near-black
+      // ENCLOSING body (poster/cover — darkness ≈ 1.0, dense-tonal) rendered at
+      // the old ×0.7 opacity (× sketchy's inkIntensity 0.85 = 0.595 effective)
+      // landed its single-direction hatch lines at ~grey-103 luminance, so the
+      // whole body read at mean-luminance ≈ 202 — a PALE wash, not the "dark
+      // poster" its source darkness demands (I-2: source darkness owns
+      // perceptual identity; SA-2: tone never renders to nothing). Measured vs
+      // the rough gold standard (mean-lum ≈ 132): sketchy was ~70 luminance
+      // steps too light, near the empty/untoned read the bug reports. Fix: keep
+      // sketchy's LIGHT draft GRAMMAR (single direction, loose gap, thin weight
+      // — still visibly lighter & looser than rough/bold) but bring the present
+      // lines to FULL ink so the dark body reads as legible dark draft shading,
+      // knockout text intact. Opacity for a structure-bearing dark/near-black
+      // body is the role base (1.0 × inkIntensity); the looser gap is what keeps
+      // it the lighter draft register, NOT a faded ink. mid/sparse dark bands
+      // (base.opacity 0.9 / 0.7) keep their lighter-than-full draft falloff.
       if (keepsStructure && role !== 'sparse-tonal') {
+        const isNearBlackBody = role === 'dense-tonal';
         return {
           ...base,
           fillStyle: 'hachure',
@@ -292,7 +310,9 @@ function applyStyleModulation(
           weight: base.weight * 0.7,
           layerCount: 1,
           biasMode: 'gap-dominant',
-          opacity: base.opacity * 0.7,
+          // near-black enclosing body → full ink (legible dark); lighter dark
+          // bands keep the draft falloff so the register still steps with tone.
+          opacity: isNearBlackBody ? base.opacity : base.opacity * 0.7,
         };
       }
       // solid-content (tiny pure-black details) under sketchy also keep a mark
