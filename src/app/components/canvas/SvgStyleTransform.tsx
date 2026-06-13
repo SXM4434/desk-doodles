@@ -2096,7 +2096,49 @@ function applyRoughTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
   }
 }
 
-// ─── RISOGRAPH — clone twice with color + offset (style-specific modifiers) ──
+// ─── RISOGRAPH — DARKNESS-AWARE two-color spot register ─────────────────────
+//
+// Real Riso prints a flat SPOT COLOR whose ink density tracks source darkness:
+// the machine reads levels of black and cuts a stencil by opacity — 100% black
+// prints solid ink, white paper stays untouched, mid greys print as pale tones.
+// (Risolve "How to set up files for Riso": "The Risograph reads levels of black…
+// 100% black prints at 100% ink, 50% black at 50% ink"; Duplikat Riso Guide:
+// "darker artwork → more ink, lighter areas and white paper remain untouched";
+// Spectrolite best-practices: aim ≤~75–90% coverage on solid areas.)
+//
+// The OLD code flooded EVERY non-transparent fill with the secondary color and
+// kept the primary's original fill — so an 8%-WASH white body (actionFigure,
+// amiibo, switch, etc.) got inked into a solid colored mass and its knockouts
+// (paper-through holes, var(--dir-bg) registers) vanished. This is the flat
+// spot-color analog of the smartHachure source-darkness rule (I-2): we only ink
+// regions that are DARK in the source; LIGHT/white regions render as paper.
+//
+// This is a FLAT register (no hachure) — DARK fills get solid spot ink, MID
+// fills get partial-opacity ink (the pale-tone behavior), LIGHT/white fills are
+// dropped to `none` so the paper shows and knockout structure survives. Strokes
+// are line-art ink and always register on both layers.
+
+// Below this source-darkness a fill is treated as paper/white and gets NO ink.
+// 8% WASH = 0.08 darkness sits well below; --dir-text-body (0.8) / -primary (1.0)
+// / -accent (0.85) sit well above. Picked to match the smartHachure darkness<0.05
+// "blank" floor while still dropping the 8% body wash (the flood source).
+const RISO_INK_FLOOR = 0.18;
+
+/** Maps a fill color to its riso treatment.
+ *  - paper (darkness < floor, or none/transparent/--dir-bg) → drop fill to 'none'
+ *  - ink (darkness ≥ floor) → keep on primary; spot-color on secondary at an
+ *    opacity scaled by darkness (mid greys read as pale tone, blacks solid). */
+function risoFillTreatment(
+  fillVal: string | null,
+): { isInk: boolean; darkness: number } {
+  if (!fillVal || fillVal === 'transparent' || fillVal === 'none') {
+    return { isInk: false, darkness: 0 };
+  }
+  // Paper register — var(--dir-bg) is the substrate; never ink it (knockout).
+  if (fillVal.includes('--dir-bg')) return { isInk: false, darkness: 0 };
+  const darkness = fillDarknessFactor(fillVal);
+  return { isInk: darkness >= RISO_INK_FLOOR, darkness };
+}
 
 // Secondary-layer multiply-opacity ceiling (BUG2 fix, 2026-06-13). The
 // colorShift→group-opacity curve is identity up to RISO_KNEE (= the default
@@ -2113,9 +2155,16 @@ function applyRisographTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
     return t !== 'defs' && t !== 'style' && t !== 'title' && t !== 'desc';
   });
 
+  // PRIMARY layer = the source register, but with LIGHT fills knocked out to
+  // paper so white bodies don't read as solid ink. Dark fills keep their ink;
+  // strokes (line art) always survive.
   const primary = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   primary.setAttribute('data-riso-layer', 'primary');
-  renderable.forEach((c) => primary.appendChild(c.cloneNode(true)));
+  renderable.forEach((c) => {
+    const clone = c.cloneNode(true) as SVGElement;
+    knockOutLightFills(clone);
+    primary.appendChild(clone);
+  });
 
   const angleRad = (m.offsetAngle * Math.PI) / 180;
   const dx = m.offsetDistance * Math.cos(angleRad);
@@ -2158,18 +2207,56 @@ function applyRisographTransform(svgEl: SVGSVGElement, m: F3ModifiersState) {
   // contrasting secondary, so passthrough doesn't make sense here.
   const shiftedColor = paletteToToken(m.risoSecondaryColor) ?? 'var(--dir-accent)';
   renderable.forEach((c) => {
-    const clone = c.cloneNode(true) as SVGElement;
-    if (clone.getAttribute('stroke')) clone.setAttribute('stroke', shiftedColor);
-    const fillVal = clone.getAttribute('fill');
-    if (fillVal && fillVal !== 'transparent' && fillVal !== 'none') {
-      clone.setAttribute('fill', shiftedColor);
-    }
+    const clone = inkSecondaryLayer(c.cloneNode(true) as SVGElement, shiftedColor);
     secondary.appendChild(clone);
   });
 
   while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
   svgEl.appendChild(secondary);
   svgEl.appendChild(primary);
+}
+
+/** Recursively drop LIGHT/white fills to 'none' so the paper shows through.
+ *  Dark fills keep their source ink; strokes are untouched (line-art register).
+ *  Walks into <g> subtrees so grouped catalog objects knockout correctly. */
+function knockOutLightFills(el: SVGElement): void {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'defs' || tag === 'style' || tag === 'title' || tag === 'desc') return;
+  // text stays legible — never knock out its fill (recurse into other groups).
+  if (tag !== 'text') {
+    const fillVal = el.getAttribute('fill');
+    if (fillVal !== null) {
+      const { isInk } = risoFillTreatment(fillVal);
+      if (!isInk) el.setAttribute('fill', 'none');
+    }
+  }
+  Array.from(el.children).forEach((child) => knockOutLightFills(child as SVGElement));
+}
+
+/** Build the offset spot-color register for one element subtree.
+ *  - strokes → spot color (line art registers on both layers)
+ *  - DARK fills → spot color, fill-opacity scaled by source darkness so mid
+ *    tones read as pale spot ink and blacks read as solid (the Riso ramp)
+ *  - LIGHT/white fills → 'none' (paper, knockout preserved) */
+function inkSecondaryLayer(el: SVGElement, spotColor: string): SVGElement {
+  const tag = el.tagName.toLowerCase();
+  if (tag !== 'defs' && tag !== 'style' && tag !== 'title' && tag !== 'desc' && tag !== 'text') {
+    if (el.getAttribute('stroke')) el.setAttribute('stroke', spotColor);
+    const fillVal = el.getAttribute('fill');
+    if (fillVal !== null) {
+      const { isInk, darkness } = risoFillTreatment(fillVal);
+      if (isInk) {
+        el.setAttribute('fill', spotColor);
+        // Pale-tone ramp: mid greys ink lighter than blacks. Cap at 0.9 per
+        // riso solid-area coverage best-practice (Spectrolite).
+        el.setAttribute('fill-opacity', String(Math.min(0.9, 0.35 + darkness * 0.55)));
+      } else {
+        el.setAttribute('fill', 'none');
+      }
+    }
+  }
+  Array.from(el.children).forEach((child) => inkSecondaryLayer(child as SVGElement, spotColor));
+  return el;
 }
 
 // ─── TEXTURE — dynamic filter (charcoal / wet-ink / texture × intensity) ──
