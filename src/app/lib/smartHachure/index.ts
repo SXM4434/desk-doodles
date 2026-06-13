@@ -372,6 +372,20 @@ export function renderSmartHachure(
     //    keep only stroke paths (fill=none/null/transparent).
     const seed = hashStringToSeed(regionPath);
     const rawOutlineElements = transformElement(child, rc, outlineModifiers, seed, ownerDoc, undefined, svgBBoxMin);
+    // PAPER-KNOCKOUT PRESERVATION (2026-06-13, RC: "white area gets shaded").
+    // A non-tonal LIGHT region (role 'paper' = white reservation, or
+    // 'structural-frame' = bordered wash) renders NO smart marks (fillStyle
+    // 'none'). Its source carries a PAPER/bg fill (e.g. a poster's inner white
+    // rectangle, fill=var(--dir-bg)). The generic fill-strip below would drop
+    // that fill -> the region goes transparent -> the hachure of the dense-tonal
+    // body BENEATH it (lower z) shows THROUGH -> the white area reads shaded
+    // (root-caused via poster-diag: framedMoviePoster rect[1] role=paper sits
+    // over rect[0] role=dense-tonal). The fix: these regions KEEP their source
+    // fill so they render as a white KNOCKOUT on top of the body's marks (paper
+    // is processed after the body in z-order, so it lands above). Paper fills are
+    // sacred — never stripped (feedback_palette_overrides_ink_not_paper).
+    const keepsSourceFill =
+      classification.role === 'paper' || classification.role === 'structural-frame';
     const outlineElements = rawOutlineElements.filter((el) => {
       const f = el.getAttribute('fill');
       // Keep stroke-only elements (no fill, fill=none, fill=transparent).
@@ -385,6 +399,8 @@ export function renderSmartHachure(
       // it IS the outline, not a base fill. Dropping it blanked every stroke
       // on any pen-tip change (2026-06-11). transformElement tags it.
       if (el.getAttribute('data-pen-tip-ink') === '1') return true;
+      // Paper / structural-frame knockouts keep their source fill (see above).
+      if (keepsSourceFill) return true;
       return false;
     });
 
