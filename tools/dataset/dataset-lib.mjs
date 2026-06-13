@@ -61,6 +61,11 @@ export const KNOWN_SOURCES = new Set([
   // adapter to land them — their labels were evaporating (gap-hunt H9):
   'shade-fill', // src/app/lib/shadeFillLog.ts  (entryType 'shade-fill')
   'shape-snap', // src/app/lib/shapeSnapLog.ts  (entryType 'shape-snap')
+  // Populated-desk-at-scale perf battery (gap-hunt H6): one example per (N,
+  // gesture) measuring whether the desk stays interactive at that population.
+  // A fidelity-class verdict (mechanical, not human) — the regression gate the
+  // ~1fps@120 alarm + the wall-of-doodles headline had been missing.
+  'desk-perf', // tools/desk/populated-desk-battery.mjs (perf-report.json)
 ]);
 
 const KNOWN_LABEL_KINDS = new Set(['role', 'correct-or-not', 'treatment', 'fidelity']);
@@ -484,6 +489,97 @@ export function shapeSnapEntryToExample(e, idx) {
     },
     regime: { ...CANONICAL_REGIME },
   };
+}
+
+/** Populated-desk perf report (tools/desk/populated-desk-battery.mjs's
+ *  perf-report.json) → 'fidelity' examples (gap-hunt H6). One example per
+ *  (N, gesture) — the interactivity verdict at that population — plus one
+ *  scaling-bound example capturing whether drag cost grows with N (the
+ *  all-N-rerender cliff). Mechanical verdicts (frame-budget thresholds), so
+ *  isGroundTruth=false. The desk renders at the canonical RDP regime (the same
+ *  SvgStyleTransform pipeline as /audit), so stamp canonical.
+ *
+ *  The exampleId keys on (N, gesture) so a re-run UPDATES in place — the gate
+ *  tracks the latest measurement, it doesn't accumulate one row per run. */
+export function deskPerfReportToExamples(report) {
+  const out = [];
+  const runs = Array.isArray(report?.runs) ? report.runs : [];
+  // Frame-budget → fidelity verdict. fps from the WORST drag frame (the median
+  // is rAF-pinned and uninformative); a cliff blows the worst frame to 100s ms.
+  const verdictFromWorstMs = (ms) => {
+    if (!ms || ms <= 0) return 'ok';
+    const fps = 1000 / ms;
+    if (fps >= 24) return 'ok';
+    if (fps >= 12) return 'partial';
+    return 'broke';
+  };
+  for (const run of runs) {
+    if (run.error) {
+      out.push({
+        exampleId: `desk-perf:n${run.n}:load`,
+        source: 'desk-perf', labelKind: 'fidelity', label: 'broke',
+        confidence: null, rawScore: null, margin: null, firedRules: [String(run.error).slice(0, 120)],
+        classifiedBy: 'rules', isGroundTruth: false, svgHash: null,
+        regionPath: `n${run.n}`, renderSurface: 'desk',
+        features: { n: run.n, error: String(run.error).slice(0, 200) },
+        regime: { ...CANONICAL_REGIME },
+      });
+      continue;
+    }
+    const gestures = [
+      ['drag', run.drag],
+      ['pan', run.pan],
+      ['zoom', run.zoom],
+    ];
+    for (const [g, stats] of gestures) {
+      if (!stats || stats.error) continue;
+      const worst = Math.max(stats.maxMs || 0, stats.longTaskMaxMs || 0);
+      out.push({
+        exampleId: `desk-perf:n${run.n}:${g}`,
+        source: 'desk-perf',
+        labelKind: 'fidelity',
+        label: verdictFromWorstMs(worst),
+        confidence: null, rawScore: null, margin: null, firedRules: [],
+        classifiedBy: 'rules', isGroundTruth: false, svgHash: null,
+        regionPath: `n${run.n}:${g}`, renderSurface: 'desk',
+        features: {
+          n: run.n,
+          gesture: g,
+          medianMs: stats.medianMs ?? null,
+          p95Ms: stats.p95Ms ?? null,
+          worstMs: +worst.toFixed(1),
+          longTasks: stats.longTasks ?? null,
+          frames: stats.frames ?? null,
+          // drag-only: how many objects re-rendered (1 = memo holding, N = cliff)
+          objectsReRendered: g === 'drag' ? (stats.movedCount ?? null) : null,
+          objectCount: run.objectCount ?? null,
+          feedStatus: run.feedStatus ?? null,
+        },
+        regime: { ...CANONICAL_REGIME },
+      });
+    }
+  }
+  // The cross-N scaling bound — the actual cliff gate.
+  const s = report?.dragScaling;
+  if (s) {
+    out.push({
+      exampleId: `desk-perf:scaling:n${s.loN}-${s.hiN}`,
+      source: 'desk-perf',
+      labelKind: 'fidelity',
+      label: s.scalesWithN ? 'broke' : 'ok',
+      confidence: null, rawScore: null, margin: null, firedRules: [],
+      classifiedBy: 'rules', isGroundTruth: false, svgHash: null,
+      regionPath: `scaling:n${s.loN}-${s.hiN}`, renderSurface: 'desk',
+      features: {
+        loN: s.loN, hiN: s.hiN, nRatio: s.nRatio,
+        loWorstMs: s.loWorstMs, hiWorstMs: s.hiWorstMs, worstRatio: s.worstRatio,
+        scalesWithN: s.scalesWithN, boundedAtBudget: s.boundedAtBudget,
+        verdict: s.verdict ?? null,
+      },
+      regime: { ...CANONICAL_REGIME },
+    });
+  }
+  return out;
 }
 
 function normalizeVerdict(r) {

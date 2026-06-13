@@ -26,6 +26,10 @@
 //   --from-shape-snap <path>    fold a saved __dd_shapeSnapLog JSON export
 //                               (the shape-snap evaluate/cycle/keep/revert
 //                               training tuples, rock F3).
+//   --from-desk-perf <path>     fold a populated-desk-battery perf-report.json
+//                               (gap-hunt H6 — the interactivity-at-scale gate:
+//                               one fidelity example per (N, gesture) + the
+//                               cross-N drag-cost scaling bound).
 //   --url <u>                   override the /audit URL for --from-audit.
 //   --captured-at <ISO>         optional manifest timestamp (NOT read from clock).
 //   --dry-run                   compute + print the diff, write NOTHING.
@@ -56,6 +60,7 @@ import {
   fidelity3dRecordToExample,
   shadeFillEntryToExample,
   shapeSnapEntryToExample,
+  deskPerfReportToExamples,
 } from './dataset-lib.mjs';
 
 const DEFAULT_GOLDEN = path.join(REPO_ROOT, 'audit-runs', 'golden-labels.v2.json');
@@ -71,6 +76,7 @@ function parseArgs(argv) {
     fromFidelity3d: null,
     fromShadeFill: null,
     fromShapeSnap: null,
+    fromDeskPerf: null,
     url: DEFAULT_AUDIT_URL,
     capturedAt: null,
     dryRun: false,
@@ -85,6 +91,7 @@ function parseArgs(argv) {
     else if (k === '--from-fidelity-3d') a.fromFidelity3d = argv[++i];
     else if (k === '--from-shade-fill') a.fromShadeFill = argv[++i];
     else if (k === '--from-shape-snap') a.fromShapeSnap = argv[++i];
+    else if (k === '--from-desk-perf') a.fromDeskPerf = argv[++i];
     else if (k === '--url') a.url = argv[++i];
     else if (k === '--captured-at') a.capturedAt = argv[++i];
     else if (k === '--dry-run') a.dryRun = true;
@@ -230,6 +237,15 @@ function pullShapeSnap(p) {
   return rows.map((e, i) => shapeSnapEntryToExample(e, i));
 }
 
+function pullDeskPerf(p) {
+  const report = readJson(p);
+  const examples = deskPerfReportToExamples(report);
+  const ns = (report.runs ?? []).map((r) => r.n).join(',');
+  console.log(`  desk-perf: ${examples.length} examples from runs [${ns}]` +
+    (report.dragScaling ? ` (+ scaling bound: ${report.dragScaling.verdict ?? (report.dragScaling.scalesWithN ? 'CLIFF' : 'BOUNDED')})` : ''));
+  return examples;
+}
+
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -238,7 +254,7 @@ async function main() {
   const requested =
     !!args.fromGolden || args.fromAudit || !!args.fromConversion ||
     !!args.fromInputPick || !!args.fromFidelity2d || !!args.fromFidelity3d ||
-    !!args.fromShadeFill || !!args.fromShapeSnap;
+    !!args.fromShadeFill || !!args.fromShapeSnap || !!args.fromDeskPerf;
   if (!requested) {
     console.error('No source flag given. See header for --from-* options.');
     console.error('Quick seed:  node tools/dataset/feed-dataset.mjs --from-golden audit-runs/golden-labels.v2.json');
@@ -260,6 +276,7 @@ async function main() {
   if (args.fromFidelity3d) { batch = batch.concat(pullFidelity3d(args.fromFidelity3d)); feedingSources.push('fidelity-3d'); }
   if (args.fromShadeFill) { batch = batch.concat(pullShadeFill(args.fromShadeFill)); feedingSources.push('shade-fill'); }
   if (args.fromShapeSnap) { batch = batch.concat(pullShapeSnap(args.fromShapeSnap)); feedingSources.push('shape-snap'); }
+  if (args.fromDeskPerf) { batch = batch.concat(pullDeskPerf(args.fromDeskPerf)); feedingSources.push('desk-perf'); }
 
   const { added, updated } = upsertExamples(byId, batch);
 
