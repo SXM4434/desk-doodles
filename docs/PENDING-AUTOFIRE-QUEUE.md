@@ -23,6 +23,8 @@
 
 | P11 | **Conversion/shading FIDELITY audit + fix** — Sebs flagged (2026-06-13) that clean→hand-drawn conversion + "regions that should shade aren't shading" had issues all day. Definitively catalog EVERY shape×style that converts/shades WRONG, classify each as real-engine-BUG vs by-design vs not-built-input-tool, FIX the bugs (don't let them hide under "shading system not done"). Already-fixed today: wash flood, outline-only blank posters, riso flood — confirm + go beyond | SvgStyleTransform.tsx HOT (render-bug fix `w7dt2ducr` in flight) | render-bug-fix fleet lands | **HIGH** |
 
+| P12 | **Outline-only blank-poster fix is BROKEN** (fidelity catalog caught it): the synthesis at SvgStyleTransform.tsx:2455 reads the POST-CSS computed fill (already forced transparent) → skips every rect, so posters still blank under Outline-only. Fix = read the SOURCE fill, not computed. | SvgStyleTransform.tsx HOT (render-bug fleet `w7dt2ducr` may still be on it — check if it self-caught in verify first) | render-bug fleet lands; if still broken, fire correction | HIGH |
+
 ## Git hygiene (do before any push, when fleets quiet)
 - **Consolidate branch:** all session work is linear on `og-image-baseline` (a stray branch from the og-image rock); `main` is stuck at f6bf608. FF it: `git checkout main && git merge --ff-only og-image-baseline && git branch -d og-image-baseline`. Nothing lost (linear). DO NOT switch branches while agents are committing.
 
