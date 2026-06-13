@@ -2,23 +2,28 @@
   "schemaVersion": 1,
   "dataset": "datasets/smart-layer.dataset.jsonl",
   "dedupeKey": "exampleId",
-  "exampleCount": 1394,
-  "highWaterIngestIndex": 1393,
+  "exampleCount": 1569,
+  "highWaterIngestIndex": 1568,
   "groundTruthCount": 1394,
   "countsBySource": {
-    "golden": 1394
+    "golden": 1394,
+    "fidelity-2d": 168,
+    "desk-perf": 7
   },
   "countsByLabelKind": {
-    "role": 1394
+    "role": 1394,
+    "fidelity": 175
   },
   "countsByRegime": {
-    "canonical-eps3": 1394
+    "canonical-eps3": 1401,
+    "unknown": 168
   },
   "countsByRenderSurface": {
-    "audit": 1394
+    "audit": 1562,
+    "desk": 7
   },
   "lastFeedSources": [
-    "golden-enriched-signals"
+    "desk-perf"
   ],
-  "lastFeedCapturedAt": "2026-06-13T06:26:24.193Z"
+  "lastFeedCapturedAt": null
 }
