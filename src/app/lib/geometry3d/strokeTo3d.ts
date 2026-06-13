@@ -1556,10 +1556,15 @@ export function extractPoolRegions(
      *  a drawn rectangle's corners (Sebs: "fill doesn't conform, edges not
      *  clean"). Fill passes crisp:true. */
     crisp?: boolean;
+    /** Raise the grid-resolution ceiling above SOLID_MAX_GRID_RESOLUTION. The
+     *  2D tone FILL passes a higher cap so sharp corners staircase the least
+     *  (the white corner-notch bug, Sebs 2026-06-13); 3D solid keeps the
+     *  default cap (mesh density / perf). */
+    maxResolution?: number;
   } = {},
 ): RegionExtraction {
   const inkRadius = opts.inkRadius ?? SOLID_INK_RADIUS;
-  const resolution = Math.min(opts.resolution ?? SOLID_GRID_RESOLUTION, SOLID_MAX_GRID_RESOLUTION);
+  const resolution = Math.min(opts.resolution ?? SOLID_GRID_RESOLUTION, opts.maxResolution ?? SOLID_MAX_GRID_RESOLUTION);
   const pool = worldStrokes.map(dedupeConsecutive).filter((s) => s.length > 0);
   if (pool.length === 0) return { extractorVersion: REGION_EXTRACTOR_VERSION, regions: [] };
 

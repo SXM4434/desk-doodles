@@ -422,6 +422,9 @@ export type FillRegion = {
 /** Run the pool-raster extractor over the stroke pool at a gap multiplier and
  *  map the region tree back into viewBox px. Deterministic; cache by
  *  (strokesKey, gapIdx) — per ladder STEP, never per pointermove (spec §6). */
+/** 2D tone-fill grid resolution — higher than the 3D-solid cap (200) so a
+ *  filled rectangle's sharp corners staircase the least (no white corner-notch). */
+const FILL_GRID_RESOLUTION = 420;
 export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegion[] {
   const raw = strokes.map((s) => s.points).filter((s) => s.length > 0);
   if (raw.length === 0) return [];
@@ -439,7 +442,10 @@ export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegi
     // max resolution = the finest grid so the boundary staircases the least and
     // the fill hugs the drawn line (Sebs: "fill doesn't conform, edges dirty").
     crisp: true,
-    resolution: SOLID_MAX_GRID_RESOLUTION,
+    // 2D fill uses a HIGHER grid cap than 3D solid so sharp corners staircase
+    // the least → kills the white corner-notch on filled squares (2026-06-13).
+    resolution: FILL_GRID_RESOLUTION,
+    maxResolution: FILL_GRID_RESOLUTION,
   });
   // The world→viewBox inverse adapter: normalizeStrokePoints is
   //   wx = (x − cx)·s,  wy = −(y − cy)·s   →   x = wx/s + cx,  y = cy − wy/s.
@@ -557,7 +563,12 @@ function decimateLoop(pts: [number, number][]): [number, number][] {
  *      PAST the centerline so the tone always sits flush under the ink, no
  *      inset, regardless of gap.
  *  Clamped ≥ 0 (never a negative dilation = never pulled further inward). */
-const FULL_FILL_EDGE_BIAS = 2;
+// Full-fill reaches EXACTLY the ink centerline (bias 0) — the fill edge then
+// sits UNDER the ink line (ink covers centerline→outer), so the interior is
+// completely toned with NO paper gap AND no gray spilling PAST the outline edge
+// (the +2px bias previously pushed the fill past the ink's outer edge → the
+// "bleed past the edge / dirty" bug Sebs flagged 2026-06-13).
+const FULL_FILL_EDGE_BIAS = 0;
 function fillDilatePx(gapMult: number, full = false): number {
   const toCenterline = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE;
   if (full) return toCenterline + FULL_FILL_EDGE_BIAS;
