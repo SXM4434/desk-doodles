@@ -302,10 +302,26 @@ function formatCardDate(iso: string): string | null {
   }
 }
 
-/** Count the drawable marks (strokes/shapes) in an SVG — the card's one stat.
- *  Regex over element tags; deterministic, cheap, tolerant of odd markup. */
+/** Count the drawable marks in an SVG — the card's one stat AND the gate that
+ *  decides art-vs-placeholder (marks === 0 ⇒ the dashed-circle "empty" well).
+ *
+ *  Regex over element tags; deterministic, cheap, tolerant of odd markup. The
+ *  set MUST include every tag that puts ink on screen, or a doodle made only of
+ *  those tags reads as "0 marks" + a blank mini-card even though it has visible
+ *  art. Beyond the basic geometry primitives that covers:
+ *    • <text>  — text-only doodles (a written word IS the doodle)
+ *    • <use>   — instanced art (a <symbol>/<defs> shape referenced by <use> —
+ *                the visible mark lives on the <use>, not the inert <defs>)
+ *    • <image> — embedded raster (uploaded photo doodles)
+ *  <defs>/<symbol>/<g> are deliberately NOT counted: they're containers, not
+ *  marks — counting them would inflate the stat and (worse) make a defs-only
+ *  blank SVG falsely render as art. The art itself (including any <defs>/<use>
+ *  pair) renders verbatim via dangerouslySetInnerHTML once marks > 0, so adding
+ *  <use> here is what makes instanced/text doodles actually paint in the well. */
 function countMarks(svgMarkup: string): number {
-  const m = svgMarkup.match(/<(path|line|polyline|circle|rect|ellipse|polygon)\b/gi);
+  const m = svgMarkup.match(
+    /<(path|line|polyline|circle|rect|ellipse|polygon|text|use|image)\b/gi,
+  );
   return m ? m.length : 0;
 }
 
