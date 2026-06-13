@@ -10,3 +10,8 @@ drawing arbitrary things to "see what breaks":
 - **3D Solid:** each disconnected region becomes its OWN inflated/solid blob (ears, eyes, nose, smile all separate puffy pieces) — NOT a unified form. Because pool-raster makes one mass per connected contour; disconnected features → separate masses.
 - **Evaluate in the 3D rework + audit:** is "each feature its own solid" intended, or should the form unify / bas-relief carry the features as relief on a single body? The bas-relief approach (drawing→surface) would render the whole face on one form; the per-stroke solid gives separate 3D pieces. DECISION pending in the 3D rework (lean: bas-relief unifies; keep per-stroke solid as a mode).
 - **The methodology Sebs wants:** draw weird/varied/made-up inputs, observe what breaks, one object/one toggle at a time vs Clean (2D) / vs Clean + the 2D style for svg-port (3D), loop a few times till air-tight.
+
+## CASE-2: RE-DRAW shows original strokes zoomed/cropped (not fit to canvas)
+- **Repro:** open a placed doodle → RE-DRAW ("your original strokes, editable"). The loaded source strokes render at the wrong scale — zoomed in + overflowing/cropped by the re-draw canvas, instead of fit to the frame.
+- **Root area:** the re-draw/reopen path (ObjectSurface → DrawSurface loading source strokes) doesn't fit the strokes' bbox to the edit canvas viewBox (same class as the upload-oversize fit the DrawSurface lane fixed, but for re-draw strokes).
+- **Fix:** scale/translate the loaded strokes to fit the re-draw canvas (fit-to-frame), like the upload path. VERIFY: re-draw a multi-stroke doodle → strokes appear whole + centered, editable.
