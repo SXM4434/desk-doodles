@@ -240,7 +240,17 @@ const toOklab = converter('oklab');
 function computeDarkness(fillRaw: string | null, fillComputed: string | null): number {
   if (fillRaw === null || fillRaw === 'none' || fillRaw === 'transparent') return 0;
 
-  // 1. W1 token detection — culori can't parse `var(...)` references, so we
+  // 1. color-mix percentage: `color-mix(in oklab, ..., TOKEN N%, transparent)`.
+  //    MUST run before the bare-token table: the token name also appears INSIDE
+  //    the mix expression, so token-first read the catalog's 8% washes as 1.0
+  //    pure ink (the Process-print solid-black flood, found 2026-06-12).
+  //    Per 09-LOCKED-MODEL §3 darknessL = 1 - OKLab L*: an 8% ink wash ≈ 0.08.
+  const colorMixMatch = fillRaw.match(/(\d+(?:\.\d+)?)%\s*,\s*transparent/);
+  if (colorMixMatch) {
+    return Math.max(0, Math.min(1, parseFloat(colorMixMatch[1]) / 100));
+  }
+
+  // 2. W1 token detection — culori can't parse `var(...)` references, so we
   //    have to mirror legacy `fillDarknessFactor`'s explicit token table.
   if (fillRaw.includes('--dir-bg')) return 0;
   if (fillRaw.includes('--dir-text-primary')) return 1.0;
@@ -249,12 +259,6 @@ function computeDarkness(fillRaw: string | null, fillComputed: string | null): n
   if (fillRaw.includes('--dir-text-secondary')) return 0.55;
   if (fillRaw.includes('--dir-detail')) return 0.4;
   if (fillRaw.includes('--dir-accent')) return 0.85;
-
-  // 2. color-mix percentage: `color-mix(in oklab, ..., TOKEN N%, transparent)`
-  const colorMixMatch = fillRaw.match(/(\d+(?:\.\d+)?)%\s*,\s*transparent/);
-  if (colorMixMatch) {
-    return Math.max(0, Math.min(1, parseFloat(colorMixMatch[1]) / 100));
-  }
 
   // 3. Culori OKLab for direct color strings (hex/rgb/hsl/etc.)
   const source = fillComputed ?? fillRaw;

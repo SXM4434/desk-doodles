@@ -31,6 +31,7 @@ The 01–10 pages describe the engine (how a doodle becomes marks); the **11–1
 | 13 | [The 3D system](13-the-3d-system.md) | Geometry modes (Rod/Extrude/Inflate/Solid + AI) under the chrome-split rule (3D-only panel; 2D chrome only under SVG-port); ink-black material policy; the conversion-semantics brain (two register brains, the arrow/eyes/two-arc fixtures); AI-as-default coexisting with the local path. |
 | 14 | [The social desk](14-the-social-desk.md) | The shared layer: capped multi-desk + auto-spawn + gallery mini-desks; the drawer as a passive cross-desk index (place=copy, click=full Edit surface); drag-to-place; friendly handles (no raw UUIDs); smart placement P-1 anti-cover landing. |
 | 15 | [The smart/ML ladder](15-the-smart-ml-ladder.md) | The dated build sequence: what runs now (classifier, smart-pick, coverage, golden gates, reliability/ECE, P-1), what's scheduled when, the post-makeathon trained-model ladder — and the central honesty: "ahead on engines, behind on receipts" + the receipts retrofit. |
+| 16 | [Shading, region fill & shape assist](16-shading-fill-and-shape-assist.md) | The input-tool system from the 2026-06-12 research pass: "the ink without the ink outline" (regions derived from ink, one region brain shared with 3D), Brush/Fill/Lasso + layered gap forgiveness, marker-model accumulation, Snap/Straighten under the freehand-default law, audit-parity verdict. |
 
 ## Living document rules
 
