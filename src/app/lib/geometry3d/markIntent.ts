@@ -172,7 +172,14 @@ export interface MarkIntentAnalysis {
 
 type Pt = [number, number];
 
-function resamplePolyline(points: StrokeInputPoint[], spacing: number): Pt[] {
+function resamplePolyline(pointsIn: StrokeInputPoint[], spacing: number): Pt[] {
+  // DEFENCE IN DEPTH (Infinity-OOM guard, mirrors strokeTo3d.resampleWorldPolyline):
+  // a single Infinity coord makes a segment Infinity, and the
+  // `while (walked <= segLen)` walk never terminates → OOM. analyzeMarkIntent
+  // runs at the very front of convertStrokePool (before any normalization), so
+  // this resampler is the FIRST thing a corrupt record would hit — it must
+  // defend itself even though convertStrokePool also sanitizes the front door.
+  const points = pointsIn.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
   if (points.length === 0) return [];
   const out: Pt[] = [[points[0][0], points[0][1]]];
   if (points.length === 1) return out;
@@ -181,7 +188,7 @@ function resamplePolyline(points: StrokeInputPoint[], spacing: number): Pt[] {
   for (let i = 1; i < points.length; i++) {
     const curr: Pt = [points[i][0], points[i][1]];
     const segLen = Math.hypot(curr[0] - prev[0], curr[1] - prev[1]);
-    if (segLen <= 1e-12) continue;
+    if (!(segLen > 1e-12) || !Number.isFinite(segLen)) continue;
     let walked = spacing - carry;
     while (walked <= segLen) {
       const t = walked / segLen;
@@ -745,6 +752,14 @@ export function analyzeMarkIntent(
   // 5d. Singles — scored rules, top intent wins (R1/R2/R4/R5/R6/R9 + prior).
   for (const f of features) {
     if (clustered.has(f.index)) continue;
+    // DEGENERATE-STROKE GUARD (BUG 3 sibling — empty-publish phantom): a stroke
+    // that resampled to ZERO points carries no geometry at all (an empty
+    // stroke, or one whose every coord was non-finite and got filtered out by
+    // the resampler's Infinity guard). It can't be structure/shading/fill —
+    // emitting a cluster makes convertStrokePool build a phantom rod for it on
+    // an otherwise-empty publish. A real dot tap has resampledCount ≥ 1 (the
+    // bead fixture), so this never drops a legitimate mark. */
+    if (f.resampledCount === 0) continue;
     const scores: Record<MarkIntent, { score: number; rules: string[] }> = {
       structure: { score: BASE_STRUCTURE_PRIOR, rules: ['BASE_structure_prior'] },
       'shading-gesture': { score: 0, rules: [] },

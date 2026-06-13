@@ -153,7 +153,7 @@ function geometryKindOf(build: StrokeGeometryResult | null): ConversionReceipt['
 // ─── THE entry point ─────────────────────────────────────────────────────────
 
 export function convertStrokePool(
-  strokes: StrokeInputPoint[][],
+  strokesRaw: StrokeInputPoint[][],
   opts: ConvertOptions = {},
 ): ConvertResult {
   const viewBox = opts.viewBox ?? DEFAULT_VIEWBOX;
@@ -161,6 +161,14 @@ export function convertStrokePool(
   const epsilon = opts.epsilon ?? RDP_EPSILON;
   const depth = opts.depth ?? EXTRUDE_DEPTH;
   const holesEnabled = opts.holes ?? true; // D2-B recommended default
+  // ENGINE BOUNDARY GUARD (Infinity-OOM, BUG 1): drop non-finite (Infinity)
+  // coords per-stroke BEFORE anything resamples. analyzeMarkIntent resamples
+  // first (below), and a single Infinity coord makes a segment length Infinity
+  // → the arc-length walk never terminates and OOMs the tab. NaN is already
+  // harmless (rdp/dedupe drop it). Per-stroke filtering keeps original indices
+  // stable (receipts/treatAsClosed key on the ORIGINAL stroke index), so we
+  // sanitize each stroke in place rather than re-packing the array.
+  const strokes = strokesRaw.map((s) => s.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1])));
   const nonEmpty = strokes
     .map((points, index) => ({ points, index }))
     .filter((s) => s.points.length > 0);
@@ -214,6 +222,15 @@ export function convertStrokePool(
 
   // ─── Explicit 'solid': pool-level, exactly today's behavior ───────────────
   if (mode === 'solid') {
+    // EMPTY-POOL SHORT-CIRCUIT (BUG 3): an empty pool (no non-empty strokes,
+    // e.g. an empty publish, or a pool that sanitized down to nothing) must
+    // emit ZERO units — never a phantom 'pool' object. auto/rod/extrude/inflate
+    // already emit 0 here (their per-cluster/per-stroke loops have nothing to
+    // iterate); the explicit-solid branch was the lone outlier, emitting one
+    // empty 'pool' unit whose build degenerately fell back to a 0-point rod.
+    if (nonEmpty.length === 0) {
+      return { units, receipts, analysis };
+    }
     const pool = nonEmpty.map((s) => s.points);
     const build = buildPoolSolidGeometry(pool, {
       viewBox,

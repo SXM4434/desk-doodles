@@ -278,6 +278,40 @@ export function isSolidFamilyClosure(
   return dflt === 'solid';
 }
 
+// ─── Input sanitation (BUILDER BOUNDARY GUARD) ───────────────────────────────
+
+/** True when x AND y are finite real numbers. A stray Infinity (from a corrupt
+ *  publish/upload record, a divide-by-zero in an upstream transform, or a
+ *  bad pointer-event coalesce) is the ONE non-finite input that is dangerous:
+ *  it makes a polyline SEGMENT length Infinity, and the arc-length resamplers
+ *  (resampleWorldPolyline here + resamplePolyline in markIntent) walk
+ *  `while (walked <= segLen) walked += spacing` — an Infinity segLen never
+ *  terminates and OOMs the process/tab. (NaN is already harmless: rdpPoints'
+ *  hypot/compare drop NaN anchors and dedupe filters NaN distances, so NaN
+ *  never reaches a live segLen.) Index 2 (pressure) is NOT range-checked here
+ *  — extractPressures already clamps it. */
+export function isFinitePoint(p: StrokeInputPoint): boolean {
+  return Number.isFinite(p[0]) && Number.isFinite(p[1]);
+}
+
+/** Drop every point with a non-finite x/y from one stroke. This is the
+ *  ENGINE BOUNDARY GUARD for the Infinity-OOM class: applied at the
+ *  convertStrokePool entry (before analyzeMarkIntent, which resamples FIRST)
+ *  so no Infinity ever reaches an arc-length walk. Builders also defend
+ *  themselves (resampleWorldPolyline filters too) — defence in depth, since
+ *  the scene/smoke paths call builders directly. Returns a NEW array;
+ *  pressure-bearing tuples are preserved verbatim. */
+export function dropNonFinitePoints<P extends StrokeInputPoint>(stroke: P[]): P[] {
+  return stroke.filter(isFinitePoint);
+}
+
+/** Apply dropNonFinitePoints across a whole pool. Strokes that become empty
+ *  after filtering are dropped entirely (a stroke of only-Infinity points
+ *  carries no recoverable geometry). */
+export function sanitizeStrokePool<P extends StrokeInputPoint>(strokes: P[][]): P[][] {
+  return strokes.map((s) => dropNonFinitePoints(s)).filter((s) => s.length > 0);
+}
+
 // ─── Simplification ──────────────────────────────────────────────────────────
 
 /** Ramer-Douglas-Peucker polyline simplification.
@@ -297,14 +331,25 @@ export function rdpPoints<P extends StrokeInputPoint>(
   const dx = x2 - x1;
   const dy = y2 - y1;
   const lineLen = Math.hypot(dx, dy);
+  // DEGENERATE-CHORD GUARD (BUG 2 — closed-loop collapse): when the first and
+  // last points coincide (a CLOSED loop: a clean circle's endpoints are equal,
+  // or within float noise ~1e-13), the chord length is ~0 and the
+  // perpendicular-distance formula `|…|/lineLen` divides by ~0 → garbage
+  // distances → RDP collapses the whole symmetric loop to just [first, last]
+  // (2 coincident anchors). Downstream closureStateOf then reads <3 pts → 'open'
+  // → a closed circle routes to a hollow ROD instead of a solid slab, and the
+  // bug is RADIUS-DEPENDENT (which intermediate point happens to win the
+  // garbage-max) so it looks non-deterministic. Treat any near-zero chord as
+  // the degenerate case and measure distance from the shared endpoint, so the
+  // farthest point splits the loop and recursion keeps it ≥3 anchors. */
+  const chordDegenerate = lineLen < 1e-9;
   let maxDist = 0;
   let maxIdx = 0;
   for (let i = 1; i < points.length - 1; i++) {
     const [px, py] = points[i];
-    const dist =
-      lineLen === 0
-        ? Math.hypot(px - x1, py - y1)
-        : Math.abs(dy * px - dx * py + x2 * y1 - y2 * x1) / lineLen;
+    const dist = chordDegenerate
+      ? Math.hypot(px - x1, py - y1)
+      : Math.abs(dy * px - dx * py + x2 * y1 - y2 * x1) / lineLen;
     if (dist > maxDist) {
       maxDist = dist;
       maxIdx = i;
@@ -422,7 +467,16 @@ export function normalizeStrokePoints(
 ): THREE.Vector3[] {
   const cx = center ? center.x : viewBox.w / 2;
   const cy = center ? center.y : viewBox.h / 2;
-  return points.map(([x, y]) => new THREE.Vector3((x - cx) * scale, -(y - cy) * scale, 0));
+  // WORLD BOUNDARY GUARD (Infinity-OOM, BUG 1): every builder path funnels
+  // through normalization, so dropping non-finite coords here protects the
+  // direct-builder callers (Stroke3DScene + the smoke harness) that bypass
+  // convertStrokePool's front-door sanitize. A non-finite coord would survive
+  // the scale/offset (Infinity·k = Infinity) into the raster bbox (Infinity
+  // span → grid blow-up) and the resamplers (Infinity segLen → non-terminating
+  // walk). No-op for finite input (the common path).
+  return points
+    .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+    .map(([x, y]) => new THREE.Vector3((x - cx) * scale, -(y - cy) * scale, 0));
 }
 
 // ─── Geometry builders ───────────────────────────────────────────────────────
@@ -447,21 +501,32 @@ function dedupeConsecutive(world: THREE.Vector3[]): THREE.Vector3[] {
  *  `spacing` world units, always keep the true endpoint (the caps anchor
  *  there). The dense centerline is what makes the ×3 tubular multiplier hug
  *  corners the way free-stroke tubes do. Deterministic, pure. */
-function resampleWorldPolyline(pts: THREE.Vector3[], spacing: number): THREE.Vector3[] {
-  if (pts.length < 2) return pts.slice();
+function resampleWorldPolyline(ptsIn: THREE.Vector3[], spacing: number): THREE.Vector3[] {
+  // DEFENCE IN DEPTH (Infinity-OOM guard): drop any non-finite vertex before
+  // the arc-length walk. A single Infinity coordinate makes segLen Infinity,
+  // and `while (walked <= segLen)` would never terminate (it OOMs the
+  // process). convertStrokePool sanitizes at the front door, but the scene +
+  // smoke paths call the builders directly, so the walk hardens itself too.
+  // A non-positive/non-finite spacing would also never advance — clamp it.
+  const pts =
+    ptsIn.length === ptsIn.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)).length
+      ? ptsIn
+      : ptsIn.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));
+  const step = Number.isFinite(spacing) && spacing > 0 ? spacing : ROD_RESAMPLE_SPACING;
+  if (pts.length < 2) return pts.map((p) => p.clone());
   const out: THREE.Vector3[] = [pts[0].clone()];
   let prev = pts[0];
   let carry = 0; // distance walked past the last emitted point
   for (let i = 1; i < pts.length; i++) {
     const curr = pts[i];
     const segLen = prev.distanceTo(curr);
-    if (segLen <= 1e-12) continue;
-    let walked = spacing - carry;
+    if (!(segLen > 1e-12) || !Number.isFinite(segLen)) continue;
+    let walked = step - carry;
     while (walked <= segLen) {
       out.push(new THREE.Vector3().lerpVectors(prev, curr, walked / segLen));
-      walked += spacing;
+      walked += step;
     }
-    carry = segLen - (walked - spacing);
+    carry = segLen - (walked - step);
     prev = curr;
   }
   const last = pts[pts.length - 1];
