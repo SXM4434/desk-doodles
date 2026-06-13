@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+// Subdivides the boundary-only Earcut cap so displacementMap has interior
+// vertices to push (real carved relief, not bump-only). three example modifier
+// — no new dep (rides the already-lazy 3D chunk).
+import { TessellateModifier } from 'three/examples/jsm/modifiers/TessellateModifier.js';
 import {
   DEFAULT_VIEWBOX,
   INFLATE_BASE_RADIUS,
@@ -61,8 +65,11 @@ import {
 } from './hatchMaterial';
 import {
   buildDrawingReliefTexture,
+  buildSvgPortTexture,
   applyPlanarReliefUVs,
   RELIEF_BUMP_SCALE,
+  RELIEF_DISPLACEMENT_SCALE,
+  type SvgPortTextureResult,
 } from './drawingTexture';
 
 // ─── Stroke3DScene — R3F scene for the stroke→3D round-trip ────────────────
@@ -467,6 +474,12 @@ export interface Stroke3DSceneProps {
   /** Live 2D Shading-cluster values for hatch/svg-port (the scene only
    *  consumes; the wiring layer reads F3RoughModifiersContext). */
   hatchInputs?: HatchInputs;
+  /** svg-port ONLY: the serialized styled <svg> from the REAL SvgStyleTransform
+   *  (via its onRender seam). The form WEARS this exact 2D render — rasterized
+   *  to emissive ink + carve relief, never a parallel shader
+   *  (project_f3_shading_port_to_3d). Absent → svg-port falls back to the lit
+   *  body (no marks). */
+  svgPortMarkup?: string;
   /** Background override. Default: --dir-bg resolved once at mount. */
   background?: string;
   /** Legacy explicit ink override — when set, overrides the Native preset's
@@ -512,6 +525,16 @@ function HatchUniformSync({
   return null;
 }
 
+/** Dispose the three svg-port channel textures (three never auto-frees GPU
+ *  textures; reassigning material.map/emissiveMap/normalMap does NOT free the
+ *  old one — leak guard for every rebuild + the async stale-loser). */
+function disposeSvgPortTex(t: SvgPortTextureResult | null | undefined): void {
+  if (!t) return;
+  t.emissive.dispose();
+  t.height.dispose();
+  t.normal.dispose();
+}
+
 /** One mesh per stroke (matches the 2D commit layer's one-<path>-per-stroke),
  *  grouped so OrbitControls orbit the whole doodle. Geometries are built in a
  *  useMemo and EXPLICITLY disposed on swap/unmount — programmatic geometries
@@ -522,6 +545,9 @@ function StrokeMeshes({
   geometryMode,
   material,
   isNative,
+  isSvgPort,
+  svgPortMarkup,
+  paperColor,
   modeParams,
   showEdges,
   edgeColor,
@@ -535,6 +561,13 @@ function StrokeMeshes({
   /** True when `material` is the lit Native MeshPhysicalMaterial (so the
    *  bas-relief bumpMap is meaningful — the Hatch/SVG-port shaders ignore it). */
   isNative: boolean;
+  /** True for the svg-port style — the body wears the REAL 2D render as a
+   *  carved relief (emissive ink + normal/displacement), built from svgPortMarkup. */
+  isSvgPort?: boolean;
+  /** svg-port: serialized styled <svg> (SvgStyleTransform onRender output). */
+  svgPortMarkup?: string;
+  /** Resolved --dir-bg — the paper fill under the svg-port marks. */
+  paperColor?: string;
   modeParams: Mode3DParams;
   showEdges: boolean;
   edgeColor: string;
@@ -656,10 +689,104 @@ function StrokeMeshes({
       if (reliefMaterial) reliefMaterial.dispose();
     };
   }, [reliefMaterial]);
-  /** The material the BODY mesh renders with: relief-augmented when carved,
-   *  else the plain passed material. (MeshPhysicalMaterial extends
-   *  MeshStandardMaterial, so the Native presets qualify for the bumpMap.) */
-  const bodyMaterial = reliefMaterial ?? material;
+  // ── SVG-PORT: the form WEARS the REAL 2D render (project_f3_shading_port_to_3d:
+  // use the actual SvgStyleTransform output, never a parallel shader). Rasterize
+  // svgPortMarkup → emissive ink + Sobel normal (+ height for Stage-2
+  // displacement), all registered to the front-cap window via
+  // applyPlanarReliefUVs. Shading stays SEPARATED so the rig never double-shades
+  // the 2D tone: the drawing is the (matte) surface albedo + a partial emissive
+  // that resists shadow-wash; the relief gives the carved 3D read. solid/extrude
+  // only (flat cap where planar UVs behave); rod/inflate keep the lit body. ──
+  const svgPortBody = !!isSvgPort && (geometryMode === 'solid' || geometryMode === 'extrude');
+  const [svgPortTex, setSvgPortTex] = useState<SvgPortTextureResult | null>(null);
+  // The TESSELLATED front cap the svg-port body renders — a CLONE of the mass
+  // (so the shared builds geometry is never mutated/double-disposed), subdivided
+  // so displacementMap has interior vertices to carve. null until the async
+  // texture lands.
+  const [svgPortGeom, setSvgPortGeom] = useState<THREE.BufferGeometry | null>(null);
+  const svgPortGenRef = useRef(0);
+  useEffect(() => {
+    if (!svgPortBody || !svgPortMarkup || builds.length === 0) {
+      setSvgPortTex((prev) => { disposeSvgPortTex(prev); return null; });
+      setSvgPortGeom((prev) => { prev?.dispose(); return null; });
+      return;
+    }
+    const mass = builds[0];
+    mass.geometry.computeBoundingBox();
+    const bb = mass.geometry.boundingBox;
+    if (!bb || !Number.isFinite(bb.min.x) || !Number.isFinite(bb.max.x)) {
+      setSvgPortTex((prev) => { disposeSvgPortTex(prev); return null; });
+      setSvgPortGeom((prev) => { prev?.dispose(); return null; });
+      return;
+    }
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES_3D);
+    const myGen = ++svgPortGenRef.current;
+    let cancelled = false;
+    buildSvgPortTexture(
+      svgPortMarkup,
+      pool,
+      viewBox,
+      { minX: bb.min.x, maxX: bb.max.x, minY: bb.min.y, maxY: bb.max.y },
+      { paperColor },
+    )
+      .then((res) => {
+        // Stale-guard: a newer build superseded this async load → drop it.
+        if (cancelled || myGen !== svgPortGenRef.current) { disposeSvgPortTex(res); return; }
+        if (!res) return;
+        // Build the carve surface: clone the mass, subdivide so displacement has
+        // interior vertices, then write planar UVs from world xy (exact per
+        // vertex regardless of topology) so ink + carve co-register.
+        let carved: THREE.BufferGeometry | null = null;
+        try {
+          const clone = mass.geometry.clone();
+          // maxEdgeLength in WORLD units (~groove width) so a mark spans several
+          // triangles; cap iterations to bound the non-indexed vertex balloon.
+          carved = new TessellateModifier(0.06, 4).modify(clone);
+          clone.dispose();
+          applyPlanarReliefUVs(carved, res.window);
+          carved.computeVertexNormals();
+        } catch {
+          carved = null; // tessellation failed → fall back to flat cap (normalMap only)
+        }
+        setSvgPortTex((prev) => { disposeSvgPortTex(prev); return res; });
+        setSvgPortGeom((prev) => { prev?.dispose(); return carved; });
+        // Fallback registration on the original mass for the brief pre-carve frame.
+        if (!carved) applyPlanarReliefUVs(mass.geometry, res.window);
+      })
+      .catch(() => { /* load failure → caller keeps the plain lit body */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [svgPortBody, svgPortMarkup, builds, key, paramsKey, geometryMode, viewBox.w, viewBox.h, paperColor]);
+  useEffect(() => () => { disposeSvgPortTex(svgPortTex); }, [svgPortTex]);
+  useEffect(() => () => { svgPortGeom?.dispose(); }, [svgPortGeom]);
+
+  const svgPortMaterial = useMemo<THREE.Material | null>(() => {
+    if (!svgPortTex) return null;
+    const m = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: svgPortTex.emissive,            // the drawing as lit albedo (relief shades it)
+      normalMap: svgPortTex.normal,        // crisp groove walls (head-on relief)
+      displacementMap: svgPortTex.height,  // REAL carved geometry on the tessellated cap
+      displacementScale: RELIEF_DISPLACEMENT_SCALE,
+      // white(paper)=1 → flat at surface; black(ink)=0 → recessed groove.
+      displacementBias: -RELIEF_DISPLACEMENT_SCALE,
+      emissive: new THREE.Color(0xffffff),
+      emissiveMap: svgPortTex.emissive,    // partial self-lit → ink values resist shadow wash
+      emissiveIntensity: 0.3,
+      roughness: 1.0,                      // matte — no plastic highlight over the ink
+      metalness: 0.0,
+    });
+    m.normalScale = new THREE.Vector2(1, -1);
+    m.needsUpdate = true;
+    return m;
+  }, [svgPortTex]);
+  useEffect(() => () => { if (svgPortMaterial) svgPortMaterial.dispose(); }, [svgPortMaterial]);
+
+  /** The material the BODY mesh renders with: svg-port relief when ported, else
+   *  bas-relief-augmented when carved (Native), else the plain passed material.
+   *  (MeshPhysicalMaterial extends MeshStandardMaterial, so the Native presets
+   *  qualify for the bumpMap.) */
+  const bodyMaterial = (svgPortBody && svgPortMaterial) ? svgPortMaterial : (reliefMaterial ?? material);
 
   // Debug introspection (window.__dd_decisionLog house pattern, QW-2): the
   // verify harness + future calibration sweeps read what the scene actually
@@ -805,9 +932,13 @@ function StrokeMeshes({
         <group key={i}>
           {/* Native OUTLINE — inverted-hull backface pass UNDER the body. */}
           {hullMaterial && <mesh geometry={b.geometry} material={hullMaterial} />}
-          {/* Body — wears the carved bas-relief bumpMap on Solid/Extrude+Native
-              (bodyMaterial === material for every other mode → unchanged). */}
-          <mesh geometry={b.geometry} material={bodyMaterial} />
+          {/* Body — wears the carved bas-relief bumpMap on Solid/Extrude+Native,
+              or the svg-port carve (tessellated cap geometry) on i=0. bodyMaterial
+              === material for every other mode → unchanged. */}
+          <mesh
+            geometry={svgPortBody && i === 0 && svgPortGeom ? svgPortGeom : b.geometry}
+            material={bodyMaterial}
+          />
           {showEdges && edges[i] && (
             <lineSegments geometry={edges[i]} material={edgeMaterial} />
           )}
@@ -861,6 +992,7 @@ export function Stroke3DScene({
   nativeProps = DEFAULT_NATIVE_PROPS_3D,
   modeParams = DEFAULT_MODE3D_PARAMS,
   hatchInputs = DEFAULT_HATCH_INPUTS,
+  svgPortMarkup,
   background,
   inkColor,
   style,
@@ -930,19 +1062,23 @@ export function Stroke3DScene({
   // so weight reads even on non-spherical forms and scales with the object.
   const outlineWidth = style3d === 'native' ? nativeProps.outline : 0;
 
-  // ── Hatch / SVG-port: the band-quantized ShaderMaterial (one instance,
-  // uniforms updated live — slider moves re-hatch without rebuilds). ──
-  const hatchVariant = style3d === 'svg-port' ? 'svg-port' : 'hatch';
+  // ── Hatch: the band-quantized ShaderMaterial (one instance, uniforms updated
+  // live — slider moves re-hatch without rebuilds). svg-port NO LONGER uses
+  // this shader (the killed parallel-shader path): it builds a SvgPort relief
+  // material inside StrokeMeshes from the REAL 2D render. native uses the lit
+  // preset. So the hatch ShaderMaterial is created for the 'hatch' style only. ──
   const hatchMaterial = useMemo(() => {
-    if (style3d === 'native') return null;
-    return createHatchMaterial(hatchVariant);
-  }, [style3d, hatchVariant]);
+    if (style3d !== 'hatch') return null;
+    return createHatchMaterial('hatch');
+  }, [style3d]);
   useEffect(() => {
     return () => {
       if (hatchMaterial) hatchMaterial.dispose();
     };
   }, [hatchMaterial]);
 
+  // svg-port + native both fall back to the lit nativeMaterial as the BASE; the
+  // svg-port body gets overridden with its relief material inside StrokeMeshes.
   const material: THREE.Material = hatchMaterial ?? nativeMaterial;
 
   return (
@@ -957,10 +1093,17 @@ export function Stroke3DScene({
     >
       <color attach="background" args={[bg]} />
       <StudioRig />
+      {/* svg-port carve light — a LOW grazing key (~16° elevation) so the
+          drawing's carved grooves cast micro-shadow and read as engraved
+          relief (the high studio key alone leaves shallow grooves flat). Only
+          when svg-port is active; never perturbs Native/Hatch. */}
+      {style3d === 'svg-port' && (
+        <directionalLight position={[7, 2, 3.5]} intensity={1.15} color="#fff8ee" />
+      )}
       {hatchMaterial && (
         <HatchUniformSync
           material={hatchMaterial}
-          variant={hatchVariant}
+          variant="hatch"
           inputs={hatchInputs}
           ink={ink}
           paper={bg}
@@ -972,8 +1115,11 @@ export function Stroke3DScene({
         geometryMode={geometryMode}
         material={material}
         isNative={style3d === 'native'}
+        isSvgPort={style3d === 'svg-port'}
+        svgPortMarkup={svgPortMarkup}
+        paperColor={bg}
         modeParams={modeParams}
-        showEdges={style3d === 'svg-port'}
+        showEdges={false}
         edgeColor={ink}
         outlineWidth={outlineWidth}
         treatAsClosedBySig={treatAsClosedBySig}

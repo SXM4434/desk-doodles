@@ -1,10 +1,11 @@
-import { Suspense, lazy, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { NavLink } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
 import { PILL, CTA, SECTION_LABEL } from '../../lib/chromeStyles';
 import { Canvas3DProvider, useCanvas3D } from '../../state/Canvas3DContext';
 import { useF3RoughModifiers } from '../../state/F3RoughModifiersContext';
+import { useF3SvgStyle } from '../../state/F3SvgStyleContext';
 // Type-only import — erased at compile, keeps three out of the main chunk.
 import type { HatchInputs } from '../canvas3d/hatchMaterial';
 
@@ -23,7 +24,10 @@ import {
 } from '../chrome/CollapsiblePanel';
 // DrawSurface + stroke helpers extracted to DrawSurface.tsx 2026-06-11
 // (mechanical move — also hosted by the /desk DrawPanel popup).
-import { DrawSurface, type CanvasMode, type InputMode, type Stroke } from './DrawSurface';
+import { DrawSurface, strokesToObjectMarkup, type CanvasMode, type InputMode, type Stroke } from './DrawSurface';
+// svg-port 3D: the offscreen REAL 2D render whose styled <svg> the form wears.
+// Already in the main chunk (DrawSurface imports it) — no extra cost.
+import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
 
 // ─── 3D wiring (plan §2.3) ───────────────────────────────────────────────────
 // React.lazy keeps three + drei (~600KB gz) out of the main chunk — /desk and
@@ -83,10 +87,35 @@ function DeskDoodlesCanvasPage() {
   // — the 3D scene is fed the SAME strokes the 2D surface holds, so flipping
   // the mode tab converts exactly what's drawn).
   const [strokes3d, setStrokes3d] = useState<Stroke[]>([]);
-  const { geometryMode, style3d, materialPreset, nativeProps, hatchGrammar, hatchDirection, modeParams } =
+  const { geometryMode, style3d, materialPreset, nativeProps, hatchGrammar, hatchDirection, modeParams,
+    setStyle3d, setGeometryMode } =
     useCanvas3D();
   const { state: mods } = useF3RoughModifiers();
+  const { setState: setSvgStyle } = useF3SvgStyle();
+
+  // DEV-only test seam: drive 3D + SVG style programmatically (verification
+  // harnesses set these instead of clicking dropdown popovers). Stripped in
+  // prod builds (import.meta.env.DEV guard).
+  useEffect(() => {
+    if (!import.meta.env.DEV || typeof window === 'undefined') return;
+    (window as unknown as Record<string, unknown>).__ddSet = {
+      setMode, setStyle3d, setGeometryMode, setSvgStyle,
+    };
+  }, [setStyle3d, setGeometryMode, setSvgStyle]);
   const strokePoints = useMemo(() => strokes3d.map((s) => s.points), [strokes3d]);
+
+  // ── svg-port 3D: feed the scene the REAL styled 2D render ──────────────────
+  // When style3d is svg-port, mount the actual SvgStyleTransform OFFSCREEN on
+  // the current strokes (same source markup the 2D commit layer uses) and let
+  // its onRender seam hand us the serialized styled <svg>. The 3D form then
+  // wears that EXACT render (project_f3_shading_port_to_3d — real pipeline, not
+  // a parallel shader). Re-renders live as strokes/style/Shading sliders change.
+  const svgPortActive = mode === '3d' && style3d === 'svg-port' && strokePoints.length > 0;
+  const [svgPortMarkup, setSvgPortMarkup] = useState<string | null>(null);
+  const svgPortSource = useMemo(
+    () => (svgPortActive ? strokesToObjectMarkup(strokes3d) : null),
+    [svgPortActive, strokes3d],
+  );
   // Live 2D Shading values → hatch/svg-port uniforms (one math, four
   // renderers): the SAME F3RoughModifiers state the 2D pen reads + the Hatch
   // STYLE toggles (grammar/direction, symmetry-law gap cell §1). Memo keyed on
@@ -351,6 +380,7 @@ function DeskDoodlesCanvasPage() {
                       nativeProps={nativeProps}
                       modeParams={modeParams}
                       hatchInputs={hatchInputs}
+                      svgPortMarkup={svgPortMarkup ?? undefined}
                       style={{ width: '100%', height: '100%' }}
                     />
                   </Suspense>
@@ -408,6 +438,36 @@ function DeskDoodlesCanvasPage() {
           {mode === '3d' ? <Canvas3DChrome /> : <SmartHachureChrome />}
         </CollapsiblePanel>
       </div>
+
+      {/* svg-port 3D offscreen render — the REAL SvgStyleTransform on the
+          current strokes, sized to the viewBox so getBBox resolves (NOT
+          display:none, which would zero it). Its onRender hands the scene the
+          serialized styled <svg> to wear. Mounted only while svg-port 3D is
+          active. */}
+      {svgPortActive && svgPortSource && (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            left: -99999,
+            top: 0,
+            width: 800,
+            height: 600,
+            opacity: 0,
+            pointerEvents: 'none',
+          }}
+        >
+          <SvgStyleTransform
+            wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}
+            onRender={setSvgPortMarkup}
+          >
+            <div
+              style={{ width: '100%', height: '100%' }}
+              dangerouslySetInnerHTML={{ __html: svgPortSource }}
+            />
+          </SvgStyleTransform>
+        </div>
+      )}
     </div>
   );
 }

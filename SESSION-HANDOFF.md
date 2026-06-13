@@ -22,10 +22,30 @@ The debug/test/edge-case loop is ADVERSARIAL: don't just verify the catalog rend
 ## Committed this session (og-image-baseline)
 RC-1..5 (ace3151/eb99f7c/d16c788/4dba28a/b2bda13) · knockout (67db840) · dark-enclosing (fd8a5f3) · fill-crisp (1ff29e5) · **FIX-FLEET 7 lanes merged:** svgUpload freeze+truncation (57a0359) · shapeFit rect+star+arrow (a766ce2) · desk move→disappear+drag-queue+Fit-to-content (c6b087e) · toneMask brush-carve · risograph darkness-aware · ObjectCard drawer marks · DrawSurface ink-over-tone+full-fill+snap-any-stroke+upload-fit · **drawingTexture.ts** bas-relief helper (8d69d19).
 
+## ⚙️ CONCURRENCY ZONE MAP (5 parallel worktree agents + main loop — 2026-06-13)
+Main loop = the safety controller. Lanes (file-ownership) so merges stay clean:
+- **MAIN LOOP (me) — svg-port 3D**: `canvas3d/Stroke3DScene.tsx` · `canvas3d/drawingTexture.ts` · `canvas3d/hatchMaterial.ts` · `DeskDoodlesCanvas.tsx`. (svg-port WIP UNCOMMITTED in live tree.)
+- **Agent a5faecfd (CASE-2 redraw + fill-smooth)**: `DrawSurface.tsx` · `lib/toneMask.ts` · `lib/draw/*`.
+- **Agent a2a70592 (CASE-3 elongated-shift)**: `canvas/SvgStyleTransform.tsx` bbox/viewBox ONLY (NOT the new onRender seam I added).
+- **Agent af1ef603 (personal-space MVP)**: NEW files + `supabase/migrations/*` (NOT applied) + minimal `DeskPage.tsx` hook.
+- **Agent aadc3aed (card export SVG/PNG + author field)**: card detail modal (ObjectCard/ObjectSurface) + doodle type + new export util.
+- **Agent a5efbbb8 (image-mode)**: `lib/imageToSvg.ts` + `supabase/functions/image-to-svg/*` + docs.
+WATCH ON MERGE: SvgStyleTransform (my onRender vs B's bbox — diff fns) · DeskPage (C vs maybe D) · DrawSurface/DrawPanel (A vs E). All worktrees branch from current HEAD (3ed6924) — NOT stale. All DB-SAFE (no live Supabase writes; migrations/Edge-fns are artifacts only).
+
 ## IN FLIGHT (process on landing)
-- **Audit fleet iter-1** (`wf_7339974f-fe4`): 33 Clean-paired sheets (2D styles + 3D geomode) OFAT vs Clean + research → fix → LOOP.
-- **Bas-relief integration agent** (`a45e6d6467521da84`, worktree): applies drawingTexture as `bumpMap` on Solid/Extrude, REMOVES the lazy face-ink overlay, VERIFIES with full-res screenshots (/tmp/dd-relief-verify/) → review + merge if premium.
+- **2D-systemic fix agent IN-TREE** (`a3bca4f1dea2922a2`, editing live `SvgStyleTransform.tsx`): 4 root causes — A multi-region fill (DONE: dominoTiles shows all 3 tiles) · B nested-hole knockouts · C dark-region-outline-only · D riso nested-white. **On landing: review + verify each paired-vs-Clean (dominoTiles 3 tiles · flagPanel dark canton · collectorTin emblem white · boxedGameCartridge label white, no ampCombo/cardBinder regression) + tsc/build (tree COLD only) + commit.** ⚠️ tree is HOT while it runs — NO build/render until it lands.
+- (killed) worktree 2D agent `a52326d9` (stale-base dup) + bas-relief integration agent (already merged c33c7d5).
 - Worktree to harvest (R10): image-mode (`agent-ad1dd831d13817ddc`) — imageToSvg.ts + Edge fn; **best-quality = Quiver Arrow + SIMPLER-SKETCH output**.
+
+## ✅ 2D systemic fix COMMITTED + verified (3ed6924)
+Root causes A (group-transform preservation) + B/D (riso paper-occlusion knockout) fixed in SvgStyleTransform.tsx; C was a no-op confirm. tsc+build green. Verified by MY OWN paired-vs-Clean read of 4 fixed objects + 8 named regression controls × 11 styles (`/tmp/dd-2d-verify/`, tool `tools/2d/_verify-paired-r8.mjs`). dominoTiles 3 tiles ✓ · lacroixRack pyramid ✓ · collectorTin emblem knockout ✓ · boxedGameCartridge label ✓ · flagPanel dark canton legible ✓ · no regressions.
+
+## SVG-PORT 3D — THE BIG ONE (Sebs: fully-3D transformation + RETAIN the SVG vibe, NOT lazy)
+**Two hard parts (both required):** (1) FULLY 3D — marks carved INTO/part of the 3D surface, wrap on orbit, catch light; NOT a flat decal/overlay "plopped on top". (2) RETAIN the 2D SVG feel/look/vibe (hand-drawn hachure/ink character); NOT deadened to photo-on-plastic.
+**BEFORE-baseline CONFIRMED with real renders** (`/tmp/dd-svgport-baseline/svgport-before-paired.png` + cells; tool `tools/3d/_svgport-baseline-paired.mjs`): current svg-port = a **uniform diagonal-hachure-filled slab + faint outline**, the actual drawing is COMPLETELY ABSENT (generic screen-space lambert-hatch on the silhouette, blackFrac≈0.06). Carries neither the drawing nor the vibe. ROOT: `hatchMaterial.ts` is the forbidden parallel GLSL shader (original locked design `project_f3_shading_port_to_3d` said USE the real SvgStyleTransform, "no parallel R3F shader rewrite").
+**Direction (locked):** rasterize the REAL `SvgStyleTransform` render (exact vibe, no reimpl) → color `map` (ink) + height (emboss/DISPLACEMENT, real carved geometry needs a tessellated cap) → surface-locked on the form. SvgStyleTransform needs live DOM (getBBox) → rasterize from its rendered <svg> (offscreen mount or transform-fn), NOT renderToStaticMarkup.
+**⚠️ SHADING INTERACTION = the crux (Sebs flagged):** 2D shading is region-based source-darkness (I-2) baked as content; the 3D rig adds a SECOND lambert tone → risk of DOUBLE-SHADING (drawing-dark × form-shadow = muddy) or rig WASHING OUT the 2D tone. RESOLUTION: separate tone from dimensionality — drawing's marks/tone ride EMISSIVE/unlit (2D shading preserved exactly, never re-shaded); dimensionality only from light on the carved RELIEF (light moves surface micro-shading, not the drawing's values); subtle lit component on the paper substrate for volume. Same ink-black/light-driven principle as bas-relief, extended so the drawing's own tone is the emissive layer. Emissive↔lit balance = eyeball tuning. FIRST-CLASS spec requirement.
+**RESEARCH FLEET RUNNING** (`wf_c8f5dd91-d47`, 5 angles → synthesis spec): real-relief/tessellation · retain-NPR-vibe-on-lit-3D · surface-locked-wrap · three.js SVG→texture pipeline · prior-art drawing→relief. On landing: synthesize → implement → re-capture "after" in the SAME paired format (svg-port ‖ 2D-style ‖ Clean, per Sebs) → LOOP → show before/after.
 
 ## NEXT in the R8 loop (not done)
 fix CASE-2/3 + fill-smooth · per-toggle LMH audit (2D sliders + 3D rod/extrude/inflate/solid props) · **3D svg-port vs its 2D SVG style** (must match the style, not just Clean) · draw-mode object test (197 + weird inputs through the LIVE tools) · LOOP until clean N passes → certify → golden-v3 bless gate.

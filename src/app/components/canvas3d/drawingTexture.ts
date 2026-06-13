@@ -216,6 +216,274 @@ export function buildDrawingReliefTexture(
   return { texture, window: win };
 }
 
+// ─── SVG-PORT — the real 2D styled render BECOMES the 3D surface ─────────────
+// svg-port's contract (project_f3_shading_port_to_3d): port the ACTUAL
+// SvgStyleTransform output onto the form — never a parallel shader (the killed
+// hatchMaterial). Two hard parts (Sebs 2026-06-13): (1) feel FULLY 3D — the
+// marks carved INTO the surface, wrapping on orbit; (2) RETAIN the 2D vibe —
+// the hand-drawn hachure/ink, untouched by lighting.
+//
+// SHADING-INTERACTION (the crux Sebs flagged): the 2D shading is region-based
+// source-darkness baked as CONTENT; the 3D rig adds a SECOND lambert tone →
+// double-shading / wash-out. RESOLUTION: separate tone from dimensionality —
+// the drawing rides EMISSIVE (unlit, value-exact, never re-shaded), while the
+// carved RELIEF (displacement + Sobel normal) provides the 3D the light reveals.
+// Head-on reads as the drawing; orbit reveals the carve = "became 3D, kept vibe."
+//
+// ONE raster, THREE registered channels (all over the SAME ReliefWindow so they
+// co-locate via applyPlanarReliefUVs):
+//   · emissiveMap  — the styled render (paper + ink), sRGB, the vibe.
+//   · displacementMap — luminance of that render (paper bright = flat/high; ink
+//     dark = recessed groove); real geometry on a tessellated cap.
+//   · normalMap    — Sobel of the luminance; crisp groove walls so even head-on
+//     the relief catches a hint of light without tessellation.
+
+export interface SvgPortTextureResult {
+  /** The styled 2D render (paper + ink), sRGB → emissiveMap. */
+  emissive: THREE.CanvasTexture;
+  /** Luminance height field (NoColorSpace) → displacementMap. */
+  height: THREE.CanvasTexture;
+  /** Sobel-derived tangent normal map (NoColorSpace) → normalMap. */
+  normal: THREE.CanvasTexture;
+  window: ReliefWindow;
+}
+
+/** Displacement depth (world units) for the carved svg-port relief — how far
+ *  ink grooves sink below the paper surface. Pair with displacementBias =
+ *  −RELIEF_DISPLACEMENT_SCALE so WHITE(paper)=at-surface, BLACK(ink)=recessed.
+ *  Eyeball-tunable; start subtle so the carve reads on orbit without shredding
+ *  the slab. */
+export const RELIEF_DISPLACEMENT_SCALE = 0.08;
+
+/** Build the svg-port channel textures from the REAL styled SvgStyleTransform
+ *  markup, registered to the geometry's world front-face window. ASYNC — the
+ *  SVG is rasterized via an Image (decode()). Returns null on SSR / empty pool /
+ *  degenerate bbox / load failure (caller falls back to the plain body).
+ *
+ *  @param svgString  serialized styled <svg> (SvgStyleTransform output) — MUST
+ *                    be self-contained (no foreignObject / external http href)
+ *                    or the canvas taints and the GL upload fails.
+ *  @param strokes    the same pool the geometry built from (for poolCenter).
+ *  @param viewBox    source coordinate space (matches the svg's viewBox).
+ *  @param bbox       the body geometry's WORLD bounding box.
+ *  @param opts.paperColor  resolved --dir-bg hex; filled under the marks so the
+ *                    front reads as the drawing (paper + ink), not bare body.
+ */
+export async function buildSvgPortTexture(
+  svgString: string,
+  strokes: StrokeInputPoint[][],
+  viewBox: ViewBoxSize,
+  bbox: { minX: number; maxX: number; minY: number; maxY: number },
+  opts?: { paperColor?: string },
+): Promise<SvgPortTextureResult | null> {
+  if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
+  const pool = strokes.filter((s) => s.length > 0);
+  if (pool.length === 0 || !svgString) return null;
+
+  const rawSpanX = bbox.maxX - bbox.minX;
+  const rawSpanY = bbox.maxY - bbox.minY;
+  if (!(rawSpanX > 1e-6) || !(rawSpanY > 1e-6)) return null;
+
+  // Same padded world window as the bas-relief raster (registration parity).
+  const longSpan = Math.max(rawSpanX, rawSpanY);
+  const pad = longSpan * RELIEF_MARGIN;
+  const win: ReliefWindow = {
+    minX: bbox.minX - pad,
+    minY: bbox.minY - pad,
+    spanX: rawSpanX + pad * 2,
+    spanY: rawSpanY + pad * 2,
+  };
+
+  // Oversampled canvas (DPR-aware) so the vector marks stay crisp as a texture.
+  const dpr = Math.min(typeof window === 'undefined' ? 1 : (window.devicePixelRatio || 1), 2);
+  const aspect = win.spanX / win.spanY;
+  const longPx = Math.round(TEXTURE_LONG_EDGE * dpr);
+  const w = aspect >= 1 ? longPx : Math.max(8, Math.round(longPx * aspect));
+  const h = aspect >= 1 ? Math.max(8, Math.round(longPx / aspect)) : longPx;
+
+  // World window → SVG viewBox sub-rect (inverse of normalizeStrokePoints).
+  // world x = (vx − center.x)·WORLD_SCALE ; world y = −(vy − center.y)·WORLD_SCALE
+  // → vx = wx/WORLD_SCALE + center.x ; vy = center.y − wy/WORLD_SCALE. World y is
+  // up, viewBox y is down, so the window's world-max-Y is the sub-rect's TOP.
+  const center = poolCenter(pool, viewBox);
+  const worldMaxY = win.minY + win.spanY;
+  const vMinX = win.minX / WORLD_SCALE + center.x;
+  const vMinY = center.y - worldMaxY / WORLD_SCALE;
+  const vW = win.spanX / WORLD_SCALE;
+  const vH = win.spanY / WORLD_SCALE;
+
+  // Re-root the styled svg onto the sub-rect viewBox at the canvas pixel size.
+  let doc: Document;
+  try {
+    doc = new DOMParser().parseFromString(svgString, 'image/svg+xml');
+  } catch {
+    return null;
+  }
+  const svgEl = doc.documentElement as unknown as SVGSVGElement;
+  if (!svgEl || svgEl.tagName.toLowerCase() !== 'svg') return null;
+  // Origin-clean guard: external refs / foreignObject taint the canvas → blank.
+  if (svgEl.querySelector('foreignObject, image[href^="http"], image[*|href^="http"]')) {
+    return null;
+  }
+  // CSS-VAR RESOLUTION (else the marks vanish → blank slab): the styled render
+  // paints ink/paper with var(--dir-text-primary)/var(--dir-bg), which are
+  // UNDEFINED in a detached SVG rasterized via a data-URL Image. Copy the page's
+  // resolved --dir-* tokens (+ the wrapper's --f3-* vars) onto the svg root so
+  // they cascade to every mark and var() resolves at raster time.
+  if (typeof getComputedStyle !== 'undefined') {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const DIR_VARS = [
+      '--dir-text-primary', '--dir-bg', '--dir-text-secondary', '--dir-text-body',
+      '--dir-text-body-soft', '--dir-accent', '--dir-border', '--dir-muted',
+      '--dir-detail', '--dir-raised', '--dir-recessed', '--dir-link-color',
+      '--dir-chip-bg', '--dir-chip-border',
+    ];
+    let varStyle = '';
+    for (const v of DIR_VARS) {
+      const val = rootStyle.getPropertyValue(v).trim();
+      if (val) varStyle += `${v}:${val};`;
+    }
+    varStyle += '--f3-fill-opacity:1;--f3-stroke-width:1;';
+    svgEl.setAttribute('style', `${varStyle}${svgEl.getAttribute('style') ?? ''}`);
+  }
+  svgEl.setAttribute('viewBox', `${vMinX} ${vMinY} ${vW} ${vH}`);
+  svgEl.setAttribute('width', String(w));
+  svgEl.setAttribute('height', String(h));
+  svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  const serialized = new XMLSerializer().serializeToString(svgEl);
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`;
+
+  let img: HTMLImageElement;
+  try {
+    img = new Image();
+    img.width = w;
+    img.height = h;
+    img.src = url;
+    await img.decode();
+  } catch {
+    return null; // load/decode failure → caller renders plain body
+  }
+
+  // ── emissive: paper fill + the styled render = the drawing, value-exact ──
+  const emCanvas = document.createElement('canvas');
+  emCanvas.width = w;
+  emCanvas.height = h;
+  const emCtx = emCanvas.getContext('2d');
+  if (!emCtx) return null;
+  emCtx.fillStyle = opts?.paperColor ?? '#FDFCF9';
+  emCtx.fillRect(0, 0, w, h);
+  emCtx.drawImage(img, 0, 0, w, h);
+
+  // ── height: luminance of the render (paper bright = flat; ink dark = groove) ──
+  // Read once; build a grayscale ImageData and a Sobel normal in the same pass.
+  let src: ImageData;
+  try {
+    src = emCtx.getImageData(0, 0, w, h); // throws if tainted (defensive)
+  } catch {
+    return null;
+  }
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    const r = src.data[i * 4], g = src.data[i * 4 + 1], b = src.data[i * 4 + 2];
+    lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; // 0 ink … 1 paper
+  }
+  // CARVE channel = the luminance with its DARK ink FATTENED (separable min-
+  // filter). Thin pen lines anti-alias to faint gray as flat color, but as a
+  // WIDER groove they catch the raking light and read as a bold engraved
+  // channel — the ink color (emissive/map, kept thin) then sits IN the groove.
+  // This is what makes line-art "actually carved in" instead of a faint decal.
+  const GROOVE_R = Math.max(1, Math.round(longPx * 0.005));
+  const carve = (() => {
+    const tmp = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      for (let x = 0; x < w; x++) {
+        let m = 1;
+        for (let dx = -GROOVE_R; dx <= GROOVE_R; dx++) {
+          const xx = x + dx < 0 ? 0 : x + dx >= w ? w - 1 : x + dx;
+          const v = lum[row + xx];
+          if (v < m) m = v;
+        }
+        tmp[row + x] = m;
+      }
+    }
+    const out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let m = 1;
+        for (let dy = -GROOVE_R; dy <= GROOVE_R; dy++) {
+          const yy = y + dy < 0 ? 0 : y + dy >= h ? h - 1 : y + dy;
+          const v = tmp[yy * w + x];
+          if (v < m) m = v;
+        }
+        out[y * w + x] = m;
+      }
+    }
+    return out;
+  })();
+  const htCanvas = document.createElement('canvas');
+  htCanvas.width = w;
+  htCanvas.height = h;
+  const htCtx = htCanvas.getContext('2d');
+  if (!htCtx) return null;
+  const htData = htCtx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const v = Math.round(carve[i] * 255);
+    htData.data[i * 4] = v; htData.data[i * 4 + 1] = v; htData.data[i * 4 + 2] = v; htData.data[i * 4 + 3] = 255;
+  }
+  htCtx.putImageData(htData, 0, 0);
+
+  // ── normal: 3×3 Sobel over the CARVE field → tangent-space normal (RGB) ──
+  // Groove walls (the fattened gradient) become surface tilt the key light rakes.
+  const NORMAL_STRENGTH = 1.4; // lower = steeper walls = stronger carved read
+  const nmCanvas = document.createElement('canvas');
+  nmCanvas.width = w;
+  nmCanvas.height = h;
+  const nmCtx = nmCanvas.getContext('2d');
+  if (!nmCtx) return null;
+  const nmData = nmCtx.createImageData(w, h);
+  const at = (x: number, y: number) => carve[Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const tl = at(x - 1, y - 1), t = at(x, y - 1), tr = at(x + 1, y - 1);
+      const l = at(x - 1, y), r = at(x + 1, y);
+      const bl = at(x - 1, y + 1), bb = at(x, y + 1), br = at(x + 1, y + 1);
+      const dx = (tr + 2 * r + br) - (tl + 2 * l + bl);
+      const dy = (bl + 2 * bb + br) - (tl + 2 * t + tr);
+      // height ∝ luminance (paper high), so a groove (dark) dips → invert grad.
+      let nx = -dx, ny = -dy, nz = 1 / NORMAL_STRENGTH;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len; ny /= len; nz /= len;
+      const i = (y * w + x) * 4;
+      nmData.data[i] = Math.round((nx * 0.5 + 0.5) * 255);
+      nmData.data[i + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+      nmData.data[i + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+      nmData.data[i + 3] = 255;
+    }
+  }
+  nmCtx.putImageData(nmData, 0, 0);
+
+  const mk = (canvas: HTMLCanvasElement, srgb: boolean): THREE.CanvasTexture => {
+    const t = new THREE.CanvasTexture(canvas);
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.wrapS = THREE.ClampToEdgeWrapping;
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = true;
+    t.anisotropy = 8;
+    t.needsUpdate = true;
+    return t;
+  };
+
+  return {
+    emissive: mk(emCanvas, true),
+    height: mk(htCanvas, false),
+    normal: mk(nmCanvas, false),
+    window: win,
+  };
+}
+
 /** Rewrite a body geometry's UV attribute as a PLANAR projection from world xy
  *  over the relief window, so the bas-relief texture aligns to the carved marks
  *  on the FRONT FACE with zero manual offset.

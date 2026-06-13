@@ -2707,6 +2707,7 @@ const NEEDS_DOM_CLONE: F3SvgStyle[] = [
 export function SvgStyleTransform({
   children,
   wrapperOverride,
+  onRender,
 }: {
   children: ReactNode;
   /** Call-site layout override for the outer wrapper. Default inline-block
@@ -2714,6 +2715,12 @@ export function SvgStyleTransform({
    *  branch passes block + 100%×100% so a viewBox-only uploaded svg can
    *  resolve percentage sizing and fill the frame (0×0 bug, 2026-06-11). */
   wrapperOverride?: CSSProperties;
+  /** Opt-in: fired after each style pass with the SERIALIZED styled <svg>
+   *  (null on failure). The seam the 3D svg-port path rasterizes from — the
+   *  3D form wears the EXACT 2D render (project_f3_shading_port_to_3d: use the
+   *  real pipeline, no parallel shader). Default undefined = zero behavior
+   *  change for every existing call site. */
+  onRender?: (styledSvg: string | null) => void;
 }) {
   const { state: rawM } = useF3RoughModifiers();
   const { state: style } = useF3SvgStyle();
@@ -2830,6 +2837,25 @@ export function SvgStyleTransform({
       }
     }
   }, [style, m, children, needsClone, useSmartHachure]);
+
+  // onRender seam — runs AFTER the transform effect (declared later → React
+  // commits it after), so it serializes the freshly-styled <svg> the effect
+  // above just wrote (fxRef on the clone path, cleanRef on the CSS path). The
+  // 3D svg-port path rasterizes this exact markup onto the form.
+  useEffect(() => {
+    if (!onRender) return;
+    const host = needsClone ? fxRef.current : cleanRef.current;
+    const svg = host?.querySelector('svg');
+    if (svg instanceof SVGSVGElement) {
+      try {
+        onRender(new XMLSerializer().serializeToString(svg));
+      } catch {
+        onRender(null);
+      }
+    } else {
+      onRender(null);
+    }
+  }, [onRender, needsClone, style, m, children, useSmartHachure]);
 
   const wrapperStyle: CSSProperties = {
     display: 'inline-block',
