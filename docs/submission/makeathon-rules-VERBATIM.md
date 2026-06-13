@@ -26,6 +26,16 @@
 - **+5 points** for projects shared on social
 - **+5 points** for Figma projects shared to the Figma Community
 
+## Social post spec (from the Social Sharing Guidelines — REQUIRED to qualify)
+> You are required to post your submission to socials — Instagram, X, or LinkedIn (tag **#ConfigMakeathon** and **@figma**). After submitting, share social links on Contra. *This is required to qualify for the prize pool.*
+> Tips for a great post:
+> - **Required — include a 30-SECOND project walkthrough video** (yourself / voiceover / or just a screen recording) covering the project, your process, and the tools used (Loom suggested).
+> - 1–2 sentences about your creation + how you built it.
+> - Tag the tool you built with.
+> - Examples cited: Javier, Charlota, Fernanda.
+
+**⇒ VIDEO MECHANICS (Sebs's read of the actual Contra form, 2026-06-13 — TRUST THIS over the written guidelines):** the submission is effectively **ONE video posted to social** — you submit the **social link**; there's no separate long-video upload field. The guidelines describe it as a "walkthrough video" + a "30-sec social video," but in practice it's the same video in the social post. The **30s is the social tip's suggested length, NOT a cap.** Plan: ONE video, **~45–60s** — punchy hook (the wedge) up front for the scroll + a quick workflow beat so it still scores judging criterion #3 ("workflow + steps others could emulate"). A 30s cut would qualify but underserve the workflow points.
+
 ## The tools (what counts as "Figma's suite")
 Figma **Make** (prompt-to-code), Figma **MCP** (connect Figma to AI coding tools), Figma **Agent** (beta, in-canvas), Figma **Weave** (AI image/video/media workflows), **Local**. The judging criterion #4 explicitly names "**Make, MCP, Local, Weave, design agent, etc.**"
 
