@@ -87,8 +87,10 @@ export function selectTreatment(
   // Stage 1: role → base treatment
   const base = BASE_BY_ROLE[classification.role];
 
-  // Stage 2: style choice modulates the base
-  const styled = applyStyleModulation(base, styleChoice);
+  // Stage 2: style choice modulates the base (role-aware: dark tonal BODIES
+  // that carry knockout structure must keep a legible mark grammar across
+  // every style — never flatten to solid, never strip to empty).
+  const styled = applyStyleModulation(base, styleChoice, classification.role);
 
   // Stage 3: user sliders fine-tune within the role's range
   const final = applyModifierOverrides(styled, modifiers, classification);
@@ -247,27 +249,85 @@ const BASE_BY_ROLE: Record<TonalRole, Treatment> = {
 //                   (the dot-screen mask in SvgStyleTransform is paper
 //                   texture; THESE dots are the region's tone)
 
-function applyStyleModulation(base: Treatment, style: SmartHachureStyle): Treatment {
+// DARK-BLOB RE-FIX (2026-06-13): the tonal-body roles whose dark register MUST
+// stay legible across EVERY style. dense-tonal is the role dark ENCLOSING
+// bodies route to (knockout text/panels painted on top) — so for these, no
+// style may flatten the cross-hatch to a flat solid mass (bold-ink/risograph),
+// mass the dots into a near-solid blob (stipple — guarded by the render
+// coverage cap), or strip the fill to nothing (sketchy). solid-content stays
+// the TINY-detail register (no structure to lose); flat solid there is fine.
+const STRUCTURE_BEARING_TONAL_ROLES: ReadonlySet<TonalRole> = new Set<TonalRole>([
+  'dense-tonal',
+  'mid-tonal',
+  'sparse-tonal',
+]);
+
+function applyStyleModulation(
+  base: Treatment,
+  style: SmartHachureStyle,
+  role: TonalRole,
+): Treatment {
   // Only modify if the role HAS a tonal treatment to modulate
   if (base.fillStyle === 'none') return base;
+
+  // Does this region carry knockout structure that any style must preserve?
+  const keepsStructure = STRUCTURE_BEARING_TONAL_ROLES.has(role);
 
   switch (style) {
     case 'rough-handdrawn':
       return base;
 
     case 'sketchy':
-      // sketchy = no fills on tonal regions (it's a register of "draft / outline-leaning")
+      // sketchy = draft / outline-leaning. Light roles stay outline-only.
+      // But a DARK TONAL BODY must NEVER render to nothing (Tone-band-visibility
+      // law SA-2 / "tone may change grammar but never vanish"): strip-to-empty
+      // is the same dark-blob root, opposite symptom. Dark roles fall back to a
+      // sparse-but-present hatch (single direction, wider gap, lighter opacity)
+      // — reads as a loose draft shade, keeps the body legibly toned.
+      if (keepsStructure && role !== 'sparse-tonal') {
+        return {
+          ...base,
+          fillStyle: 'hachure',
+          gap: Math.max(base.gap, 2.4) * 1.4, // looser than the dense register
+          weight: base.weight * 0.7,
+          layerCount: 1,
+          biasMode: 'gap-dominant',
+          opacity: base.opacity * 0.7,
+        };
+      }
+      // solid-content (tiny pure-black details) under sketchy also keep a mark
+      // rather than vanish — a single sparse hatch reads as a draft fill.
+      if (role === 'solid-content') {
+        return {
+          ...base,
+          fillStyle: 'hachure',
+          gap: 3.2,
+          weight: base.weight * 0.7,
+          layerCount: 1,
+          biasMode: 'gap-dominant',
+          opacity: base.opacity * 0.75,
+        };
+      }
+      // light / sparse register stays outline-leaning (the draft look).
       return { ...base, fillStyle: 'none', gap: 0, weight: 0, layerCount: 0 };
 
     case 'bold-ink':
-      // bold-ink = solid fills for dense roles, heavier strokes elsewhere
+      // bold-ink = heavier ink. A structure-bearing dark body must HATCH (just
+      // heavier line) so its knockout structure survives — NEVER flatten to a
+      // solid black mass. Only solid-content (tiny detail, no structure) goes
+      // flat solid.
       if (base.fillStyle === 'cross-hatch') {
+        if (keepsStructure) {
+          return { ...base, weight: base.weight * 1.2 }; // keep cross-hatch, bolder line
+        }
         return { ...base, fillStyle: 'solid', weight: base.weight * 1.2 };
       }
       return { ...base, weight: base.weight * 1.2 };
 
     case 'stipple':
-      // stipple = dots instead of hachure, with biasMode adapting
+      // stipple = dots instead of hachure. The render-side upper-darkness cap
+      // (renderRegion COVERAGE_LEGIBLE_DENSE_CAP) keeps dark dot fields from
+      // massing into a near-solid blob — dots stay a legible dense stipple.
       return { ...base, fillStyle: 'dots', biasMode: 'gap-dominant' };
 
     case 'wet-ink':
@@ -279,14 +339,20 @@ function applyStyleModulation(base: Treatment, style: SmartHachureStyle): Treatm
       return { ...base, weight: base.weight * 1.5, opacity: base.opacity * 0.85 };
 
     case 'risograph':
-      // risograph = flat ink: dense roles print as solid spot-color masses
+      // risograph = flat ink. Same structure law as bold-ink: a dark TONAL BODY
+      // keeps its cross-hatch (knockout structure survives) — only solid-content
+      // tiny details print as a flat spot-color mass.
       if (base.fillStyle === 'cross-hatch') {
+        if (keepsStructure) {
+          return { ...base, weight: base.weight * 1.1 }; // keep cross-hatch
+        }
         return { ...base, fillStyle: 'solid', weight: base.weight * 1.1 };
       }
       return { ...base, weight: base.weight * 1.1 };
 
     case 'newsprint':
-      // newsprint = halftone: tone is a dot screen, never line hatch
+      // newsprint = halftone: tone is a dot screen, never line hatch. The
+      // upper-darkness cap keeps the dark dot screen legible (not a solid mass).
       return { ...base, fillStyle: 'dots', biasMode: 'gap-dominant' };
   }
 }

@@ -202,6 +202,26 @@ const POLICY_GAP_FLOOR = 1.5; // px — lines never optically blend (Agent 5)
 const POLICY_GAP_CAP = 12; // px — beyond this, lines read as strokes not tone
 const POLICY_WEIGHT_RATIO = 0.7; // weight ≤ 0.7 × gap — never merge to solid
 
+// UPPER-DARKNESS GUARD (dark-blob re-fix, 2026-06-13). THE missing render half.
+//
+// Murray-Davies pins coverage → 1.0 once source darkness ≳ 0.63, and the
+// gap-floor re-solve then delivers ~0.91 effective cross-hatch coverage at the
+// 1.5 px floor — a structure-losing SOLID-BLACK BLOB (knockout text/panels
+// overwhelmed, no readable gaps). The GOAL is LEGIBLE DENSE HAND-DRAWN
+// HATCHING: clearly pen lines with gaps, internal structure still readable,
+// dark but NOT solid. So we CAP the target coverage for the darkness-driven
+// solve below the reads-as-solid threshold. At this cap the cross-hatch solves
+// to gap ≈ 2.3 px at a 1.05 px line weight (w/g ≈ 0.45) — visibly gapped dense
+// hatching that still reads DARK. Empirically (the blob probe): footprint dark
+// fraction drops from ~0.6–0.8 (blob) to a legible dense register while paper
+// gaps inside the body rise enough to keep knockout structure readable.
+//
+// This is a RENDER-POLICY ceiling on tone (like the gap floor / weight ratio),
+// not a change to the documented coverage math (coverage.ts is untouched). It
+// applies ONLY to the source-darkness recalibration branch — the branch that
+// produces the dark-region tone. Slider bias still rides on top.
+const COVERAGE_LEGIBLE_DENSE_CAP = 0.72;
+
 function resolveDensity(
   treatment: Treatment,
   ctx: RenderContext,
@@ -232,11 +252,30 @@ function resolveDensity(
     const bandDef = COVERAGE_BANDS[band];
     // Band midpoint = the quantized tone for every region in this band.
     const dQuant = (bandDef.darknessMin + bandDef.darknessMax) / 2;
-    const targetCoverage = darknessToCoverage(dQuant);
+    // UPPER-DARKNESS GUARD: cap the dark-region tone target below the
+    // reads-as-solid threshold so a high-darkness region renders as LEGIBLE
+    // DENSE HATCHING (visible gaps, knockout structure readable) instead of a
+    // solid-black blob. Light/mid bands are untouched — their targets sit far
+    // below the cap, so only the Dark/Near-black/black bands (the blob bands)
+    // are reined in. See COVERAGE_LEGIBLE_DENSE_CAP note above.
+    const rawTarget = darknessToCoverage(dQuant);
+    const targetCoverage = Math.min(rawTarget, COVERAGE_LEGIBLE_DENSE_CAP);
+    // When the upper-darkness guard BINDS (dark/near-black/black bands), the
+    // dot/zigzag/dashed grammars would otherwise stack the band's full TAM
+    // nesting depth (3–4 layers) — and overlapping passes at the gap floor fill
+    // the inter-dot gaps into a near-solid MASS even though each layer is sparse
+    // (the stipple half of the blob: a dot field that reads solid). Cross-hatch
+    // is exempt (rough.js handles its 2 internal directions; layerCount stays).
+    // Capping the nesting depth at 2 where the guard binds keeps the dark dot
+    // screen LEGIBLY STIPPLED (visible dots + gaps) instead of massing.
+    const guardBinds = rawTarget > COVERAGE_LEGIBLE_DENSE_CAP;
+    const bandLayers = guardBinds
+      ? Math.min(2, bandDef.tamLayers || 1)
+      : bandDef.tamLayers || 1;
     const layers =
       fillStyle === 'cross-hatch'
         ? Math.max(1, treatment.layerCount)
-        : Math.max(1, bandDef.tamLayers || 1);
+        : Math.max(1, bandLayers);
 
     // 1. Weight-anchored solve (user's strokeWidth/fillDensity own weight).
     const solved = coverageToParams(targetCoverage, fillStyle, {

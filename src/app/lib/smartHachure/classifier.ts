@@ -116,8 +116,23 @@ const RULE_text_label: Rule = {
 // P11: outer-frame-encloses-all + paper-fallback, same dark-fill-dropped root).
 // The darkness-aware branch below keeps LIGHT enclosing rects as frames and
 // routes DARK ones to the fillable tonal role their darkness band deserves.
+//
+// DARK-BLOB RE-FIX (2026-06-13, supersedes 8980b8e's solid-content routing):
+// the prior version routed Near-black enclosing bodies to `solid-content`,
+// whose cross-hatch base solves coverage ≈ 1.0 → clamps to the 1.5 px gap
+// floor → delivers ~0.91 coverage = a structure-losing solid-black BLOB
+// (knockout text/panels overwhelmed). The GOAL (this task) is LEGIBLE DENSE
+// HAND-DRAWN HATCHING: clearly pen lines with gaps, internal knockout
+// structure still readable. The classifier half of that = route dark
+// ENCLOSING bodies (which carry knockout siblings on top — structure that MUST
+// stay readable) to `dense-tonal` for BOTH the Dark and Near-black bands, NOT
+// `solid-content`. dense-tonal renders cross-hatch with a legible gap; the
+// render-side upper-darkness guard (renderRegion.resolveDensity DENSE_TONAL_
+// COVERAGE_CAP + techniqueMap dense-tonal gap) keeps it dark-but-hand-drawn.
+// solid-content stays the role for tiny pure-black DETAILS (no knockout
+// structure to preserve) routed by RULE_inner_content_solid below at a
+// stricter near-black threshold.
 const DARK_BAND_FLOOR = 0.55;
-const NEAR_BLACK_FLOOR = 0.8;
 
 const RULE_outer_frame_encloses_all: Rule = {
   id: 'outer-frame-encloses-all',
@@ -125,8 +140,9 @@ const RULE_outer_frame_encloses_all: Rule = {
     'Z-index 0 element that fills > 80% of its parent and encloses siblings. ' +
     'LIGHT (darkness < 0.55) + ≥3 enclosed siblings → structural frame (clean outline). ' +
     'DARK (darkness ≥ 0.55) + ≥1 enclosed knockout sibling → filled content body ' +
-    '(poster/cover/screen): routes to its darkness-band tonal role so it SHADES (I-2), ' +
-    'never an empty outline.',
+    '(poster/cover/screen): routes to DENSE-TONAL so it SHADES with legible dense ' +
+    'hatching (I-2) — knockout structure stays readable — never an empty outline ' +
+    'and never a solid-black blob.',
   evaluate: (s) => {
     if (s.zIndex !== 0) return null;
     if (s.areaFractionOfParent < 0.8) return null;
@@ -135,14 +151,12 @@ const RULE_outer_frame_encloses_all: Rule = {
     // or title painted on top) is enough to recognize it as content — without
     // this the 1–2-sibling dark posters fall through both the frame floor (≥3)
     // and the root-tonal "encloses 0" guard, landing on paper (empty). Route
-    // it to the fillable role its band assigns (I-2: Dark 0.55–0.80 →
-    // dense-tonal; Near-black 0.80–1.00 → solid-content).
+    // it to DENSE-TONAL (not solid-content) for the WHOLE Dark+Near-black band:
+    // an enclosing body has knockout siblings painted on top, so it must hatch
+    // (gaps preserve the knockout structure), never flood to a solid mass.
     if (s.darknessL >= DARK_BAND_FLOOR) {
       if (s.enclosesSiblingCount < 1) return null; // a 0-sibling dark rect is root-tonal's job
-      return {
-        role: s.darknessL >= NEAR_BLACK_FLOOR ? 'solid-content' : 'dense-tonal',
-        confidence: 0.85,
-      };
+      return { role: 'dense-tonal', confidence: 0.85 };
     }
     // LIGHT enclosing rect: the original frame heuristic, UNCHANGED — needs ≥3
     // enclosed siblings to read as a wash-bordered card frame. No regression
@@ -167,15 +181,37 @@ const RULE_outer_frame_bordered_wash: Rule = {
 // Cluster C — CONTENT REGIONS (the actual tonal areas)
 // Things INSIDE a frame, painted on top, that carry real darkness.
 
+// DARK-BLOB RE-FIX guard (2026-06-13): solid-content's cross-hatch base solves
+// to ~0.91 delivered coverage at the gap floor (a near-solid mass). That is the
+// RIGHT register for a TINY pure-black detail (print block, trophy cup — no
+// internal structure to lose), but a LARGE dark region rendered that dense
+// reads as a structure-losing blob — and a large dark region that ITSELF
+// encloses knockout siblings MUST keep its structure readable. So a contained
+// dark region is only allowed to go `solid-content` when it is BOTH small
+// (below this footprint fraction of its parent) AND encloses nothing; larger /
+// enclosing dark regions route to `dense-tonal` (legible dense hatching, gaps
+// preserve structure). This keeps small black details crisp while killing the
+// blob on big dark panels/bands/inner bodies.
+const SOLID_CONTENT_MAX_AREA_FRACTION = 0.25;
+
+function darkInnerRoutesSolid(s: Signals): boolean {
+  return s.enclosesSiblingCount < 1 && s.areaFractionOfParent < SOLID_CONTENT_MAX_AREA_FRACTION;
+}
+
 const RULE_inner_band_dark: Rule = {
   id: 'inner-band-dark',
   description:
-    'Element contained in another + aspect ratio > 3 + dark fill → solid-content (tonal band)',
+    'Element contained in another + aspect ratio > 3 + dark fill → tonal band. ' +
+    'Small non-enclosing band → solid-content; large / enclosing band → dense-tonal ' +
+    '(legible hatching, no blob).',
   evaluate: (s) => {
     if (s.containedInZIndex === null) return null;
     if (s.aspectRatio < 3 && s.aspectRatio > 1 / 3) return null; // not band-shaped
     if (s.darknessL < 0.5) return null;
-    return { role: 'solid-content', confidence: 0.85 };
+    return {
+      role: darkInnerRoutesSolid(s) ? 'solid-content' : 'dense-tonal',
+      confidence: 0.85,
+    };
   },
 };
 
@@ -201,11 +237,20 @@ const RULE_inner_content_dense_tonal: Rule = {
 
 const RULE_inner_content_solid: Rule = {
   id: 'inner-content-solid',
-  description: 'Contained element with very high darkness (>0.85) → solid-content',
+  description:
+    'Contained element with very high darkness (>0.85): SMALL non-enclosing detail ' +
+    '→ solid-content (crisp black mark); large / enclosing dark body → dense-tonal ' +
+    '(legible dense hatching — knockout structure stays readable, never a blob).',
   evaluate: (s) => {
     if (s.containedInZIndex === null) return null;
     if (s.darknessL < 0.85) return null;
-    return { role: 'solid-content', confidence: 0.8 };
+    // DARK-BLOB RE-FIX (2026-06-13): only tiny, non-enclosing pure-black details
+    // stay solid-content. A large dark inner panel — especially one carrying
+    // knockout siblings — must hatch, not flood to a solid mass.
+    return {
+      role: darkInnerRoutesSolid(s) ? 'solid-content' : 'dense-tonal',
+      confidence: 0.8,
+    };
   },
 };
 

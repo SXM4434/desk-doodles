@@ -317,11 +317,28 @@ export function renderSmartHachure(
     // a perceptual constraint, NOT a grammar choice, so the user pick does
     // not override it.
     const tinyClamp = signals.area > 0 && signals.area < 40;
+    // DARK-BLOB RE-FIX (2026-06-13): a `solid` fill flooded onto a large
+    // structure-bearing dark TONAL BODY (one that carries knockout text/panels
+    // painted on top — the classifier routes these to dense-tonal) destroys
+    // that knockout structure → the solid-black BLOB. The bold-ink preset (and
+    // a manual `solid` pick) would otherwise re-flood it here, AFTER
+    // techniqueMap already chose a legible cross-hatch. So `solid` is refused
+    // for structure-bearing dark bodies — they keep the classifier's own dense
+    // hatch grammar (knockout structure stays readable). This is the SAME
+    // class of perceptual-constraint exception as tinyClamp (NOT a grammar
+    // denial): solid still applies to tiny details, line-decorations, and every
+    // non-structure-bearing region; it's only refused where it would erase
+    // structure. Per feedback_fillstyle_slider_must_switch_classifier_pick the
+    // override stays narrow — we don't touch gap/weight/opacity/layers, we only
+    // decline the ONE structure-erasing grammar on the ONE role that needs it.
+    const structureBearingDarkBody = classification.role === 'dense-tonal';
+    const solidWouldEraseStructure =
+      userPick === 'solid' && structureBearingDarkBody;
     const treatment = {
       ...baseTreatment,
       fillStyle: userPick === 'none' || !classifierWantsFill
         ? ('none' as const)
-        : tinyClamp
+        : tinyClamp || solidWouldEraseStructure
           ? baseTreatment.fillStyle
           : userPick,
     };
