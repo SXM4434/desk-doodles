@@ -2,7 +2,7 @@
   "model": "smart-layer-region-role-classifier-SIGNALS-ONLY",
   "modelType": "softmax-logistic-regression",
   "version": 2,
-  "trainedAt": "2026-06-13T06:34:19.086Z",
+  "trainedAt": "2026-06-13T06:39:43.440Z",
   "note": "SIGNALS-ONLY retrain: predicts region role from the FULL classify-time Signals vector (geometric/topological/stylistic/perceptual) captured via the production extractAllSignals. fillStyle (a treatment OUTPUT, unknown at classify-time) is EXCLUDED — this model could go live.",
   "dataset": "datasets/smart-layer.dataset.jsonl",
   "exampleCount": 1394,

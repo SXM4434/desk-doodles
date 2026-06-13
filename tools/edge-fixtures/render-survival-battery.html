@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Desk Doodles — Render-Survival Battery</title>
+    <!--
+      Isolated harness for the render-survival battery (gap-hunt H4/H5/H7).
+      Drives arbitrary / edge / sanitized-hostile SVG through the REAL 2D render
+      path. No CSP meta tag (the security battery owns sanitize/exec proof; this
+      battery proves the sanitized output then RENDERS without crash/NaN/hang).
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./render-survival-harness.tsx"></script>
+  </body>
+</html>

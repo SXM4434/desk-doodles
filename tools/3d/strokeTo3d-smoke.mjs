@@ -703,6 +703,86 @@ check('strokesKey: stable + sensitive to stroke edits', () => {
   assert(k1 !== k3, 'key not sensitive to pool changes');
 });
 
+// ── 9. GAUNTLET GUARDS (2026-06-13 — the 3 conversion-engine bugs) ───────────
+
+// BUG 1 — Infinity coord must NOT hang the resamplers. (The OOM-vs-timeout
+// proof is the sandboxed-watchdog run in the verification log; here we assert
+// the call RETURNS a bounded, finite result — only reachable if the
+// arc-length walk terminated, i.e. the guard held. A non-finite coord makes a
+// segment length Infinity, and `while (walked <= segLen) walked += spacing`
+// would never terminate without the guard.)
+check('BUG1 GUARD: Infinity coord across all 5 modes returns (no OOM/hang), drops the bad point', () => {
+  const midInf = [[100, 100], [200, 100], [Infinity, 100], [300, 200], [300, 300]];
+  const closedInf = [[400, 200], [500, 300], [Infinity, 300], [400, 400], [300, 300], [400, 200]];
+  const allInf = [[Infinity, Infinity], [-Infinity, 0]];
+  for (const mode of ['auto', 'rod', 'extrude', 'inflate', 'solid']) {
+    const res = convertStrokePool([midInf, closedInf, allInf], { mode });
+    assert(Array.isArray(res.units), `mode ${mode}: no units array (walk did not terminate?)`);
+    // all-Inf stroke carries no recoverable geometry → never its own unit.
+    for (const u of res.units) {
+      if (!u.build) continue;
+      const arr = u.build.geometry.getAttribute('position').array;
+      for (let i = 0; i < arr.length; i++) {
+        assert(Number.isFinite(arr[i]), `mode ${mode} unit ${u.id}: non-finite vertex survived`);
+      }
+    }
+  }
+  // Direct builder paths (bypass the convert front-door sanitize — scene/smoke
+  // call these) must self-defend via normalize + resample guards.
+  const g = buildStrokeGeometry(midInf, { mode: 'rod' });
+  assert(g.geometry.getAttribute('position').count > 0, 'direct rod with Infinity built empty');
+  const gp = buildPoolSolidGeometry([midInf, closedInf], {});
+  assert(gp.kind === 'solid' || gp.kind === 'rod', `direct pool-solid with Infinity gave ${gp.kind}`);
+});
+
+// BUG 2 — a CLEAN closed circle must become a SOLID at EVERY radius (the
+// radius-dependent rdp-collapse → hollow-rod failure class).
+check('BUG2 GUARD: clean closed circle → solid (extrude) at radii 118/130/142', () => {
+  const circ = (r, n = 96) => {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      pts.push([400 + r * Math.cos(a), 300 + r * Math.sin(a)]);
+    }
+    return pts;
+  };
+  for (const r of [118, 130, 142]) {
+    const c = circ(r);
+    assert(closureStateOf(c) === 'closed', `raw circle r=${r} not 'closed'`);
+    const anchors = rdpPoints(c, 3.0);
+    assert(anchors.length >= 3, `rdp collapsed circle r=${r} to ${anchors.length} anchors (<3)`);
+    assert(
+      closureStateOf(anchors) === 'closed',
+      `rdp anchors of circle r=${r} read '${closureStateOf(anchors)}', not 'closed'`,
+    );
+    const res = convertStrokePool([c], { mode: 'auto' });
+    assert(res.units.length === 1, `circle r=${r} produced ${res.units.length} units`);
+    const u = res.units[0];
+    assert(
+      u.treatment === 'solid' && u.build && u.build.kind === 'extrude',
+      `circle r=${r} routed to ${u.treatment}/${u.build ? u.build.kind : 'none'}, not solid/extrude`,
+    );
+  }
+});
+
+// BUG 3 — an empty pool must emit ZERO units in EVERY mode (no phantom solid
+// on an empty publish); a real dot bead must still survive.
+check('BUG3 GUARD: empty pool → 0 units in all 5 modes; real bead survives', () => {
+  for (const mode of ['auto', 'rod', 'extrude', 'inflate', 'solid']) {
+    assert(convertStrokePool([], { mode }).units.length === 0, `[] mode ${mode} emitted a unit`);
+    assert(
+      convertStrokePool([[], []], { mode }).units.length === 0,
+      `[[],[]] mode ${mode} emitted a phantom`,
+    );
+    assert(
+      convertStrokePool([[[Infinity, Infinity]]], { mode }).units.length === 0,
+      `all-Infinity mode ${mode} emitted a phantom`,
+    );
+  }
+  const bead = convertStrokePool([[[100, 100]]], { mode: 'auto' });
+  assert(bead.units.length === 1, `single dot bead dropped (got ${bead.units.length} units)`);
+});
+
 // ── Report ──────────────────────────────────────────────────────────────────
 let failed = 0;
 for (const r of results) {

@@ -1,0 +1,21 @@
+<!-- PROPOSED FIXTURE (gap-hunt 2026-06-13). NOT wired to an assertion yet.
+     PURPOSE: <use> is NOT in signals.ts SKIP_TAGS and is NOT a recognized tag
+     in normalizeTag(), so it normalizes to tag:'other'. The signals walk
+     extracts signals for the <use> element's own (often 0x0) bbox but NEVER
+     resolves the referenced <symbol> content -> the actual painted geometry
+     (the rect inside #sym, instanced twice here) is invisible to the
+     classifier AND to SvgStyleTransform. <symbol> IS in SKIP_TAGS (correct -
+     inert until referenced) but its instantiation via <use> is dropped on the
+     floor. RESULT: a perfectly valid icon-system SVG (very common export shape
+     from Figma/Illustrator) renders EMPTY or as bare boxes. The 197 catalog has
+     zero <use>. EXPECTED: <use> should either resolve the shadow tree (getBBox
+     partially covers) or at minimum render the instance honestly, never blank. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 60">
+  <defs>
+    <symbol id="sym" viewBox="0 0 20 20">
+      <rect x="2" y="2" width="16" height="16" fill="#1a1a1a"/>
+    </symbol>
+  </defs>
+  <use href="#sym" x="0" y="0" width="40" height="40"/>
+  <use href="#sym" x="60" y="0" width="40" height="40"/>
+</svg>

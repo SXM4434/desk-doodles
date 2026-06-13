@@ -1,0 +1,21 @@
+<!-- PROPOSED FIXTURE (gap-hunt 2026-06-13). NOT wired to an assertion yet.
+     PURPOSE: signals.ts:extractTopology runs an O(n^2) sibling pass
+     (ctx.siblings.forEach inside walkInto's per-child loop). There is NO
+     element-count cap anywhere in the signals walk or SvgStyleTransform.
+     A large-but-not-hostile upload (a detailed auto-traced logo, a CAD export)
+     can have thousands of siblings -> the classify step goes quadratic and
+     hangs the tab on a single innocent upload. The full 10000-rect version is
+     generated programmatically by the harness; this is a 200-rect smoke seed
+     a human can open. EXPECTED (today): unknown - never tested. The harness
+     should assert classify completes under a perf ceiling. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- harness replaces this with 10000 generated <rect>; 8 shown as a seed -->
+  <rect x="0" y="0" width="10" height="10" fill="#222"/>
+  <rect x="12" y="0" width="10" height="10" fill="#333"/>
+  <rect x="24" y="0" width="10" height="10" fill="#444"/>
+  <rect x="36" y="0" width="10" height="10" fill="#555"/>
+  <rect x="0" y="12" width="10" height="10" fill="#666"/>
+  <rect x="12" y="12" width="10" height="10" fill="#777"/>
+  <rect x="24" y="12" width="10" height="10" fill="#888"/>
+  <rect x="36" y="12" width="10" height="10" fill="#999"/>
+</svg>

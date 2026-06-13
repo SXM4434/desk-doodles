@@ -1,0 +1,181 @@
+{
+  "generatedAt": "2026-06-13T06:44:17.966Z",
+  "count": 35,
+  "fixtures": [
+    {
+      "name": "zero-area-rect.svg",
+      "family": "A-degenerate",
+      "note": "rect width=0 height=0 — getBBox 0x0 → aspectRatio 0/0 div path"
+    },
+    {
+      "name": "single-point-path.svg",
+      "family": "A-degenerate",
+      "note": "path d=\"M50 50 Z\" — one point, closed; zero length"
+    },
+    {
+      "name": "single-point-polyline.svg",
+      "family": "A-degenerate",
+      "note": "polyline with one vertex — no segments"
+    },
+    {
+      "name": "collinear-path.svg",
+      "family": "A-degenerate",
+      "note": "3 collinear points — zero-area enclosure, degenerate winding"
+    },
+    {
+      "name": "nan-coords.svg",
+      "family": "A-degenerate",
+      "note": "literal NaN inside the d-string — parser/sampler must not propagate NaN"
+    },
+    {
+      "name": "infinity-coords.svg",
+      "family": "A-degenerate",
+      "note": "coordinate 1e400 parses to Infinity — arc-length walk / getPointAtLength OOM class"
+    },
+    {
+      "name": "negative-dims.svg",
+      "family": "A-degenerate",
+      "note": "rect width=-50 height=-50 — negative dimensions"
+    },
+    {
+      "name": "giant-10000px.svg",
+      "family": "A-degenerate",
+      "note": "viewBox 0 0 10000 10000 single huge shape — normalize down-scale + memory"
+    },
+    {
+      "name": "micro-1px.svg",
+      "family": "A-degenerate",
+      "note": "viewBox 0 0 1 1 — normalize up-scale vs tiny-area clamp interplay"
+    },
+    {
+      "name": "extreme-aspect.svg",
+      "family": "A-degenerate",
+      "note": "10000x1 sliver — geomean bbox-min path, aspectRatio explosion"
+    },
+    {
+      "name": "self-intersecting-polygon.svg",
+      "family": "B-structural",
+      "note": "figure-8 polygon — fill-rule / winding; raster region extractor (edge policy row 16 DEFERRED)"
+    },
+    {
+      "name": "empty-g.svg",
+      "family": "B-structural",
+      "note": "a single empty <g> — 0 renderable children"
+    },
+    {
+      "name": "defs-only.svg",
+      "family": "B-structural",
+      "note": "only <defs>, nothing renderable — extractAllSignals returns empty map"
+    },
+    {
+      "name": "nested-50-g.svg",
+      "family": "B-structural",
+      "note": "50-level <g> nesting (small, human-openable; harness generates the 500-level)"
+    },
+    {
+      "name": "currentcolor-no-context.svg",
+      "family": "C-fills",
+      "note": "fill=currentColor with NO color attr — UA-default-black guard path"
+    },
+    {
+      "name": "gradient-no-stops.svg",
+      "family": "C-fills",
+      "note": "linearGradient with zero <stop> — resolveUrlFillDarkness n===0 branch"
+    },
+    {
+      "name": "gradient-dangling-ref.svg",
+      "family": "C-fills",
+      "note": "fill=url(#missing) — def not found → 0.75 catch-all"
+    },
+    {
+      "name": "hsl-fill.svg",
+      "family": "C-fills",
+      "note": "hsl() fill — culori parse coverage the var()-token catalog skips"
+    },
+    {
+      "name": "named-color-fill.svg",
+      "family": "C-fills",
+      "note": "rebeccapurple named-color fill"
+    },
+    {
+      "name": "rgba-fill.svg",
+      "family": "C-fills",
+      "note": "rgba() fill with alpha — parse + darkness"
+    },
+    {
+      "name": "8-digit-hex-fill.svg",
+      "family": "C-fills",
+      "note": "#1a1a1a80 8-digit hex fill — alpha hex parse"
+    },
+    {
+      "name": "filter-on-renderable.svg",
+      "family": "C-fills",
+      "note": "filter=url(#blur) on a fill region — pass-through claim untested in 2D sweep"
+    },
+    {
+      "name": "mask-clip-combo.svg",
+      "family": "C-fills",
+      "note": "element with BOTH mask + clip-path — interaction untested"
+    },
+    {
+      "name": "unicode-emoji-text.svg",
+      "family": "D-text",
+      "note": "emoji + RTL Arabic + CJK in <text>"
+    },
+    {
+      "name": "textpath.svg",
+      "family": "D-text",
+      "note": "textPath on a path — unrecognized element walk"
+    },
+    {
+      "name": "tspan-nested.svg",
+      "family": "D-text",
+      "note": "text with nested tspan — child-of-text walk"
+    },
+    {
+      "name": "text-heavy.svg",
+      "family": "D-text",
+      "note": "50 <text> nodes — label-text rule at volume; perf"
+    },
+    {
+      "name": "empty-svg.svg",
+      "family": "E-empty",
+      "note": "valid <svg> but no content"
+    },
+    {
+      "name": "whitespace-only.svg",
+      "family": "E-empty",
+      "note": "<svg> containing only whitespace"
+    },
+    {
+      "name": "no-viewbox-no-dims.svg",
+      "family": "E-empty",
+      "note": "no viewBox AND no width/height but real content — normalizeSvgSize zero-dim warn path"
+    },
+    {
+      "name": "comment-bomb.svg",
+      "family": "E-empty",
+      "note": "~60KB of comments around one rect — parser + walk on padded markup"
+    },
+    {
+      "name": "prolog-garbage.svg",
+      "family": "E-empty",
+      "note": "XML prolog + processing instruction + DOCTYPE before <svg>"
+    },
+    {
+      "name": "sanitized-onload-stripped.svg",
+      "family": "F-sanitized-hostile",
+      "note": "what survives after onload= is stripped — bare animated-looking rect"
+    },
+    {
+      "name": "sanitized-foreignobject-empty.svg",
+      "family": "F-sanitized-hostile",
+      "note": "foreignObject body stripped by sanitizer — empty fO + a real shape"
+    },
+    {
+      "name": "sanitized-animate-leftover.svg",
+      "family": "F-sanitized-hostile",
+      "note": "animate element kept (inert), values reference may be malformed"
+    }
+  ]
+}

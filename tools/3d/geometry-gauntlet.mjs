@@ -736,16 +736,26 @@ group('7. Break — pathological inputs', () => {
     }
   });
 
-  check('FINDING: empty pool under explicit solid emits a phantom rod-fallback unit', () => {
-    // convertStrokePool([], {mode:'solid'}) does NOT short-circuit on an empty
-    // pool — it emits one 'pool' unit whose buildPoolSolidGeometry fell back to
-    // an empty-rod build. auto/rod/extrude/inflate correctly produce nothing.
-    // Recorded as a polish finding (a no-input desk publish in solid mode would
-    // mint an empty object); this check ASSERTS the current behavior so the
-    // gauntlet stays green and the finding is documented, not silently passing.
+  check('empty pool under explicit solid → 0 units (BUG 3 FIXED 2026-06-13)', () => {
+    // Was the lone outlier: convertStrokePool([], {mode:'solid'}) emitted one
+    // phantom 'pool' unit (an empty-rod fallback) while auto/rod/extrude/inflate
+    // all produced 0. FIX: the explicit-solid branch now short-circuits an empty
+    // pool. This assertion was flipped from locking-in-the-bug to asserting the
+    // fix; the empty-publish-phantom sibling (empty/all-Infinity strokes in the
+    // array) is covered alongside (markIntent skips resampledCount===0 strokes).
     const r = convertStrokePool([], { mode: 'solid' });
-    assert(r.units.length === 1 && r.units[0].id === 'pool', `solid empty pool → ${r.units.length} units`);
-    finding('polish', 'empty pool × explicit solid', 'emits 1 phantom pool unit (rod fallback) instead of 0 — auto/rod/extrude/inflate all correctly produce 0');
+    assert(r.units.length === 0, `solid empty pool → ${r.units.length} units (want 0)`);
+    // sibling phantom paths: empty strokes + all-Infinity strokes → still 0.
+    assert(
+      convertStrokePool([[], []], { mode: 'solid' }).units.length === 0,
+      'solid [[],[]] emitted a phantom',
+    );
+    for (const mode of ['auto', 'rod', 'extrude', 'inflate', 'solid']) {
+      assert(
+        convertStrokePool([[[Infinity, Infinity]]], { mode }).units.length === 0,
+        `${mode}: all-Infinity stroke emitted a phantom`,
+      );
+    }
   });
 
   check('zero-length stroke (1 point) → no throw across all modes', () => {

@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>INDEPENDENT slab env verifier</title>
+    <style>
+      body { margin: 0; background: #FDFCF9; font-family: monospace; }
+      #root { position: fixed; left: -9999px; top: 0; }
+      #boards { padding: 8px; }
+      .fig { display: inline-block; margin: 4px; vertical-align: top; text-align: center; }
+      .fig img { display: block; border: 1px solid #ccc; }
+      .fig .cap { font-size: 11px; }
+      .fail { outline: 3px solid #c00; }
+      h3 { margin: 12px 4px 4px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="boards">
+      <h3>slab (box)</h3><div id="board-box"></div>
+      <h3>slab (extrude product path)</h3><div id="board-extrude"></div>
+      <h3>strip</h3><div id="board-strip"></div>
+    </div>
+    <script type="module" src="/tools/3d/verify-slab-indep-harness.tsx"></script>
+  </body>
+</html>

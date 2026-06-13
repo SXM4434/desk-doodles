@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- CATALOG VISUAL 3D SWEEP — repo-side tool only (NOT in the Make drag-drop).
+     Served by vite at /tools/3d/catalog-visual-3d.html, driven headless by
+     tools/3d/catalog-visual-3d.mjs via window.__vis.
+
+     The VISUAL 3D render sweep over ALL 197 audit catalog shapes vs the Clean
+     SVG ground truth: Native (6 materials) · Hatch (grammar × direction ×
+     gap/angle/strokeWidth/ink LOW/MID/HIGH) · SVG-port · per-mode property
+     toggles (rod/extrude/inflate/solid) LOW/MID/HIGH. Every state rendered
+     through the EXACT product render path (StudioRig + createNativeMaterial +
+     createHatchMaterial + buildStrokeWithParams + buildPoolSolidGeometry).
+     READ-ONLY: imports src, never edits it. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Catalog visual 3D sweep</title>
+    <style>
+      body { margin: 0; padding: 8px; font: 12px/1.4 monospace; background: #fdfcf9; color: #3b362e; }
+      /* The live GL stage — fixed size, captured via toDataURL. */
+      #stage { position: fixed; left: 0; top: 0; width: 360px; height: 360px; }
+      /* The Clean ground-truth box — native browser SVG render, screenshotted
+         directly by Playwright (no canvas tainting). Paper background. */
+      #cleanbox { position: fixed; left: 380px; top: 0; width: 320px; height: 320px; background: #fdfcf9; }
+      /* Hidden offscreen sampler host (SVG DOM measured with getTotalLength). */
+      #sampler { position: fixed; right: -99999px; top: 0; width: 800px; height: 600px; }
+      #status { position: fixed; left: 0; bottom: 0; padding: 4px 8px; background: #211e1a; color: #e8e0d4; font-size: 11px; z-index: 10; }
+    </style>
+  </head>
+  <body>
+    <div id="status">booting…</div>
+    <div id="stage"></div>
+    <div id="cleanbox"></div>
+    <div id="sampler"></div>
+    <script type="module" src="/tools/3d/catalog-visual-3d-harness.tsx"></script>
+  </body>
+</html>

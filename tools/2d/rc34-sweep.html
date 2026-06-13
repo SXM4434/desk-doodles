@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- RC-3 / RC-4 focused VISUAL-VERIFY harness — repo-side tool only. Renders the
+     deduped 197-shape /audit inventory through the REAL SvgStyleTransform 2D path,
+     sweeping every strokePalette mode (RC-3) + inkIntensity 0/floor/mid/max (RC-4)
+     in both the CSS route (clean) and JS route (rough-handdrawn). Served by an
+     isolated vite preview build. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>RC-3 / RC-4 ink-visibility sweep harness</title>
+    <style>
+      :root { --dir-bg: #fdfcf9; --dir-text-primary: #3b362e; --dir-border: #d8d2c6; }
+      html, body { margin: 0; padding: 0; background: #fdfcf9; }
+      body { font: 12px/1.4 monospace; color: #3b362e; }
+      #grid { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tools/2d/rc34-sweep-harness.tsx"></script>
+  </body>
+</html>

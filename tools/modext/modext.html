@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- MODIFIER-EXTREME 2D break-hunt harness — repo tool only, NOT in the Make
+     drag-drop set and NOT wired into the app. Mounts one catalog shape through
+     the REAL SvgStyleTransform inside the REAL F3 providers; driven headless by
+     tools/modext/modext-sweep.mjs via window.__modext. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>modext 2D break-hunt harness</title>
+    <style>
+      body { margin: 0; font: 12px/1.4 monospace; background: #fdfcf9; color: #121110; }
+      #modext-label {
+        height: 22px; line-height: 22px; padding: 0 6px; font-size: 13px;
+        font-weight: 700; background: #efe9dd; color: #121110;
+        white-space: nowrap; overflow: hidden; width: 360px; box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tools/modext/modext-harness.tsx"></script>
+  </body>
+</html>

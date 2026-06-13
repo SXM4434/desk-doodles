@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- INDEPENDENT adversarial verifier (NOT the fix author's battery). Repo tool
+     only. Serves the harness; the headless driver reads window.__vslab.
+     Distinct fixture/angles/sampling from slab-env-battery so a fixture-blind
+     or angle-blind bug can't pass both. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Independent slab env-reflection verifier</title>
+    <style>
+      body { margin: 0; padding: 16px; font: 12px/1.4 monospace; background: #fdfcf9; color: #3b362e; }
+      #stage { position: fixed; right: -9999px; top: 0; width: 480px; height: 480px; }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <script type="module" src="/tools/3d/verify-slab-adversary.tsx"></script>
+  </body>
+</html>

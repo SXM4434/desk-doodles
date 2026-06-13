@@ -133,21 +133,32 @@ const arrowOutline = polylineThrough(
 // F2 — CAT-FACE: closed head + two ear triangles OUTSIDE the head circle +
 // two blacked-in eye scribbles (dense — the fill-intent read).
 const catHead = circle(400, 300, 150);
+// EAR BASES RAISED 2026-06-13 (BUG 2 fix follow-up): the original base vertices
+// [292,198]/[293,197] sat 1.45px INSIDE the head circle (dist 148.55 < r 150) —
+// a self-contradiction with this block's own comment ("ear triangles OUTSIDE
+// the head circle"). It was MASKED by BUG 2: a clean closed circle collapsed
+// under RDP to 2 anchors → 'open' → the head wasn't a container, so the ears
+// read as independent slabs by accident. With BUG 2 fixed the head is a real
+// closed container, and the grazing base vertices flipped the ears to donut
+// HOLES (odd containment depth, first-vertex test). Raising the bases to y≈175
+// (dist ≈167, ~17px clearance) restores the fixture's INTENT — ears clearly
+// outside → 3 independent structure slabs — and now genuinely exercises the
+// corrected engine (head = solid container). Golden unchanged.
 const earL = polylineThrough(
   [
-    [292, 198],
+    [288, 176],
     [318, 110],
     [368, 168],
-    [293, 197],
+    [289, 175],
   ],
   16,
 );
 const earR = polylineThrough(
   [
-    [508, 198],
+    [512, 176],
     [482, 110],
     [432, 168],
-    [507, 197],
+    [511, 175],
   ],
   16,
 );

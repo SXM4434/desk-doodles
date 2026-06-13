@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- 2D audit-catalog TOGGLE sweep harness — repo-side tool only. Sweeps EVERY
+     toggle at LOW/MID/HIGH within its owning style's preset, over the deduped
+     197-shape /audit inventory. Served by an isolated vite preview build. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>2D audit-catalog toggle sweep harness</title>
+    <style>
+      :root { --dir-bg: #fdfcf9; --dir-text-primary: #3b362e; --dir-border: #d8d2c6; }
+      html, body { margin: 0; padding: 0; background: #fdfcf9; }
+      body { font: 12px/1.4 monospace; color: #3b362e; }
+      #grid { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/tools/2d/audit-toggle-sweep-harness.tsx"></script>
+  </body>
+</html>

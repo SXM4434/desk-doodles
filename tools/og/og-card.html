@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <!--
+    Desk Doodles OG card — source for public/og-image.png (1200x630).
+    Standalone, self-contained: no app CSS-var scope, so all W1 tokens are
+    resolved to concrete hex here (color-system-w1.md). The doodles are the
+    REAL PegToolShape catalog SVGs (mug / headphones / moka pot / instax /
+    pencil / macbook), color tokens resolved: STROKE #121110, WASH rgba(18,17,16,0.08).
+    Paper grain + warm pool are the app's deskCraft.ts material (verbatim).
+    Render via tools/og/render.mjs (playwright, deviceScaleFactor 1, 1200x630).
+    FUNCTIONAL baseline — Weave-polishable later.
+  -->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,400&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body { width: 1200px; height: 630px; }
+
+    /* The card == the full 1200x630 frame. */
+    .card {
+      position: relative;
+      width: 1200px;
+      height: 630px;
+      overflow: hidden;
+      background-color: #FDFCF9; /* --dir-bg, warm paper ground */
+      font-family: 'Instrument Sans', sans-serif;
+      color: #121110;            /* --dir-text-primary */
+    }
+
+    /* deskCraft.ts WARM_POOL — soft lamp-warmth pooling toward working center,
+       biased slightly to the doodle cluster on the right. */
+    .pool {
+      position: absolute; inset: 0;
+      background-image: radial-gradient(ellipse 70% 70% at 66% 46%, rgba(255,246,229,0.55) 0%, rgba(255,246,229,0) 64%);
+      pointer-events: none;
+    }
+
+    /* deskCraft.ts PAPER_GRAIN — two-frequency fractal-noise tooth, greyscale,
+       whisper-quiet (close-up speckle + zoom-out mottle). */
+    .grain {
+      position: absolute; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='280'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cfilter id='c'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.35' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)' opacity='0.22'/%3E%3Crect width='100%25' height='100%25' filter='url(%23c)' opacity='0.14'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      mix-blend-mode: multiply;
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    /* Inset frame line — border discipline (--dir-border #E3DFD4) reads as
+       structure, the "this is a card" cue. */
+    .frame {
+      position: absolute;
+      inset: 28px;
+      border: 1px solid #E3DFD4;
+      border-radius: 10px;
+      pointer-events: none;
+    }
+
+    .content {
+      position: absolute;
+      inset: 28px;
+      display: flex;
+      align-items: stretch;
+    }
+
+    /* ── Left column: wordmark + tagline ─────────────────────────────── */
+    .copy {
+      width: 540px;
+      flex: none;
+      padding: 64px 24px 64px 66px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 28px;
+    }
+
+    .eyebrow {
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #5F5B54;       /* --dir-text-secondary */
+      font-weight: 500;
+    }
+
+    .wordmark {
+      font-family: 'Fraunces', serif;
+      font-weight: 500;
+      font-size: 88px;
+      line-height: 0.96;
+      letter-spacing: -0.02em;
+      color: #121110;       /* --dir-text-primary */
+    }
+    .wordmark .l2 { display: block; }
+
+    .tagline {
+      font-family: 'Fraunces', serif;
+      font-style: italic;
+      font-weight: 400;
+      font-size: 28px;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+      color: #383632;       /* --dir-text-body */
+      max-width: 440px;
+    }
+
+    .foot {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 6px;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: #797369;       /* --dir-text-body-soft */
+    }
+    .foot .dot { width: 4px; height: 4px; border-radius: 50%; background: #878075; }
+
+    /* ── Right column: doodle cluster on a raised "desk card" ─────────── */
+    .stage {
+      flex: 1;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-right: 12px;
+    }
+
+    /* The raised surface the doodles SIT on — one step above ground
+       (--dir-raised #F9F7F3), framed, soft-cornered. */
+    .desk {
+      position: relative;
+      width: 470px;
+      height: 470px;
+      background: #F9F7F3;
+      border: 1px solid #E3DFD4;
+      border-radius: 16px;
+      box-shadow: 0 1px 2px rgba(60,50,40,0.05), 0 18px 40px rgba(60,50,40,0.07);
+    }
+
+    /* deskCraft.ts OBJECT_SIT_SHADOW — objects sit, not float. */
+    .doodle {
+      position: absolute;
+      filter: drop-shadow(0.5px 1px 0.5px rgba(60,50,40,0.13)) drop-shadow(1.5px 3px 3px rgba(60,50,40,0.07));
+    }
+    .doodle svg { display: block; }
+
+    /* Hand-tilt — these are sketches, not stickers. Small rotations. */
+    .d-mac   { top: 56px;  left: 60px;  transform: rotate(-4deg); }
+    .d-head  { top: 38px;  left: 280px; transform: rotate(5deg); }
+    .d-moka  { top: 196px; left: 320px; transform: rotate(-3deg); }
+    .d-mug   { top: 250px; left: 56px;  transform: rotate(3deg); }
+    .d-instax{ top: 322px; left: 188px; transform: rotate(-5deg); }
+    .d-pencil{ top: 150px; left: 200px; transform: rotate(28deg); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="pool"></div>
+    <div class="grain"></div>
+    <div class="frame"></div>
+
+    <div class="content">
+      <div class="copy">
+        <div class="eyebrow">A shared desk for designers</div>
+        <div class="wordmark">Desk<span class="l2">Doodles</span></div>
+        <div class="tagline">Doodle what&rsquo;s on your desk &mdash; keep your hand&rsquo;s character, restyle it, drop it on the wall.</div>
+        <div class="foot">
+          <span>Draw</span><span class="dot"></span>
+          <span>Restyle</span><span class="dot"></span>
+          <span>2D &harr; 3D</span><span class="dot"></span>
+          <span>Share</span>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="desk">
+          <!-- macbook -->
+          <div class="doodle d-mac">
+            <svg viewBox="0 0 120 80" width="150" height="100">
+              <rect x="6" y="8" width="108" height="60" rx="4" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.5" />
+              <line x1="6" y1="64" x2="114" y2="64" stroke="#121110" stroke-width="0.9" />
+              <circle cx="60" cy="36" r="6" fill="transparent" stroke="#121110" stroke-width="0.9" />
+            </svg>
+          </div>
+
+          <!-- over-ear headphones -->
+          <div class="doodle d-head">
+            <svg viewBox="0 0 100 90" width="118" height="106">
+              <path d="M14 50 Q14 12 50 12 Q86 12 86 50" fill="transparent" stroke="#121110" stroke-width="2" />
+              <ellipse cx="14" cy="60" rx="11" ry="16" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.5" />
+              <ellipse cx="86" cy="60" rx="11" ry="16" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.5" />
+              <circle cx="14" cy="60" r="6" fill="transparent" stroke="#121110" stroke-width="0.6" />
+              <circle cx="86" cy="60" r="6" fill="transparent" stroke="#121110" stroke-width="0.6" />
+            </svg>
+          </div>
+
+          <!-- moka pot / greca -->
+          <div class="doodle d-moka">
+            <svg viewBox="0 0 80 110" width="104" height="143">
+              <polygon points="22,8 58,8 64,30 58,52 22,52 16,30" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.5" />
+              <circle cx="40" cy="6" r="3" fill="#121110" />
+              <polygon points="58,16 70,12 64,22" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.2" />
+              <line x1="16" y1="52" x2="64" y2="52" stroke="#121110" stroke-width="0.9" />
+              <polygon points="22,52 58,52 64,82 56,100 24,100 16,82" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.5" />
+              <path d="M16 60 Q4 70 16 90" fill="transparent" stroke="#121110" stroke-width="1.5" />
+            </svg>
+          </div>
+
+          <!-- paired mug -->
+          <div class="doodle d-mug">
+            <svg viewBox="0 0 110 70" width="150" height="95">
+              <rect x="6" y="14" width="34" height="44" rx="3" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.4" />
+              <path d="M40 22 Q50 22 50 32 Q50 42 40 42" fill="transparent" stroke="#121110" stroke-width="1.4" />
+              <rect x="64" y="14" width="34" height="44" rx="3" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.4" />
+              <path d="M98 22 Q108 22 108 32 Q108 42 98 42" fill="transparent" stroke="#121110" stroke-width="1.4" />
+            </svg>
+          </div>
+
+          <!-- instax camera -->
+          <div class="doodle d-instax">
+            <svg viewBox="0 0 110 80" width="138" height="100">
+              <rect x="4" y="4" width="102" height="72" rx="6" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.5" />
+              <circle cx="40" cy="40" r="18" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.4" />
+              <circle cx="40" cy="40" r="11" fill="transparent" stroke="#121110" stroke-width="0.9" />
+              <circle cx="40" cy="40" r="5" fill="#121110" />
+              <rect x="68" y="14" width="14" height="10" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1" />
+              <circle cx="92" cy="20" r="3" fill="#121110" />
+              <line x1="14" y1="68" x2="96" y2="68" stroke="#121110" stroke-width="0.8" />
+            </svg>
+          </div>
+
+          <!-- mechanical pencil -->
+          <div class="doodle d-pencil">
+            <svg viewBox="0 0 22 110" width="40" height="200">
+              <rect x="6" y="14" width="10" height="80" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.3" />
+              <line x1="6" y1="24" x2="16" y2="24" stroke="#121110" stroke-width="0.4" />
+              <line x1="6" y1="28" x2="16" y2="28" stroke="#121110" stroke-width="0.4" />
+              <line x1="6" y1="32" x2="16" y2="32" stroke="#121110" stroke-width="0.4" />
+              <line x1="6" y1="36" x2="16" y2="36" stroke="#121110" stroke-width="0.4" />
+              <line x1="6" y1="40" x2="16" y2="40" stroke="#121110" stroke-width="0.4" />
+              <line x1="14" y1="18" x2="14" y2="56" stroke="#121110" stroke-width="1.2" />
+              <polygon points="6,94 16,94 14,102 8,102" fill="rgba(18,17,16,0.08)" stroke="#121110" stroke-width="1.1" />
+              <line x1="11" y1="102" x2="11" y2="108" stroke="#121110" stroke-width="1" />
+              <rect x="8" y="6" width="6" height="8" fill="#121110" />
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
