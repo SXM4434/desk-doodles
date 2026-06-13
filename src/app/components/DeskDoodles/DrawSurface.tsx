@@ -403,15 +403,41 @@ function fillChildrenOf(regions: FillRegion[], idx: number): [number, number][][
   return holes;
 }
 
-/** Shoelace area in viewBox px² (lasso degenerate-loop guard). */
-function polyAreaPx(pts: [number, number][]): number {
-  let area = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const [ax, ay] = pts[i];
-    const [bx, by] = pts[(i + 1) % pts.length];
-    area += ax * by - bx * ay;
+/** Bounding-box extents of a point set (px): [width, height]. */
+function bboxWHPx(pts: [number, number][]): [number, number] {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of pts) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
   }
-  return Math.abs(area / 2);
+  return [maxX - minX, maxY - minY];
+}
+
+/** Is a lasso loop degenerate — near-zero AREA (Sebs-ratified: short flicks
+ *  AND near-straight drags miss honestly, commit NOTHING)?
+ *
+ *  The guard keys on BBOX EXTENTS, NOT signed shoelace area — a self-crossing
+ *  loop (figure-8 / bowtie) has near-zero NET shoelace area (the lobes' winding
+ *  cancels) yet fills a large area under the nonzero-winding rasterizer the
+ *  commit uses. A shoelace floor would wrongly reject those legitimate loops
+ *  (the L4a/N4 regression). Bbox extents don't cancel:
+ *    - SHORT FLICK  → both dims tiny  → reject;
+ *    - NEAR-STRAIGHT DRAG → one dim a sliver (min dim ≈ wobble width) → reject;
+ *    - REAL LOOP / BOWTIE → both dims span the gesture → accept.
+ *  A loop must span ≥ LASSO_MIN_DIM_PX in its SMALLER dimension and clear a
+ *  bbox-area floor (a tiny square also misses). */
+const LASSO_MIN_DIM_PX = 12;
+const LASSO_MIN_BBOX_AREA_PX = 400;
+function lassoDegenerate(pts: [number, number][]): boolean {
+  if (pts.length < 3) return true;
+  const [w, h] = bboxWHPx(pts);
+  if (Math.min(w, h) < LASSO_MIN_DIM_PX) return true; // sliver in one axis
+  return w * h < LASSO_MIN_BBOX_AREA_PX; // too small overall
 }
 
 /** Decimate + round a lasso loop for the record (≤ TONE_OUTLINE_MAX_PTS,
@@ -940,7 +966,7 @@ export function DrawSurface({
     const gapMult = GAP_LADDER[currentGapIdx];
     if (!grid) return;
     const regionCount = regionsFor(currentGapIdx).length;
-    if (!pts || pts.length < 3 || polyAreaPx(pts) < 16) {
+    if (!pts || lassoDegenerate(pts)) {
       lastMissRef.current = true;
       logShadeFill('lasso', 'lasso', gapMult, null, 'miss', regionCount);
       onFillNote?.('that lasso is too small — draw a bigger loop');
@@ -1665,20 +1691,63 @@ export function DrawSurface({
             pointerEvents="none"
           />
         )}
-        {/* Lasso trail — the loop-in-progress; it auto-closes on release and
-            its own outline becomes the patch (D-RF7). Wash previews the
-            committed band; erase mode previews the dashed lifter only. */}
+        {/* Lasso trail — the loop-in-progress (D-RF7). Three honest layers so
+            auto-close is NEVER a surprise (Sebs-ratified):
+              1. WASH — the area that WILL commit (drawn trail + the closing
+                 chord, fill-only, Z-closed) so the user sees the captured area;
+              2. TRAIL — the actually-drawn path, a SOLID accent line (no Z) —
+                 this is the ink the pointer has laid down;
+              3. CHORD — a distinct DASHED line from the live pointer back to
+                 the START point, plus a start marker: the closing edge the
+                 release will snap shut. Visually separate from the solid trail
+                 so the user reads exactly where the loop will close.
+            Erase mode drops the wash (a lifter takes tone away — washing it on
+            would lie); the trail + chord stay so the loop is still legible. */}
         {lassoPts && lassoPts.length > 1 && (
-          <path
-            data-lasso-trail
-            d={`${strokeToPolylinePath(lassoPts.map(([x, y]) => [x, y, 0.5] as StrokePoint))} Z`}
-            fill={shade?.erase ? 'none' : TONE_BAND_HEX[shade?.band ?? 3] ?? '#888888'}
-            fillOpacity={shade?.erase ? 0 : 0.18}
-            stroke="var(--dir-accent)"
-            strokeWidth={1.25}
-            strokeDasharray="5 4"
-            pointerEvents="none"
-          />
+          <g data-lasso pointerEvents="none">
+            {!shade?.erase && (
+              <path
+                data-lasso-wash
+                d={`${strokeToPolylinePath(lassoPts.map(([x, y]) => [x, y, 0.5] as StrokePoint))} Z`}
+                fill={TONE_BAND_HEX[shade?.band ?? 3] ?? '#888888'}
+                fillOpacity={0.18}
+                stroke="none"
+              />
+            )}
+            <path
+              data-lasso-trail
+              d={strokeToPolylinePath(lassoPts.map(([x, y]) => [x, y, 0.5] as StrokePoint))}
+              fill="none"
+              stroke="var(--dir-accent)"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            {/* Live closing chord: pointer → start. Dashed + lighter so it
+                reads as "this snaps shut on release", distinct from the solid
+                drawn trail. */}
+            <line
+              data-lasso-chord
+              x1={lassoPts[lassoPts.length - 1][0]}
+              y1={lassoPts[lassoPts.length - 1][1]}
+              x2={lassoPts[0][0]}
+              y2={lassoPts[0][1]}
+              stroke="var(--dir-accent)"
+              strokeOpacity={0.55}
+              strokeWidth={1.25}
+              strokeDasharray="5 4"
+            />
+            {/* Start marker — the anchor the chord closes onto. */}
+            <circle
+              data-lasso-start
+              cx={lassoPts[0][0]}
+              cy={lassoPts[0][1]}
+              r={3.5}
+              fill="var(--dir-bg)"
+              stroke="var(--dir-accent)"
+              strokeWidth={1.5}
+            />
+          </g>
         )}
       </svg>
       {/* Empty-state hint — DRAW mode: warm sentence-case invitation (was

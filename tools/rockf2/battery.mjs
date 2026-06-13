@@ -726,6 +726,128 @@ const m2 = await scriptedFillSession();
 check('M2 determinism: same scripted fill twice → byte-identical record', m1 === m2, `len ${m1.length} vs ${m2.length}`);
 
 // ════════════════════════════════════════════════════════════════════════════
+// N — LASSO CLOSING CHORD (Sebs-ratified: live dashed pointer→start chord while
+// dragging, auto-close never a surprise) + near-straight degenerate miss.
+// ════════════════════════════════════════════════════════════════════════════
+await openPopup();
+await clickShade();
+await pickTool('lasso');
+await pickBand(4);
+{
+  // Drag a partial loop and HOLD (no release) — assert the live chord + start
+  // marker + wash are all present, and the chord runs pointer→start.
+  await refreshM();
+  const path = [[300, 250], [480, 250], [500, 400]];
+  const [sx, sy] = P(path[0][0], path[0][1]);
+  await page.mouse.move(sx, sy);
+  await page.mouse.down();
+  for (const [vx, vy] of path.slice(1)) {
+    const [x, y] = P(vx, vy);
+    await page.mouse.move(x, y, { steps: 6 });
+  }
+  await page.waitForTimeout(120);
+  const chord = await page.evaluate(() => {
+    const c = document.querySelector('[role="dialog"] [data-lasso-chord]');
+    const start = document.querySelector('[role="dialog"] [data-lasso-start]');
+    const trail = document.querySelector('[role="dialog"] [data-lasso-trail]');
+    const wash = document.querySelector('[role="dialog"] [data-lasso-wash]');
+    if (!c) return { present: false };
+    return {
+      present: true,
+      dashed: !!c.getAttribute('stroke-dasharray'),
+      x1: +c.getAttribute('x1'), y1: +c.getAttribute('y1'),
+      x2: +c.getAttribute('x2'), y2: +c.getAttribute('y2'),
+      hasStart: !!start, hasTrail: !!trail, hasWash: !!wash,
+    };
+  });
+  await canvasShot('N1-lasso-chord-mid-drag');
+  // The chord attributes are in VIEWBOX coords (the SVG's own space): one end
+  // = the LIVE pointer (last pt ≈ 500,400), the other = the START (≈ 300,250).
+  // perfect-freehand streamlines, so the live pointer lands a little inside the
+  // last scripted point — allow a generous tolerance on the pointer end.
+  const near = (a, b, tol) => Math.abs(a - b) < tol;
+  const startOk = (x, y) => near(x, 300, 30) && near(y, 250, 30);
+  const ptrOk = (x, y) => near(x, 500, 60) && near(y, 400, 60);
+  check(
+    'N1 lasso mid-drag: LIVE dashed chord pointer→start + start marker + wash',
+    chord.present && chord.dashed && chord.hasStart && chord.hasTrail && chord.hasWash &&
+      ((ptrOk(chord.x1, chord.y1) && startOk(chord.x2, chord.y2)) ||
+       (ptrOk(chord.x2, chord.y2) && startOk(chord.x1, chord.y1))),
+    JSON.stringify(chord),
+  );
+  await page.mouse.up();
+  await page.waitForTimeout(180);
+  // On release the loop committed exactly as the chord previewed (straight
+  // chord 500,400→300,250 included): the patch's bbox must reach the start x.
+  const f = await fills();
+  const fb = f[0] ? bbox(f[0].points) : null;
+  check(
+    'N2 open lasso released → region includes the straight chord (closes to start)',
+    f.length === 1 && f[0].src === 'lasso' && fb && fb.x0 <= 320 && fb.x1 >= 480,
+    `patches=${f.length} bbox=${fb ? `${Math.round(fb.x0)}..${Math.round(fb.x1)}` : '-'}`,
+  );
+  await canvasShot('N2-lasso-committed-with-chord');
+}
+await closePopup();
+// near-straight LONG drag (length but ~zero area) → honest miss, zero patches
+await openPopup();
+await clickShade();
+await pickTool('lasso');
+{
+  // 320px-long drag with ~3px wobble — a sliver, not a loop.
+  await drawVb([[260, 300], [340, 297], [420, 303], [500, 299], [580, 301]], 2);
+  const f = await fills();
+  const log = await lastLog();
+  check(
+    'N3 near-straight long drag → honest miss, ZERO patches (degenerate)',
+    f.length === 0 && log?.outcome === 'miss' && log?.tool === 'lasso',
+    `patches=${f.length} outcome=${log?.outcome}`,
+  );
+  await canvasShot('N3-near-straight-miss');
+}
+await closePopup();
+// self-crossing lasso — SCREENSHOT READ (existing L4a only asserted no-crash)
+await openPopup();
+await clickShade();
+await pickTool('lasso');
+await pickBand(5);
+{
+  await drawVb([[300, 280], [480, 460], [300, 460], [480, 280], [310, 285]], 2); // bowtie
+  const f = await fills();
+  check('N4 self-crossing lasso commits a patch (no crash)', f.length >= 1 && pageErrors.length === 0, `patches=${f.length}`);
+  await canvasShot('N4-self-crossing-lasso');
+}
+await closePopup();
+
+// ════════════════════════════════════════════════════════════════════════════
+// O — FILL THEN DONE: the filled band survives into the staged record (naming
+// stage carries toneFills via the sourceConfig channel). NO publish — Place is
+// never clicked; route-layer blocks any write regardless.
+// ════════════════════════════════════════════════════════════════════════════
+await openPopup();
+await drawVb(circleGapPts(400, 300, 130, 0));
+await clickShade();
+await pickTool('fill');
+await pickBand(5);
+await tapVb(400, 300);
+const fillsBeforeDone = (await fills()).length;
+await dlg.locator('footer button', { hasText: 'Done' }).click();
+await page.waitForTimeout(1000);
+{
+  const naming = await dlg.locator('text=Name your doodle').count();
+  // The live tone record (window mirror, set by DrawSurface) still carries the
+  // filled patch in the naming stage — nothing was lost crossing Done.
+  const stagedTone = await page.evaluate(() => (window.__dd_toneFills ?? []).length);
+  check(
+    'O1 fill then Done: enters naming stage, filled band survives the record',
+    naming > 0 && fillsBeforeDone === 1 && stagedTone === 1 && pageErrors.length === 0,
+    `naming=${naming} before=${fillsBeforeDone} stagedTone=${stagedTone}`,
+  );
+  await page.screenshot({ path: `${OUT}/O1-fill-then-done-naming.png` });
+}
+await closePopup();
+
+// ════════════════════════════════════════════════════════════════════════════
 console.log('\nblocked supabase write attempts:', blocked);
 console.log('pageerrors:', pageErrors.length ? pageErrors : 'none');
 const failed = results.filter((r) => !r.pass);
