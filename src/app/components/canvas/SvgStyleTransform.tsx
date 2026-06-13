@@ -120,7 +120,20 @@ function fillStyleToRough(step: FillStyleStep): string | undefined {
 // Plain tokens (`var(--dir-text-primary)`) swap directly. Anything else passes
 // through unchanged.
 
-function paletteToToken(mode: PaletteModeStep): string | null {
+// `isInk` distinguishes STROKE/ink resolution from FILL resolution.
+//
+// feedback_palette_overrides_ink_not_paper (LOCKED): palette overrides remap
+// INK only and must NEVER resolve ink to the paper color. The `bg` and
+// `inverted` modes are the only two that point at paper (`var(--dir-bg)`):
+//   - For a FILL they're legitimate — `bg` is the explicit opt-in to flood a
+//     region with paper, `inverted` paints a region paper-colored.
+//   - For a STROKE that is fatal: ink === paper makes the stroke VANISH on
+//     ~every shape (RC-3: ~197 shapes lost all strokes when strokePalette was
+//     `bg` or `inverted`). So in ink context BOTH paper-pointing modes resolve
+//     to a real, visible ink instead. `inverted` = the true inverse of paper
+//     (the darkest ink, --dir-text-primary); `bg`-as-stroke is GUARDED to the
+//     same visible ink so it can never blank the line.
+function paletteToToken(mode: PaletteModeStep, isInk = false): string | null {
   switch (mode) {
     case 'source':     return null;
     case 'primary':    return 'var(--dir-text-primary)';
@@ -129,17 +142,20 @@ function paletteToToken(mode: PaletteModeStep): string | null {
     case 'secondary':  return 'var(--dir-text-secondary)';
     case 'detail':     return 'var(--dir-detail)';
     case 'accent':     return 'var(--dir-accent, #D4574A)';
-    case 'bg':         return 'var(--dir-bg)';
+    // Ink can never become paper — guard `bg` to the darkest visible ink.
+    case 'bg':         return isInk ? 'var(--dir-text-primary)' : 'var(--dir-bg)';
     case 'neutral':    return 'var(--dir-text-body)';
-    case 'inverted':   return 'var(--dir-bg)';
+    // `inverted` ink = the inverse OF paper = the darkest ink (visible). As a
+    // fill it stays paper-colored (region painted to the substrate).
+    case 'inverted':   return isInk ? 'var(--dir-text-primary)' : 'var(--dir-bg)';
   }
 }
 
 const COLOR_MIX_TOKEN_RE = /var\(--[a-zA-Z0-9-]+(?:,\s*[^)]+)?\)/;
 
-function mapPaletteColor(originalColor: string | undefined, paletteMode: PaletteModeStep): string | undefined {
+function mapPaletteColor(originalColor: string | undefined, paletteMode: PaletteModeStep, isInk = false): string | undefined {
   if (paletteMode === 'source') return originalColor;
-  const replacement = paletteToToken(paletteMode);
+  const replacement = paletteToToken(paletteMode, isInk);
   if (!replacement) return originalColor;
   if (!originalColor) return originalColor;  // null/undefined fills must NOT become opaque
   // NEVER remap "paper" fills. Palette overrides remap INK, not the substrate.
@@ -994,7 +1010,7 @@ function renderHandFeelShape(
   // transparency wrappers.
   const sourceStroke = sourceEl.getAttribute('stroke');
   const sourceFill = sourceEl.getAttribute('fill');
-  const strokeColor = mapPaletteColor(sourceStroke ?? undefined, m.strokePalette)
+  const strokeColor = mapPaletteColor(sourceStroke ?? undefined, m.strokePalette, true)
     ?? 'var(--dir-text-primary)';
   const fillColor = (() => {
     if (!sourceFill || sourceFill === 'none' || sourceFill === 'transparent') return undefined;
@@ -1325,7 +1341,7 @@ function buildRoughOptionsForPath(
   };
   const stroke = el.getAttribute('stroke');
   const fill = el.getAttribute('fill');
-  if (stroke) opts.stroke = mapPaletteColor(stroke, m.strokePalette);
+  if (stroke) opts.stroke = mapPaletteColor(stroke, m.strokePalette, true);
   if (fill && fill !== 'none' && fill !== 'transparent' && fillStyle) {
     opts.fill = mapPaletteColor(fill, m.fillPalette);
   } else {
@@ -2533,8 +2549,24 @@ export function SvgStyleTransform({
    *  resolve percentage sizing and fill the frame (0×0 bug, 2026-06-11). */
   wrapperOverride?: CSSProperties;
 }) {
+  const { state: rawM } = useF3RoughModifiers();
   const { state: style } = useF3SvgStyle();
-  const { state: m } = useF3RoughModifiers();
+  // RC-4 — inkIntensity FLOOR. The raw slider bottoms at 0 (modifierSpecs:25),
+  // which drives wrapper opacity → 0 AND multiplies ink opacity to 0 inside
+  // every render path (CSS-route wrapper, rough-family, smartHachure techniqueMap)
+  // — so the minimum BLANKED all ~197 shapes. Floor it so the slider minimum is
+  // a faint-but-VISIBLE ink, never invisible. Same family as the locked roughness
+  // (0→0.2) / strokeWidth (0.3→0.5) slider floors. Flooring once on the derived
+  // `m` carries the floor into EVERY downstream consumer (the opacity below +
+  // renderSmartHachure) without touching the dark-blob fix's files.
+  const INK_INTENSITY_FLOOR = 0.15;
+  const m = useMemo<F3ModifiersState>(
+    () =>
+      rawM.inkIntensity < INK_INTENSITY_FLOOR
+        ? { ...rawM, inkIntensity: INK_INTENSITY_FLOOR }
+        : rawM,
+    [rawM],
+  );
   const cleanRef = useRef<HTMLDivElement | null>(null);
   const fxRef = useRef<HTMLDivElement | null>(null);
 
@@ -2665,9 +2697,15 @@ export function SvgStyleTransform({
         [data-f3-stroke="secondary"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-text-secondary) !important; }
         [data-f3-stroke="detail"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-detail) !important; }
         [data-f3-stroke="accent"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-accent, #D4574A) !important; }
-        [data-f3-stroke="bg"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-bg) !important; }
+        /* feedback_palette_overrides_ink_not_paper (LOCKED): ink must never
+           resolve to the paper color or the stroke VANISHES on every shape
+           (RC-3). The bg-as-stroke rule is GUARDED and inverted ink = the inverse
+           OF paper = the darkest visible ink. Mirrors paletteToToken(mode, isInk=true).
+           The data-f3-fill bg / inverted rules below KEEP var(--dir-bg) —
+           paper-flood as a FILL is the legitimate opt-in. */
+        [data-f3-stroke="bg"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-text-primary) !important; }
         [data-f3-stroke="neutral"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-text-body) !important; }
-        [data-f3-stroke="inverted"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-bg) !important; }
+        [data-f3-stroke="inverted"] svg [stroke]:not([stroke="none"]) { stroke: var(--dir-text-primary) !important; }
         /* Palette overrides remap INK fills only. Exclusions:
            - :not([fill*="--dir-bg"]) — paper stays paper (Polaroid outer rect etc.)
            - :not([fill*="color-mix"]) — wash fills stay as their source color-mix

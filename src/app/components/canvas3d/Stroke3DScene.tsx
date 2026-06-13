@@ -248,27 +248,45 @@ const CONTACT_SHADOW = {
 /** Gap between the lowest geometry point and the shadow plane. */
 const CONTACT_SHADOW_DROP = 0.04;
 
-// ── Content-fit camera framing — PORTED from Free Stroke ───────────────────
+// ── Content-fit camera framing — PORTED from Free Stroke, made FOV-aware ────
 // PROVENANCE: viewport-3d.tsx `bounds.center + dir · bounds.radius × FRAME_K`
 // (FRAME_K = 3.0, verbatim). Gentler mostly-frontal 3/4 so the doodle still
 // reads as the drawing, with top + side walls visible for depth.
+//
+// RC-4(b) framing-aware fix: the verbatim FS framing distances the camera by
+// bounds.RADIUS (the bounding-sphere half-diagonal) × a fixed K. That K was
+// tuned for roughly-cubic doodles. For an ELONGATED form (a tall can, a wide
+// boarding pass) — and ESPECIALLY when the rod is thin so the cross-section is
+// negligible — the half-diagonal ≈ the major HALF-axis, the camera pulls in
+// close, and the long axis runs off the frame (the overflow the audit caught).
+// The fix keeps the sphere-radius distance as a FLOOR (so the verbatim look is
+// untouched for normal doodles) but ALSO computes the distance the perspective
+// frustum needs to fit the box's largest projected extent, and takes the max.
+// So a normal doodle frames exactly as before; only an elongated one gets
+// pushed back enough to stop clipping.
 const FRAME_K = 3.0;
 const FRAME_DIR = new THREE.Vector3(0.5, 0.55, 1).normalize();
 /** Floor on the framing radius so a dot-tap doodle doesn't slam the camera
  *  into the near plane. */
 const FRAME_MIN_RADIUS = 1.2;
+/** Extra breathing room around the fitted box (RC-4(b)) — the form sits inside
+ *  the frame with margin, never kissing the border. */
+const FRAME_FIT_MARGIN = 1.18;
 
 interface PoolBounds {
   center: THREE.Vector3;
   radius: number;
   minY: number;
+  /** Full world-space extents (RC-4(b) framing-aware fit). */
+  size: THREE.Vector3;
 }
 
-/** Deterministic one-shot camera fit: position = center + dir·radius·K,
- *  target = center. Re-runs only when the pool bounds change (new strokes /
- *  mode) — user orbits are never fought mid-gesture. */
+/** Deterministic one-shot camera fit: position = center + dir·dist, target =
+ *  center. Re-runs only when the pool bounds OR the viewport aspect change
+ *  (new strokes / mode / resize) — user orbits are never fought mid-gesture. */
 function CameraFramer({ bounds }: { bounds: PoolBounds | null }) {
   const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size); // re-fit on container resize (aspect)
   const controls = useThree((s) => s.controls) as unknown as {
     target: THREE.Vector3;
     update: () => void;
@@ -276,15 +294,32 @@ function CameraFramer({ bounds }: { bounds: PoolBounds | null }) {
   useEffect(() => {
     if (!bounds) return;
     const radius = Math.max(bounds.radius, FRAME_MIN_RADIUS);
-    camera.position
-      .copy(bounds.center)
-      .addScaledVector(FRAME_DIR, radius * FRAME_K);
+    // Verbatim-FS distance (the look for normal doodles) = the floor.
+    let dist = radius * FRAME_K;
+    // FOV-aware distance: push back far enough that the box's largest projected
+    // extent fits the frustum with margin. Vertical fov fits the box HEIGHT;
+    // the box WIDTH must fit the horizontal fov (= vfov scaled by aspect). Use
+    // whichever needs the farther camera so neither axis overflows.
+    const persp = camera as THREE.PerspectiveCamera;
+    if (persp.isPerspectiveCamera) {
+      const vFov = (persp.fov * Math.PI) / 180;
+      const aspect = persp.aspect || (size.height > 0 ? size.width / size.height : 1);
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+      // Half-extents the camera must fit: include depth so an oblique 3/4 view
+      // (FRAME_DIR is not axis-aligned) never tucks a corner past the edge.
+      const halfH = (bounds.size.y + bounds.size.z * 0.6) * 0.5 * FRAME_FIT_MARGIN;
+      const halfW = (bounds.size.x + bounds.size.z * 0.6) * 0.5 * FRAME_FIT_MARGIN;
+      const distForH = halfH / Math.tan(vFov / 2);
+      const distForW = halfW / Math.tan(hFov / 2);
+      dist = Math.max(dist, distForH, distForW);
+    }
+    camera.position.copy(bounds.center).addScaledVector(FRAME_DIR, dist);
     camera.lookAt(bounds.center);
     if (controls) {
       controls.target.copy(bounds.center);
       controls.update();
     }
-  }, [bounds, camera, controls]);
+  }, [bounds, camera, controls, size]);
   return null;
 }
 
@@ -640,8 +675,9 @@ function StrokeMeshes({
     }
     if (!Number.isFinite(min.x) || !Number.isFinite(max.x)) return null;
     const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5);
-    const radius = new THREE.Vector3().subVectors(max, min).length() / 2;
-    return { center, radius, minY: min.y };
+    const size = new THREE.Vector3().subVectors(max, min);
+    const radius = size.length() / 2;
+    return { center, radius, minY: min.y, size };
   }, [builds]);
 
   // Native OUTLINE: inverted-hull material — backfaces pushed out along the

@@ -116,6 +116,17 @@ export const WORLD_SCALE = 0.01;
 // 3 / max(w, h)); we map 800px → 8 units (WORLD_SCALE 0.01). All ABSOLUTE
 // world lengths convert ×8/3; radius-RELATIVE factors port verbatim.
 export const ROD_RADIUS = 0.032; // TUBE_RADIUS 0.012 × 8/3 — the tuned ink-line weight
+/** RC-4(b): hard floor on the tube half-thickness, world units. At the old
+ *  slider min (0.01) the rod collapses toward a 1-D line: its bounding box has
+ *  near-zero cross-section, so the bounding-sphere radius the camera frames to
+ *  shrinks toward the major HALF-axis, the camera pulls in close, and a tall or
+ *  wide form's long axis runs off the frame (the overflow read). The
+ *  framing-aware camera fix (Stroke3DScene CameraFramer) handles the geometry,
+ *  but the rod also needs a sane minimum girth so it stays a visible ink line
+ *  rather than a hairline at any zoom. 0.016 = half the tuned default — still
+ *  clearly thinner than default, never degenerate. Engine-side clamp so EVERY
+ *  caller (slider, conversion pipeline, solid rodRadius pass) is protected. */
+export const ROD_RADIUS_FLOOR = 0.016;
 export const ROD_RADIAL_SEGMENTS = 16; // RADIAL_SEGMENTS 16 — round ink, not faceted
 export const ROD_TUBE_SEGMENTS_MULTIPLIER = 3; // TUBE_SEGMENTS_MULTIPLIER (already matched)
 export const ROD_MAX_TUBULAR_SEGMENTS = 512; // MAX_TUBULAR_SEGMENTS (already matched)
@@ -602,7 +613,9 @@ export function buildRodGeometry(
     jointAngleThresholdDeg?: number;
   } = {},
 ): RodGeometryResult {
-  const radius = opts.radius ?? ROD_RADIUS;
+  // RC-4(b): floor the radius so a thin-rod slider extreme can't collapse the
+  // tube toward a 1-D line (which under-frames elongated forms and clips them).
+  const radius = Math.max(opts.radius ?? ROD_RADIUS, ROD_RADIUS_FLOOR);
   const closed = opts.closed ?? false;
 
   let pts = dedupeConsecutive(world);

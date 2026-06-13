@@ -179,7 +179,12 @@ export type Param3DSliderSpec = {
 export const ROD_SLIDER_SPECS = {
   radius: {
     label: 'Radius',
-    min: 0.01,
+    // RC-4(b): min raised 0.01 → 0.016 = strokeTo3d ROD_RADIUS_FLOOR (kept in
+    // sync as a literal — this module is three/geometry3d-free per the purity
+    // contract; the engine also clamps, so a stale UI min can never overflow).
+    // Below the floor a thin rod collapses toward a 1-D line and the
+    // framing-aware camera still needs the form to have real cross-section.
+    min: 0.016,
     max: 0.128, // D-E: 4× default — past that rods read as worms and swallow joints
     step: 0.002,
     precision: 3,

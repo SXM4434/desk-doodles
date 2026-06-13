@@ -101,6 +101,20 @@ export type HatchInputs = {
  *  feedback_copy_implementation_before_tweaking_numbers). */
 export const HATCH_GAP_SCREEN_K = 2.0;
 
+/** Hatch gap CEILING in CSS px (RC-4(a) fix). The slider's HIGH end (gap 30 ×
+ *  K 2 = 60 CSS px, ×dpr → 120 device px) puts the line spacing WIDER than the
+ *  3D form's on-screen footprint, so zero marks land inside it and every shape
+ *  renders blank — the band tone is still computed, but no line ever crosses
+ *  the form. A typical framed 3D doodle spans ~200–300 CSS px; capping the
+ *  effective spacing at 22 CSS px guarantees at least several line crossings on
+ *  even the smallest form, so a large gap still reads as airy-but-visible
+ *  hatching instead of nothing. Mirrors the 2D renderer's own gap cap (12 SVG
+ *  px in an 800px viewBox ≈ this fraction of frame). The slider keeps its full
+ *  0.5–30 range and feel UP TO the ceiling — past it the look just stops
+ *  thinning out (a usable plateau, not a cliff to blank). Pre-dpr so the cap is
+ *  a fixed fraction of the frame regardless of display density. */
+export const HATCH_GAP_MAX_CSS_PX = 22;
+
 /** fillStyle → shader mode int (all 8 FillStyleStep values real). */
 export function fillStyleToMode(fillStyle: string | undefined): number {
   switch (fillStyle) {
@@ -326,7 +340,15 @@ export function updateHatchUniforms(
   pixelRatio: number,
 ): void {
   const u = mat.uniforms;
-  u.u_gapPx.value = Math.max(inputs.hachureGap * HATCH_GAP_SCREEN_K, 1.5) * pixelRatio;
+  // RC-4(a): floor (1.5 CSS px — lines never merge to mush) AND ceiling
+  // (HATCH_GAP_MAX_CSS_PX — a 30px gap still lands marks inside the form
+  // instead of blanking it). Both clamps are in CSS px BEFORE the dpr scale so
+  // the cap is a fixed fraction of the on-screen frame at any display density.
+  const gapCssPx = Math.min(
+    Math.max(inputs.hachureGap * HATCH_GAP_SCREEN_K, 1.5),
+    HATCH_GAP_MAX_CSS_PX,
+  );
+  u.u_gapPx.value = gapCssPx * pixelRatio;
   u.u_angleRad.value = (inputs.hachureAngle * Math.PI) / 180;
   // strokeWidth 0.1–10 → half-thickness px (×0.6 reads matched to the 2D line
   // at default 1.2); the gap*0.35 merge cap applies in-shader.
