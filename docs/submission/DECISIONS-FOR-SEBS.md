@@ -71,3 +71,7 @@ _Claude clears B-board prep + C/D options as fleets land; you just rule._
 ## Image-mode refinement (Sebs 2026-06-13)
 - Use the **BEST-QUALITY** provider (Quiver Arrow via Edge fn) — not vtracer-for-free. Quality over key-convenience.
 - image→SVG must output a **SIMPLER SKETCH version** of the photo (abstract to a few hand-drawn strokes that fit the Desk Doodles look), NOT a detailed/photo-real vectorization. Simplify-to-sketch is part of the conversion.
+
+## Card features (Sebs 2026-06-13 — don't forget)
+- **Export card → SVG (+ PNG)** for social sharing. Placement: the CARD DETAIL modal (RESTYLE/RE-DRAW/DELETE row) as primary; optional secondary = desk-level "share my desk". 1–2 spots, not scattered. (R9/R10.)
+- **Optional AUTHOR-NAME field** on the card — user can add their name if they want (skippable; ties to the onboarding handle @doodled-finch → becomes the card's author attribution / "by ___"). Sits with the name + why fields in the naming stage / card. (R9 with personal-space + onboarding.)
