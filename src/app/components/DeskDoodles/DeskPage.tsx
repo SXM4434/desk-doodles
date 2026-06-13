@@ -663,6 +663,11 @@ export function DeskPage() {
   // are ignored until that publish settles (success or permanent failure),
   // so one Done mints exactly one object + one row.
   const inFlightPublishRef = useRef<Set<string>>(new Set());
+  // DESK-MOVE FIX (2026-06-13): a drag that lands DURING the optimistic-add
+  // window (before the publish resolves a dbId) has nowhere to persist yet —
+  // queue the resting position by LOCAL id here; the publish .then flushes it
+  // once the dbId attaches, so the move is never silently dropped.
+  const pendingMoveRef = useRef<Map<string, { x: number; y: number; rotation: number }>>(new Map());
   // PUBLISH RETRY timers (UX-audit fix 3) — per-object so unmount cancels
   // every pending backoff instead of letting a late retry fire into a
   // torn-down page.
@@ -862,7 +867,7 @@ export function DeskPage() {
   // Used on mount, when ?desk switches the view, and when a publish spawns a
   // fresh desk. Replaces the previous desk subscription so realtime stays
   // scoped to THE desk on screen, not the whole world.
-  const loadDeskView = useCallback((target: DeskRow) => {
+  const loadDeskView = useCallback((target: DeskRow, preserve?: DeskObject) => {
     const token = ++loadTokenRef.current;
     setFeedStatus('loading');
     // Tear down any prior per-desk subscription before swapping the view.
@@ -879,7 +884,15 @@ export function DeskPage() {
         // paint in DOM order), so reverse the newest-first feed to
         // oldest-first — the most recent doodle paints highest, and realtime
         // arrivals / fresh publishes (appended) keep landing on top.
-        setObjects(rows.map(rowToObject).reverse());
+        const mapped = rows.map(rowToObject).reverse();
+        // DESK-MOVE FIX (2026-06-13): keep the just-placed object if the feed
+        // hasn't surfaced it yet (the read-after-write race that made a placed
+        // doodle vanish on the post-publish repaint). Newest = top, so the
+        // preserved object pushes to the end (paints highest).
+        if (preserve?.dbId && !mapped.some((o) => o.dbId === preserve.dbId)) {
+          mapped.push(preserve);
+        }
+        setObjects(mapped);
         setFeedStatus('live');
       })
       .catch(() => {
@@ -1106,7 +1119,40 @@ export function DeskPage() {
   );
 
   /** Fit = the full desk: zoom 100%, pan 0 (also ⌘/Ctrl+0). */
-  const resetCamera = useCallback(() => setCamera(() => CAMERA_HOME), [setCamera]);
+  // FIT-TO-CONTENT (2026-06-13): "Fit the full desk" frames the actual objects,
+  // not a fixed home. Compute the objects' bbox (each is a canonical ~180px
+  // footprint at its x/y origin), pick the uniform zoom limited by the most-
+  // constraining axis (aspect preserved, clamped to ZOOM_MIN/MAX), and pan so
+  // the bbox center lands at the viewport center (screen = desk·zoom + pan).
+  // Empty desk / unmeasured viewport / non-finite bbox → safe CAMERA_HOME.
+  const resetCamera = useCallback(() => {
+    const objs = objectsRef.current;
+    const deskEl = deskRef.current;
+    if (objs.length === 0 || !deskEl) {
+      setCamera(() => CAMERA_HOME);
+      return;
+    }
+    const FOOTPRINT = 180; // normalizeSvgSize add-boundary box
+    const PAD = 80;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const o of objs) {
+      if (!Number.isFinite(o.x) || !Number.isFinite(o.y)) continue;
+      minX = Math.min(minX, o.x);
+      minY = Math.min(minY, o.y);
+      maxX = Math.max(maxX, o.x + FOOTPRINT);
+      maxY = Math.max(maxY, o.y + FOOTPRINT);
+    }
+    const rect = deskEl.getBoundingClientRect();
+    const vpW = rect.width, vpH = rect.height;
+    const bboxW = maxX - minX + PAD * 2, bboxH = maxY - minY + PAD * 2;
+    if (!Number.isFinite(minX) || vpW <= 0 || vpH <= 0 || bboxW <= 0 || bboxH <= 0) {
+      setCamera(() => CAMERA_HOME);
+      return;
+    }
+    const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(vpW / bboxW, vpH / bboxH)));
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    setCamera(() => ({ zoom, panX: vpW / 2 - cx * zoom, panY: vpH / 2 - cy * zoom }));
+  }, [setCamera]);
 
   // Wheel/trackpad camera input — native non-passive listener (React's onWheel
   // can't reliably preventDefault browser pinch-zoom/overscroll). Pinch
@@ -1350,6 +1396,16 @@ export function DeskPage() {
             settle();
             // The record exists now — the drawer index gains a row (#29).
             bumpDrawer();
+            // DESK-MOVE FIX (2026-06-13): a drag may have landed during the
+            // optimistic-add window (before dbId). Flush the queued move now the
+            // row id exists, and use the dragged resting position as truth so the
+            // patch/repaint below never snaps it back to the add-point.
+            const queued = pendingMoveRef.current.get(id);
+            if (queued) pendingMoveRef.current.delete(id);
+            const restX = queued ? queued.x : x;
+            const restY = queued ? queued.y : y;
+            const restRot = queued ? queued.rotation : rotation;
+            if (queued) updateDoodlePosition(row.id, restX, restY, restRot).catch(() => {});
             // The desk this object actually landed on (when v2 is live).
             if (landedDesk) {
               const spawnedFresh = openDeskId != null && landedDesk.id !== openDeskId;
@@ -1362,7 +1418,20 @@ export function DeskPage() {
                 // Either we were viewing a closed past desk (add routes to open),
                 // or the desk just filled + spawned — show the now-open desk.
                 if (spawnedFresh) announceFreshDesk(landedDesk.name);
-                loadDeskView(landedDesk);
+                // Pass the just-placed object (resolved dbId + resting position)
+                // so loadDeskView keeps it on screen even when the fresh insert
+                // hasn't surfaced in the feed yet — without this it vanishes.
+                const placed: DeskObject = {
+                  id,
+                  dbId: row.id,
+                  svgMarkup,
+                  x: restX,
+                  y: restY,
+                  rotation: restRot,
+                  ownerSession: getSessionId(),
+                  createdAt: row.created_at ?? null,
+                };
+                loadDeskView(landedDesk, placed);
                 return; // loadDeskView repaints; skip the local dbId patch.
               }
             }
@@ -1375,6 +1444,13 @@ export function DeskPage() {
                   ? {
                       ...o,
                       dbId: row.id,
+                      // Apply the queued resting position so a drag-before-publish
+                      // survives the patch; with no queued move, keep the object's
+                      // CURRENT live coords (a still-in-progress drag is never
+                      // snapped back — queued is only set on pointerUp).
+                      x: queued ? restX : o.x,
+                      y: queued ? restY : o.y,
+                      rotation: queued ? restRot : o.rotation,
                       createdAt: row.created_at ?? o.createdAt,
                       saveState: undefined,
                     }
@@ -1578,11 +1654,18 @@ export function DeskPage() {
             );
           }
           setActiveSurface({ mode: press.mine ? 'edit' : 'sandbox', objectId: obj.id });
-        } else if (press.mine && obj?.dbId) {
+        } else if (press.mine && obj) {
           // A real drag of YOUR object → persist the resting position
           // (session-scoped). Foreign presses never reach here as drags —
           // they already played the nudge and the object never moved.
-          updateDoodlePosition(obj.dbId, obj.x, obj.y, obj.rotation).catch(() => {});
+          if (obj.dbId) {
+            updateDoodlePosition(obj.dbId, obj.x, obj.y, obj.rotation).catch(() => {});
+          } else {
+            // DESK-MOVE FIX: insert hasn't resolved yet (drag during the
+            // optimistic-add window) — QUEUE by local id; addObject's publish
+            // .then flushes it once the dbId attaches, so the move isn't lost.
+            pendingMoveRef.current.set(obj.id, { x: obj.x, y: obj.y, rotation: obj.rotation });
+          }
         }
       }
       setDraggingId(null);
