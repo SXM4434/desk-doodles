@@ -55,6 +55,64 @@ function nearClosedCircle(cx, cy, r, n, gapPx) {
   return arc(cx, cy, r, 0, total, n);
 }
 
+// p-point STAR outline (alternating outer/inner radius), sampled along edges.
+function star(cx, cy, rOut, rIn, points, perEdge, rot = -Math.PI / 2, jit = 0) {
+  const tips = [];
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? rOut : rIn;
+    const a = rot + (i / (points * 2)) * TAU;
+    tips.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  const out = [];
+  const m = tips.length;
+  for (let s = 0; s < m; s++) {
+    const A = tips[s];
+    const B = tips[(s + 1) % m];
+    for (let t = 0; t < perEdge; t++) {
+      const u = t / perEdge;
+      const j = jit ? Math.sin((s * perEdge + t) * 1.9) * jit : 0;
+      const nx = -(B[1] - A[1]);
+      const ny = B[0] - A[0];
+      const nl = Math.hypot(nx, ny) || 1;
+      out.push([A[0] + (B[0] - A[0]) * u + (nx / nl) * j, A[1] + (B[1] - A[1]) * u + (ny / nl) * j]);
+    }
+  }
+  out.push([...tips[0]]);
+  return out;
+}
+
+// Sample a vertex chain (open) at perEdge points per edge.
+function chain(verts, perEdge) {
+  const out = [];
+  for (let s = 0; s + 1 < verts.length; s++) {
+    const A = verts[s];
+    const B = verts[s + 1];
+    for (let t = 0; t < perEdge; t++) {
+      const u = t / perEdge;
+      out.push([A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u]);
+    }
+  }
+  out.push([...verts[verts.length - 1]]);
+  return out;
+}
+
+// V-head ARROW: shaft tail→tip, then two barbs folding BACK off the shaft by
+// `spreadDeg` (a real arrowhead ≈30-40°). Single-stroke chain tail→tip→barbA→barbB.
+function arrowV(tail, tip, barbLen, spreadDeg, perEdge) {
+  const rot = (vx, vy, a) => [vx * Math.cos(a) - vy * Math.sin(a), vx * Math.sin(a) + vy * Math.cos(a)];
+  const dx = tip[0] - tail[0];
+  const dy = tip[1] - tail[1];
+  const dl = Math.hypot(dx, dy) || 1;
+  const ux = dx / dl;
+  const uy = dy / dl;
+  const ang = (spreadDeg * Math.PI) / 180;
+  const [b1x, b1y] = rot(-ux, -uy, ang);
+  const [b2x, b2y] = rot(-ux, -uy, -ang);
+  const barbA = [tip[0] + b1x * barbLen, tip[1] + b1y * barbLen];
+  const barbB = [tip[0] + b2x * barbLen, tip[1] + b2y * barbLen];
+  return chain([tail, tip, barbA, barbB], perEdge);
+}
+
 const FIXTURES = [
   {
     id: 1,
@@ -141,6 +199,70 @@ const FIXTURES = [
     build: () => nearClosedCircle(200, 200, 80, 60, 16),
     golden: { accepted: true, best: 'circle', closure: 'treated-as-closed', weld: true },
   },
+  // ─── Bug-1 regression: clean rect / triangle must beat generic polygon ──────
+  {
+    id: 11,
+    name: 'wide-rect-not-polygon',
+    action: 'snap',
+    // Wide axis-aligned rect — used to read as Polygon (4); must snap Rectangle.
+    build: () => poly([[40, 80], [320, 82], [318, 150], [42, 148]], 25, true, 1.2),
+    golden: { accepted: true, best: 'rect', chipIncludes: ['rect', 'polygon', 'original'] },
+  },
+  {
+    id: 12,
+    name: 'rotated-rect-not-polygon',
+    action: 'snap',
+    // 45° diamond (rotated square) — regularization used to inflate + lose to
+    // polygon; circular-mean axis + mean-projection extents fix it.
+    build: () => poly([[150, 60], [260, 150], [150, 260], [40, 150]], 22, true, 0.7),
+    golden: { accepted: true, best: 'rect', chipIncludes: ['rect', 'original'] },
+  },
+  // ─── Bug-2: STAR recognizer ─────────────────────────────────────────────────
+  {
+    id: 13,
+    name: 'five-point-star',
+    action: 'snap',
+    build: () => star(200, 200, 100, 42, 5, 8, -Math.PI / 2, 0),
+    golden: { accepted: true, best: 'star', chipIncludes: ['star', 'original'] },
+  },
+  {
+    id: '13b',
+    name: 'star-jittered',
+    action: 'snap',
+    build: () => star(200, 200, 100, 42, 5, 8, -Math.PI / 2, 2.5),
+    golden: { accepted: true, best: 'star', chipIncludes: ['star', 'original'] },
+  },
+  {
+    id: 14,
+    name: 'convex-pentagon-not-star',
+    action: 'snap',
+    // A CONVEX pentagon has zero concave notches → must NOT read as star.
+    build: () => poly([[200, 60], [330, 160], [280, 300], [120, 300], [70, 160]], 12, true, 1),
+    golden: { accepted: true, chipExcludes: ['star'] },
+  },
+  // ─── Bug-2: ARROW recognizer (shaft + V head) ───────────────────────────────
+  {
+    id: 15,
+    name: 'arrow-vhead',
+    action: 'snap',
+    build: () => arrowV([60, 200], [300, 200], 50, 35, 18),
+    golden: { accepted: true, best: 'arrow', chipIncludes: ['arrow', 'original'] },
+  },
+  {
+    id: '15b',
+    name: 'arrow-diagonal',
+    action: 'snap',
+    build: () => arrowV([60, 260], [280, 80], 55, 35, 18),
+    golden: { accepted: true, best: 'arrow', chipIncludes: ['arrow', 'original'] },
+  },
+  {
+    id: 16,
+    name: 'zigzag-not-arrow',
+    action: 'snap',
+    // 4-segment W — no dominant shaft → must NOT read as arrow.
+    build: () => poly([[40, 200], [120, 80], [200, 200], [280, 80], [360, 200]], 14, false, 0),
+    golden: { accepted: true, best: 'polyline', chipExcludes: ['arrow'] },
+  },
 ];
 
 // ─── Run + gate ──────────────────────────────────────────────────────────────
@@ -163,6 +285,9 @@ for (const f of FIXTURES) {
   }
   if (g.chipIncludes) {
     for (const k of g.chipIncludes) if (!chip.includes(k)) problems.push(`chip missing ${k}`);
+  }
+  if (g.chipExcludes) {
+    for (const k of g.chipExcludes) if (chip.includes(k)) problems.push(`chip should EXCLUDE ${k}`);
   }
   if (g.chipFirstNot && chip[0] === g.chipFirstNot) problems.push(`chip[0] should NOT be ${g.chipFirstNot}`);
   if (g.closure) {

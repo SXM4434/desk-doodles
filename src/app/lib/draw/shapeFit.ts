@@ -90,6 +90,41 @@ export const RECT_ANGLE_TOL_DEG = 22;
 export const SQUARE_ASPECT_TOL = 1.18;
 /** Equilateral-triangle chip variant offered when the side CV is below this. */
 export const EQUILATERAL_CV_MAX = 0.14;
+/** Collinear / turn-angle MERGE: after corner detection, a "corner" whose
+ *  interior turn is below this many degrees is a false split on a straight run
+ *  (the over-segmentation that made a clean rect read as Polygon (5/6) — bug 1).
+ *  We fold it back into the edge. 18° is below a real polygon vertex's turn yet
+ *  above hand-jitter on a straight edge. [PaleoSketch DCR / merge-collinear]. */
+export const COLLINEAR_MERGE_TURN_DEG = 18;
+/** Regularization PREFERENCE (PaleoSketch interpretation-priority): a rect or
+ *  triangle that CLEARS its geometric gate is the higher-value read the user
+ *  wants — it should beat the generic polygon even when the regularized fit's
+ *  RMS error is marginally higher than the raw drawn-corner polygon's. We let
+ *  the template win whenever its normErr ≤ polygon.normErr × this. */
+export const TEMPLATE_OVER_POLYGON_ERR_MULT = 2.4;
+/** STAR (regular {p/q}) recognition: a star alternates convex/concave vertices.
+ *  A clean 5-point star has 10 corners; we accept this many ± the slop below.
+ *  [Star-polygon turning-number theory]. */
+export const STAR_MIN_POINTS = 5;
+export const STAR_MAX_POINTS = 9;
+/** Star concavity: the fraction of vertices that must be CONCAVE (turn sign
+ *  opposite the loop's overall winding) to read as a star — a real star
+ *  alternates, so ~half are concave. Floor a touch below 0.5 for slop. */
+export const STAR_MIN_CONCAVE_FRAC = 0.34;
+/** ARROW recognition (geometry-based shaft + V-head decomposition): an arrow is
+ *  an OPEN corner-chain whose leading run is one dominant near-straight SHAFT and
+ *  whose trailing 1-2 short segments fold back as the head. The total shaft
+ *  length must be at least this multiple of the LONGEST single barb segment (so a
+ *  zigzag of equal-length segments — no dominant shaft — is rejected). */
+export const ARROW_SHAFT_HEAD_RATIO = 1.8;
+/** The arrowhead barbs turn back toward the shaft by at least this many degrees
+ *  from the shaft direction (a real arrowhead opens 20-70° off the shaft, so the
+ *  barb–shaft angle is large). Floor that the head clearly diverges. */
+export const ARROW_HEAD_MIN_TURN_DEG = 22;
+/** Arrow needs at least this many corners total (shaft endpoints + 1-2 head
+ *  vertices) and at most this many (more = it's a polyline, not an arrow). */
+export const ARROW_MIN_CORNERS = 4;
+export const ARROW_MAX_CORNERS = 6;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -101,6 +136,8 @@ export type ShapeKind =
   | 'polygon'
   | 'triangle'
   | 'rect'
+  | 'star'
+  | 'arrow'
   | 'circle'
   | 'ellipse'
   | 'original';
@@ -428,6 +465,44 @@ export function detectCorners(sig: SnapSignals): number[] {
     merged.push(c);
   }
   corners = merged;
+  // COLLINEAR / NEAR-STRAIGHT MERGE (bug 1): a "corner" whose interior turn is
+  // below COLLINEAR_MERGE_TURN_DEG is a false split on a straight edge — drop it
+  // so a clean rect yields exactly 4 corners and a triangle 3 (was reading as
+  // Polygon (5/6) when hand-jitter spawned a mid-edge corner). The turn is
+  // measured against the ADJACENT corners (the actual edge directions), not a
+  // fixed ±W window, so a corner mid-way down a long straight edge is correctly
+  // seen as flat. Endpoints of open chains aren't in `corners` yet (added
+  // below), so they're never merged. [PaleoSketch merge-collinear / DCR.]
+  if (corners.length >= 3) {
+    let changed = true;
+    while (changed && corners.length >= 3) {
+      changed = false;
+      // For closed loops every corner has two neighbours (cyclic). For open
+      // strokes the true endpoints aren't here yet, so the chain's first/last
+      // detected corner only has one interior neighbour — skip those (we can't
+      // judge their turn without the framing endpoints, and they're rarely
+      // false splits). Walk and drop the flattest sub-threshold corner.
+      let flattestIdx = -1;
+      let flattestTurn = COLLINEAR_MERGE_TURN_DEG;
+      const m = corners.length;
+      for (let k = 0; k < m; k++) {
+        const isEdgeOpen = !closed && (k === 0 || k === m - 1);
+        if (isEdgeOpen) continue;
+        const prev = closed ? corners[(k - 1 + m) % m] : corners[k - 1];
+        const here = corners[k];
+        const next = closed ? corners[(k + 1) % m] : corners[k + 1];
+        const turn = cornerTurnDeg(pts, prev, here, next);
+        if (turn < flattestTurn) {
+          flattestTurn = turn;
+          flattestIdx = k;
+        }
+      }
+      if (flattestIdx >= 0) {
+        corners.splice(flattestIdx, 1);
+        changed = true;
+      }
+    }
+  }
   // Closed: also fold a corner near the seam (index ~0 and ~n) into one.
   if (closed && corners.length >= 2) {
     const lo = corners[0];
@@ -441,6 +516,19 @@ export function detectCorners(sig: SnapSignals): number[] {
     if (corners[corners.length - 1] !== n - 1) corners.push(n - 1);
   }
   return corners;
+}
+
+/** Turn angle (deg) at corner index `here`, measured from the EDGE arriving
+ *  from corner `prev` to the EDGE leaving toward corner `next`. Unlike
+ *  interiorTurnDeg this uses the actual neighbouring CORNERS (the real edge
+ *  directions), so a corner sitting mid-way along a long straight edge reads as
+ *  flat (~0°) — that's what the collinear merge keys on. */
+function cornerTurnDeg(pts: FitPoint[], prev: number, here: number, next: number): number {
+  const a = pts[prev], b = pts[here], c = pts[next];
+  const ax = b[0] - a[0], ay = b[1] - a[1];
+  const bx = c[0] - b[0], by = c[1] - b[1];
+  const ang = Math.atan2(Math.abs(ax * by - ay * bx), ax * bx + ay * by);
+  return (ang * 180) / Math.PI;
 }
 
 function interiorTurnDeg(pts: FitPoint[], i: number, w: number, cyclic = false): number {
@@ -566,23 +654,40 @@ function fitRect(sig: SnapSignals, loopVerts: FitPoint[]): ShapeCandidate | null
     maxDev = Math.max(maxDev, Math.abs(ang - 90));
   }
   if (maxDev > RECT_ANGLE_TOL_DEG) return null;
-  // Regularize: principal axis = mean of the two edge directions; build an
-  // oriented rect from the centroid + half-extents along that axis.
+  // Regularize: principal axis from a CIRCULAR MEAN over ALL FOUR edge
+  // directions mod 90° (was a fragile 2-edge fold that produced a badly tilted
+  // axis on ROTATED rects — the diamond that read as Polygon (4), bug 1). Each
+  // edge angle is taken mod 90° (a rect's four edges fall into two perpendicular
+  // families = one axis mod 90°); to average angles on a circle without
+  // wraparound we accumulate the DOUBLED-by-4 angle (period 90° → full 360°),
+  // mean the unit vectors, then divide back by 4. [Constraint inference,
+  // Igarashi '97; circular statistics.]
   const cx = loopVerts.reduce((a, p) => a + p[0], 0) / 4;
   const cy = loopVerts.reduce((a, p) => a + p[1], 0) / 4;
-  // Edge directions 0→1 and 3→0 (two perpendicular families); average their
-  // angle mod 90° for a stable principal axis.
-  const e1 = Math.atan2(loopVerts[1][1] - loopVerts[0][1], loopVerts[1][0] - loopVerts[0][0]);
-  const e2 = Math.atan2(loopVerts[0][1] - loopVerts[3][1], loopVerts[0][0] - loopVerts[3][0]);
-  const axis = (e1 + (e2 - Math.PI / 2)) / 2; // bring e2 into e1's family
+  let sumSin = 0, sumCos = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = loopVerts[i];
+    const b = loopVerts[(i + 1) % 4];
+    const theta = Math.atan2(b[1] - a[1], b[0] - a[0]); // edge direction
+    sumSin += Math.sin(4 * theta);
+    sumCos += Math.cos(4 * theta);
+  }
+  const axis = Math.atan2(sumSin, sumCos) / 4; // principal axis mod 90°
   const ux = Math.cos(axis), uy = Math.sin(axis);
   const vx = -uy, vy = ux;
-  // Half-extents = max projection onto each axis.
+  // Half-extents = MEAN |projection| of the 4 corners onto each axis. For a true
+  // rect every corner projects to exactly (±halfU, ±halfV), so the mean recovers
+  // the half-extent exactly. (max over-inflated the rect on ROTATED inputs — a
+  // 45° diamond's corners each project onto BOTH axes, so max grabbed a diagonal
+  // and built a rect larger than the drawn shape — the residual blew up and the
+  // template lost to polygon, bug 1.)
   let halfU = 0, halfV = 0;
   for (const p of loopVerts) {
-    halfU = Math.max(halfU, Math.abs((p[0] - cx) * ux + (p[1] - cy) * uy));
-    halfV = Math.max(halfV, Math.abs((p[0] - cx) * vx + (p[1] - cy) * vy));
+    halfU += Math.abs((p[0] - cx) * ux + (p[1] - cy) * uy);
+    halfV += Math.abs((p[0] - cx) * vx + (p[1] - cy) * vy);
   }
+  halfU /= 4;
+  halfV /= 4;
   const corners: FitPoint[] = [
     [cx + ux * halfU + vx * halfV, cy + uy * halfU + vy * halfV],
     [cx - ux * halfU + vx * halfV, cy - uy * halfU + vy * halfV],
@@ -601,6 +706,181 @@ function fitRect(sig: SnapSignals, loopVerts: FitPoint[]): ShapeCandidate | null
     label: 'Rectangle',
     notes: ratio <= SQUARE_ASPECT_TOL ? 'square-eligible' : undefined,
   };
+}
+
+/** STAR — a simple (non-self-intersecting) star OUTLINE is a concave 2p-gon
+ *  whose vertices ALTERNATE convex tip / concave notch. That alternation is the
+ *  robust discriminant — NOT total turning (a drawn star outline winds just once,
+ *  |turnSum| ≈ 2π, same as any simple loop; the self-intersecting {p/q}
+ *  turning-number only applies to a pentagram drawn as crossing lines, which our
+ *  closure/corner pipeline never yields). We read the closed corner loop:
+ *  require 2p corners (p = STAR_MIN_POINTS..STAR_MAX_POINTS), a near-even split
+ *  of convex/concave vertices (≥ STAR_MIN_CONCAVE_FRAC concave), and a high
+ *  sign-flip count around the loop (true alternation, not a lumpy blob). The
+ *  concave vertices are the star's notches; a convex polygon has ZERO, cleanly
+ *  separating star from triangle/rect/polygon. Residual = points-to-loop on the
+ *  drawn vertices (no template regularization — drawn proportions kept; the
+ *  chip's "Star" label is the win). [Star-polygon vertex theory; convex/concave
+ *  vertex classification by cross-product sign.] */
+function fitStar(sig: SnapSignals, loopVerts: FitPoint[]): ShapeCandidate | null {
+  const m = loopVerts.length;
+  // A p-point star outline has exactly 2p corners. Accept the even counts in
+  // range (and 2p±1 slop in case the seam folds one corner).
+  if (m < STAR_MIN_POINTS * 2 - 1 || m > STAR_MAX_POINTS * 2) return null;
+  // Winding sign from total turning (the outline loops once — sign is stable).
+  const winding = Math.sign(sig.turnSum) || 1;
+  let concave = 0;
+  let convex = 0;
+  let signFlips = 0;
+  let prevSign = 0;
+  for (let i = 0; i < m; i++) {
+    const a = loopVerts[(i - 1 + m) % m];
+    const b = loopVerts[i];
+    const c = loopVerts[(i + 1) % m];
+    const ax = b[0] - a[0], ay = b[1] - a[1];
+    const bx = c[0] - b[0], by = c[1] - b[1];
+    const cross = ax * by - ay * bx;
+    const s = Math.sign(cross);
+    // A vertex turning OPPOSITE the overall winding is concave (a star's inner
+    // notch); turning WITH the winding is a convex tip.
+    if (s !== 0 && s !== winding) concave++;
+    else if (s === winding) convex++;
+    if (s !== 0) {
+      if (prevSign !== 0 && s !== prevSign) signFlips++;
+      prevSign = s;
+    }
+  }
+  const concaveFrac = concave / m;
+  // A star needs real notches AND real tips, in near-balance, and a high flip
+  // count (true alternation). A convex polygon has concave = 0 → rejected here.
+  if (concaveFrac < STAR_MIN_CONCAVE_FRAC) return null;
+  if (convex < STAR_MIN_POINTS - 1) return null;
+  // Alternation: ≥ (2p − 2) sign flips means the tip/notch pattern truly
+  // alternates (a 5-point star has 10 vertices → 10 flips around the loop, 9 if
+  // the seam doesn't flip). Floor at STAR_MIN_POINTS × 2 − 2.
+  if (signFlips < STAR_MIN_POINTS * 2 - 2) return null;
+  const base = fitPolygon(sig, loopVerts);
+  if (!base) return null;
+  const pointCount = Math.round(m / 2);
+  return {
+    kind: 'star',
+    points: loopVerts,
+    normErr: base.normErr,
+    score: 1 - base.normErr,
+    closed: true,
+    label: 'Star',
+    notes: `points=${pointCount} concave=${concave} convex=${convex} flips=${signFlips}`,
+  };
+}
+
+/** ARROW — geometry-based shaft + V-head decomposition (the standard sketch-
+ *  recognition arrow read). An arrow is an OPEN corner-chain: one DOMINANT shaft
+ *  segment, then 1-2 short segments that fold back as the head. We test the
+ *  trailing end (the natural draw order: shaft first, head last) AND the leading
+ *  end (head-first draw), and keep whichever decomposes. The shaft must be
+ *  ≥ ARROW_SHAFT_HEAD_RATIO × the mean head-segment length, and each head barb
+ *  must diverge ≥ ARROW_HEAD_MIN_TURN_DEG from the shaft direction. The emitted
+ *  geometry KEEPS the drawn shaft + barbs (no symmetric template — proportions
+ *  honored, like polyline). */
+function fitArrow(sig: SnapSignals, corners: number[]): ShapeCandidate | null {
+  const m = corners.length;
+  if (m < ARROW_MIN_CORNERS || m > ARROW_MAX_CORNERS) return null;
+  const pts = sig.resampled;
+  const verts = corners.map((c) => pts[c]);
+  // Segment lengths + unit directions along the open chain.
+  const segLen: number[] = [];
+  const segDir: FitPoint[] = [];
+  for (let i = 0; i + 1 < verts.length; i++) {
+    const dx = verts[i + 1][0] - verts[i][0];
+    const dy = verts[i + 1][1] - verts[i][1];
+    const l = Math.hypot(dx, dy) || 1;
+    segLen.push(l);
+    segDir.push([dx / l, dy / l]);
+  }
+  const nSeg = segLen.length;
+  if (nSeg < 3) return null;
+
+  // Try both orientations: head at the END (shaft = leading segments) and head
+  // at the START (shaft = trailing segments). Pick the better-scoring valid one.
+  const tryDecomp = (headAtEnd: boolean): ShapeCandidate | null => {
+    // Head = the last 2 segments (end) or first 2 (start). The barbs are the
+    // head endpoints relative to the tip (shaft/head junction).
+    const headSegIdx = headAtEnd ? [nSeg - 2, nSeg - 1] : [0, 1];
+    const shaftSegIdx: number[] = [];
+    for (let i = 0; i < nSeg; i++) if (!headSegIdx.includes(i)) shaftSegIdx.push(i);
+    if (shaftSegIdx.length < 1) return null;
+
+    // THE SHAFT IS ONE DOMINANT STRAIGHT RUN. (1) Its segments must be nearly
+    // collinear — consecutive shaft directions agree within the merge tolerance
+    // (a zigzag's "shaft" bends hard → rejected). (2) The total shaft length
+    // must dominate the LONGEST single barb segment by ARROW_SHAFT_HEAD_RATIO
+    // (a zigzag's segments are all ~equal → no dominance → rejected).
+    for (let k = 1; k < shaftSegIdx.length; k++) {
+      const a = segDir[shaftSegIdx[k - 1]];
+      const b = segDir[shaftSegIdx[k]];
+      const cos = a[0] * b[0] + a[1] * b[1];
+      const turnDeg = (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+      if (turnDeg > COLLINEAR_MERGE_TURN_DEG * 1.6) return null; // shaft bends → not an arrow
+    }
+    const shaftLen = shaftSegIdx.reduce((a, i) => a + segLen[i], 0);
+    const longestBarb = Math.max(...headSegIdx.map((i) => segLen[i]));
+    if (longestBarb < 1e-6) return null;
+    if (shaftLen < ARROW_SHAFT_HEAD_RATIO * longestBarb) return null;
+    // Tip = shaft/head junction vertex; shaft direction = junction − shaft start.
+    const tipIdx = headAtEnd ? nSeg - 2 : 2;
+    const tip = verts[tipIdx];
+    const shaftStart = headAtEnd ? verts[0] : verts[verts.length - 1];
+    const sx = tip[0] - shaftStart[0], sy = tip[1] - shaftStart[1];
+    const sl = Math.hypot(sx, sy) || 1;
+    // Both head endpoints (the two barb tips) must fold BACK from the shaft.
+    const barbEnds = headAtEnd ? [verts[nSeg - 1], verts[nSeg]] : [verts[1], verts[0]];
+    let barbsOk = true;
+    let minBarbTurn = Infinity;
+    for (const end of barbEnds) {
+      const bx = end[0] - tip[0], by = end[1] - tip[1];
+      const bl = Math.hypot(bx, by) || 1;
+      const cosA = (sx * bx + sy * by) / (sl * bl);
+      const turnDeg = (Math.acos(Math.max(-1, Math.min(1, cosA))) * 180) / Math.PI;
+      // The incoming shaft heads toward the tip; a real barb leaves the tip
+      // folding back (the barb–shaft angle is large → foldDeg large). Both barbs
+      // must fold, and they should sit on OPPOSITE sides (a V), which the
+      // residual + the two-barb requirement together enforce.
+      const foldDeg = 180 - turnDeg;
+      if (foldDeg < ARROW_HEAD_MIN_TURN_DEG) barbsOk = false;
+      minBarbTurn = Math.min(minBarbTurn, foldDeg);
+    }
+    if (!barbsOk) return null;
+    // The two barbs must straddle the shaft (one each side) — a V-head, not two
+    // barbs on the same side (which would be a hook/zigzag). Cross-products of
+    // the shaft direction with each barb direction must have OPPOSITE signs.
+    const cross = (ex: number, ey: number) => sx * ey - sy * ex;
+    const b0 = barbEnds[0], b1 = barbEnds[1];
+    const c0 = cross(b0[0] - tip[0], b0[1] - tip[1]);
+    const c1 = cross(b1[0] - tip[0], b1[1] - tip[1]);
+    if (Math.sign(c0) === Math.sign(c1)) return null;
+    // Residual: points to the open shaft+head chain (kept geometry).
+    const residuals: number[] = [];
+    for (let s = 0; s + 1 < corners.length; s++) {
+      const a = pts[corners[s]];
+      const b = pts[corners[s + 1]];
+      for (let k = corners[s]; k <= corners[s + 1]; k++) residuals.push(pointSegDist(pts[k], a, b));
+    }
+    const normErr = normRms(residuals, sig.bboxDiag);
+    return {
+      kind: 'arrow',
+      points: verts,
+      normErr,
+      score: 1 - normErr,
+      closed: false,
+      label: 'Arrow',
+      notes: `shaft/barb=${(shaftLen / longestBarb).toFixed(2)} barbTurn=${minBarbTurn.toFixed(0)}`,
+    };
+  };
+
+  const end = tryDecomp(true);
+  const start = tryDecomp(false);
+  if (end && start) return end.normErr <= start.normErr ? end : start;
+  return end || start;
 }
 
 /** Kåsa algebraic circle fit (linear LSQ) [Chernov/conicfit]. Residual = RMS
@@ -859,15 +1139,20 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
     if (open) {
       candidates.push(fitLine(sig));
       candidates.push(fitPolyline(sig, corners));
+      // Arrow = open shaft + V-head decomposition (more primitives — bug 2).
+      const arrow = fitArrow(sig, corners);
+      if (arrow) candidates.push(arrow);
     } else {
       const loop = closedLoopVertices(sig, corners);
       const tri = fitTriangle(sig, loop);
       const rect = fitRect(sig, loop);
+      const star = fitStar(sig, loop); // closed alternating star (bug 2)
       const circle = fitCircle(sig);
       const ellipse = fitEllipse(sig);
       const poly = fitPolygon(sig, loop);
       if (circle) candidates.push(circle);
       if (ellipse) candidates.push(ellipse);
+      if (star) candidates.push(star);
       if (tri) candidates.push(tri);
       if (rect) candidates.push(rect);
       if (poly) candidates.push(poly);
@@ -882,13 +1167,33 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
     triangle: 2,
     rect: 3,
     ellipse: 4,
-    polygon: 5,
-    polyline: 6,
+    arrow: 5,
+    star: 6,
+    polygon: 7,
+    polyline: 8,
     original: 99,
   };
   for (const c of candidates) {
     const prior = priorOf[c.kind] * COMPLEXITY_PRIOR;
     c.score = 1 - c.normErr - prior;
+  }
+
+  // REGULARIZATION PREFERENCE (bug 1 / PaleoSketch interpretation-priority): a
+  // rect / triangle / star that CLEARED its geometric gate is the higher-value
+  // read the user wants — give it the win over the generic polygon whenever its
+  // (regularized) normErr is within TEMPLATE_OVER_POLYGON_ERR_MULT of the
+  // polygon's raw error. Without this, a clean WIDE or ROTATED rect read as
+  // "Polygon (4)" because the forced-square regularization carries a hair more
+  // RMS than the drawn-corner polygon. We nudge the template's score just above
+  // the polygon's so it ranks first; the polygon stays in the chip to cycle to.
+  const poly = candidates.find((c) => c.kind === 'polygon');
+  if (poly) {
+    for (const tplKind of ['rect', 'triangle', 'star'] as const) {
+      const tpl = candidates.find((c) => c.kind === tplKind);
+      if (tpl && tpl.normErr <= poly.normErr * TEMPLATE_OVER_POLYGON_ERR_MULT) {
+        if (tpl.score <= poly.score) tpl.score = poly.score + COMPLEXITY_PRIOR;
+      }
+    }
   }
 
   // Circle-vs-ellipse preference: a near-round stroke ranks circle first; the
