@@ -6,6 +6,46 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 ---
 
+## ⭐ SESSION STATE — 2026-06-13 (READ THIS FIRST — crucial cross-session facts)
+
+### 🚨 FABLE 5 SUSPENDED — ALL AGENTS RUN ON OPUS NOW
+Anthropic suspended ALL Claude Fable 5 access platform-wide (2026-06-13, US gov export-control directive). Mid-flight Fable agents died with `issue with the selected model (claude-fable-5[1m])`. Session switched to **Opus 4.8 (1M)**. **Launch every agent/workflow with `model:'opus'` (never 'fable').** That error = the suspension, NOT a bug/limit/our-fault. Memory: `feedback_fable_suspended_use_opus.md` (supersedes "use Fable for sub agents"). Restore-check later.
+
+### 🏆 MAKEATHON RULES NOW KNOWN — ELIGIBILITY RESOLVED (full text: docs/submission/makeathon-rules-VERBATIM.md = SOURCE OF TRUTH)
+- Deadline **Jun 18 11:59pm PDT**; winners June 23 at Config. 6 prizes ($50k grand / $15k runner / $10k×3 Innovative-Workflow + Building-with-Purpose + Build-in-Public / $5k Community).
+- **"Made using Figma's suite (Make, MCP, agent, Local, Weave)" — NOT "built in Make".** Our local+MCP+Make-deploy workflow IS eligible, and the hybrid is an ASSET for the **$10k Innovative Workflow** prize (criterion #4 names "Make, MCP, Local, Weave, agent"). Sebs's Make-thinness worry is RESOLVED — lean into the hybrid pipeline honestly; do NOT claim Make-authored-the-app.
+- **REQUIRED to qualify:** video walkthrough (problem+idea+workflow) · live link · **community OR working Figma file link** (⚠️ NEW GAP — we're code-only, need a Figma file/Community post) · **social post #ConfigMakeathon @figma** (required). Bonus +5 social, +5 Figma Community share.
+- Prize bets ranked: Innovative-Workflow (strongest) → Grand/Runner (the wedge demo) → Build-in-Public (docs trail) → Building-with-Purpose (WEAKEST — needs a real-problem narrative or concede) → Community Favorite.
+
+### LANDED THIS SESSION (all committed; ~28 commits unpushed to origin/main — PUSH pending Sebs go)
+- `5df2931` wash-darkness fix (color-mix read as 8% not 100% ink — the Process-print solid-black flood); 279/1394 golden flips ALL wash-region → **needs Sebs v3 re-bless** (rides with the 1 Phase-A recal flip).
+- `905f3ba` F1 shade-brush band-mask rebuild (kills the 3 video glitches: shards/white-caps/dark-stacking) + marker-model accumulation.
+- `497372f` R1-R4 research specs (region-fill, shade-brush, shape-assist, shading-axes).
+- `89efad1` Rock X (arrow rod+chip default, unified decision log, real engine options holes/joint/bevel/wall, Tier-2 family pills).
+- `1eaa853` Rock Y (real Wireframe schematic register).
+- `072abe7` **3D SYMMETRY LAW** (every axis node gets BOTH style + property toggle sets — in 3d-mode-controls-spec.md).
+- `be7aac7` envmap tan-band fix (see below).
+- F2 partial (Brush|Fill|Lasso built, battery PENDING — committed honestly labeled).
+- Knowledge page 16 (shading/fill/shape-assist) + index. Memory index rewritten (was over size limit).
+
+### FLEETS RUNNING (Opus; concurrency cap ~16 = SATURATED, more would just queue)
+1. `wf_633c5c80` relaunch: F2 verify+harden → F3 shape-assist (draw lane) ‖ envmap adversary re-verify → Hatch/Native gap cells (3D lane) ‖ smash.
+2. `wf_cb7e8688` research+sweep: makeathon rules/prizes/Make-framing · submission-gap audit · prize positioning · desk-social regression · 197 2D integrity.
+3. `wf_b556a1f2` heavy break/gap: ALL 197×11 style full matrix · modifier-extreme break-hunt · test-coverage gap map.
+NEXT WAVE (fires on their results, esp. the gap map): full 197×geometry 3D sweep + draw-loop gauntlet (both deferred — files under active edit).
+
+### ⏳ PENDING SEBS EYEBALL/RULING (the one consolidated review when he's back)
+arrow ruling rod-vs-solid (board /tmp/dd-arrow-rule/board.png) · Phase-A A/B board + **golden v3 re-bless** (now includes the 279 wash flips, bug-clean) · Tier-2 family boards (/tmp/dd-tier2/) · F1 preview-opacity 0.55→0.9 · balloon/cushion inflate calibration · Glossy Plastic re-check post-envmap-fix · Hatch grammar board + Native dials (when gap-cells land) · band-7 look policy.
+
+### RATIFIED DESIGN DECISIONS THIS SESSION (don't re-litigate)
+- **"Ink without the ink outline"**: fill regions are DERIVED from ink, not gestured — one pool-raster region brain shared by 2D fill + 3D solids/holes. Bucket+highlight = ONE Fill tool; Lasso = the open-space fallback (auto-closes on release with a LIVE dashed chord preview; degenerate flicks refused). Layered gap forgiveness (free stamp-radius tolerance → scrub rescue → lasso → snap); C-shape NEVER fills (anti-fixture law).
+- **Marker-model accumulation**: re-stroke same band = +1 darker capped at 7; darker replaces lighter; lighter-over-darker ignored; never average.
+- **Shape assist freehand-default LAW**: Snap/Straighten are action VERBS on the last stroke, never modes, never auto-fire; snap stays-a-stroke (replaces points). Vertex editing deferred post-makeathon.
+- **3D SYMMETRY LAW**: geometry and 3D-style are independent axes (neither nests); EACH node carries both discrete style toggles + continuous property sliders. SVG-port works on any geometry. Missing cells (Hatch style rows + Native property dials) = the gap-cells rock in flight. Future 3D nodes (AI Mesh) owe both sets too.
+- **Tone band visibility**: a band may change grammar per style but NEVER render to nothing (sketchy strips tone — must fall back to flat grey wash; SA-2, pending live confirm).
+
+---
+
 ### ENV TAN-BAND FIX LANDED 2026-06-12 — INK-BLACK POLICY VIOLATION KILLED (Stroke3DScene.tsx + NEW tools/3d/material-battery.{html,tsx-harness,mjs}; tsc clean on owned files + build green; 72-cell battery ALL PASS, every board READ)
 1. **THE BUG (round-7 verifier, reproduced before fixing)**: glossy/clearcoat materials mirrored the warm Environment as a broad warm-TAN band — battery baseline measured rgb(146,122,96) Δr−b 50 on Glossy Extrude @315° (verifier saw rgb(142,118,91)); glossy rod/inflate @0° Δ49/Δ50. Root cause: the FS rig port "warmed" the env — bg #8a8174 (mid warm grey) + fill #ffd9b0 (Δ79) re-entered via clearcoat/envmap ×1.8. Specular bypasses albedo, so the ink-black base color never mattered.
 2. **THE FIX (env re-registration, sheen-flood cure family)**: named `STUDIO_ENV` register in Stroke3DScene — env bg → **#211e1a** (dark warm graphite, warm-axis sibling of FS ancestor #15171a — the bg these material params were CALIBRATED against, per git show origin/main viewport-3d.tsx) · fill #ffd9b0 → **#e8e0d4** (whisper-warm Δ20) · key/rim/streak + ALL panel positions/intensities + all material surface params UNTOUCHED (panels keep clearcoat alive — no Day-11 flat-blob regression).
