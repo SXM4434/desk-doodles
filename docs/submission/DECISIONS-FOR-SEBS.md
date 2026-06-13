@@ -1,5 +1,16 @@
 # Decisions waiting on Sebs (the one consolidated package)
 
+## ☀️ TOMORROW — YOUR TASKS (Sebs-side, 2026-06-13 night handoff)
+1. **Add credits to fal + Tripo** (the hard-3D path stays inert until then — local modes carry it; ~Day 14, no rush). Keys → Supabase secrets, never client/Make.
+2. **Golden v3 bless** — I'll have the /audit wall CLEAN first (verified by me); your eyeball = the gate that also flips the 92.7% ML model LIVE.
+3. **Make checkpoint #2** — full current code → Make via the stub-first paste (no Home_1 dup). I'll have the file list + prompt ready.
+4. **The rulings below** (arrow, hook/voice, purpose, video, F1 insurance, wedge reframe vs build, desk-flip — now cheap so lean build).
+5. (Optional) run the **ChatGPT voice-profile prompt** (`chatgpt-voice-profile-prompt.md`) → send me the result to sharpen all copy.
+6. **Push origin/main?** (tied to the Make-repo plan).
+
+---
+
+
 Everything parked for your call, in one place so nothing's forgotten. Grouped: quick rulings → eyeball boards → strategy → submission-narrative taste. Boards/screenshots are at the listed paths. Nothing here blocks the running fleets; these unblock the *final* polish + submission.
 
 ## A. Quick rulings (one-line each)
