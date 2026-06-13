@@ -52,9 +52,29 @@ Sebs worried our Figma Make usage was thin (we built local-canonical and used Ma
 - Our real workflow IS a Figma-suite workflow: **Figma MCP/Local** (the Figma MCP server wired into our AI coding tool — used this whole build) **+ Figma Make** (deploy + live-test checkpoints). That is literally the named "Local + MCP + Make" combination.
 - So the honest framing is also the WINNING framing: a hybrid **Local → MCP → Make** pipeline is exactly the territory the **$10k Innovative Workflow** award rewards. We do NOT hide the local-first workflow — we lean into it as the novel design-to-build pipeline.
 
-**Honest Make-usage framing (true; for video/writeup):**
-- "Built with a Figma MCP + Local + Make workflow — engineered locally with the Figma MCP server in the loop, then deployed and tested live in Figma Make."
-- Do NOT claim the app was authored inside Make's prompt-to-code if it wasn't. The hybrid story is stronger AND true.
+**Make-usage framing — DECIDED DIRECTION (Sebs 2026-06-13): Make-forward, repo-safe.**
+- There IS a Figma Make file/project; the app is **published live through Make** (satisfies the live-link + Make-usage requirements).
+- Frame Make as **home base** (designed-to-code + published) and the **Claude Code CLI as the engineering + automated test-and-break partner**, with Figma MCP/Local wiring design into the build and **Weave** for motion/video/graphics.
+- Recommended line: *"Figma Make is home base — where Desk Doodles is designed-to-code and published live — with a Figma MCP + Local loop and the Claude Code CLI as the engineering + automated test-and-break partner. Designed in Figma, motion and video with Weave."* (Stacks 4 Figma-suite tools = the literal Innovative-Workflow criterion.)
+- ⚠️ **GUARDRAIL (honesty/credibility):** the GitHub repo is PUBLIC for Build-in-Public and its git log shows local Claude Code commits. Do NOT claim Make *authored* what the repo shows the CLI built — a judge cross-check (which Build-in-Public invites) would ding us on workflow-honesty, the exact Build-in-Public axis. The hybrid framing above is Make-forward AND survives the repo. Final wording = Sebs confirms.
+
+## 🎬 VIDEO + GRAPHICS PLAN (Sebs 2026-06-13 — uses Figma + Weave = more criterion-4 footprint)
+- **Submission video** (REQUIRED; scores 2 of 4 categories) — assembled in **Figma + Weave**; covers problem + idea + workflow + emulatable steps.
+- **First-visit intro animation** on the site — "stop-scrolling" hook (Community Favorite) — built in Weave/Figma.
+- **Other graphics** as needed: OG image (public/og-image.png 1200×630), social card, explainer frames.
+- **Claude records the key scenes near end-of-build** (clean screen-recordings of: draw→Sketch|Style flip · the 2D↔3D wedge "hand survives the round-trip" · region-fill · shading) → Sebs takes them into Figma/Weave to assemble. Cut to the video beats.
+- Using Weave also helps the **Figma Community share** bonus (+5) and adds a 5th tool to the suite footprint.
+
+## 🚀 PUBLISH + REPO PLAN (Sebs 2026-06-13 — resolves the credibility guardrail)
+- **Decision:** the public/submission GitHub repo = the **Figma Make version** (so "made in Make" matches what judges see). THIS current local repo stays as the engineering record, reconciled post-makeathon.
+- **Make git constraint:** Figma Make can **PUSH to git but NOT pull.** So it's one-way: drag-drop the current full code INTO Make → Make **pushes** to the public submission repo. Make can't merge our local Claude Code history, so the Make repo should be its own repo/branch (don't point Make's push at a repo with conflicting local history it can't pull/merge).
+- **⚠️ CRITICAL precondition = Make checkpoint #2:** the Make version MUST contain ALL of Round 7/7b/8 (3D system, shading/fill, the wedge) — the last checkpoint was ~Day 9 / 34 files. Do a FULL re-upload of current code to Make FIRST, smoke-test in Make preview, THEN publish + push. Do NOT submit the stale Make file. **STATUS: PENDING (Sebs-side — he runs Make uploads). Claude preps the clean file list + Make-importability re-check + the upload/routing prompt.**
+- This single Make-published version satisfies BOTH required links: **live project link** (Make deploy) + **working project file link** (the Make file / pushed repo).
+
+## 🧩 FREE STROKE = OUR CUSTOM ENGINE (workflow-story asset)
+- Free Stroke is Sebs's own draw→3D geometry engine (rod/extrude/inflate/solid + style-system), ported in as the `geometry3d` lib. Frame it as **"our custom geometry engine"** — NOT a third-party "API" (it's an in-bundle library, his own IP). Calling it a custom engine is both more accurate AND more impressive.
+- It's a genuine wedge + Innovative-Workflow asset: we built our OWN hand-preserving 2D→3D engine instead of a black-box mesh service — which is WHY "the hand survives the round-trip" (Tripo/Meshy/Suzanne strip the artist's signature; our engine keeps the strokes).
+- Dual-path story: **custom Free Stroke engine** (local, hand-preserving, default) + optional **Tripo / fal.ai AI-mesh** (genuine third-party API, the "hard path," point-of-need ~Day 14). Mention both honestly.
 
 **One open verification (low risk):** confirm "made using Figma's suite" is satisfied by MCP/Local usage in judges' eyes — the criteria text strongly implies yes. The deeper positioning lives in the research fleet's docs/submission/makeathon-rules-and-framing.md.
 
