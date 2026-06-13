@@ -72,3 +72,89 @@ It is **not** inserted into the chain yet because of the `fillStyle`-at-runtime
 gate above — wiring should follow a `Signals`-only retrain. The one-line edit
 when ready (index.ts:194):
 `providers = opts.providers ?? [ruleEngineProvider, learnedProvider]`.
+
+---
+
+# v2 — the SIGNALS-ONLY model (the honest, production-wireable retrain)
+
+The v1 above used `fillStyle`, which is **downstream of classification** (a
+treatment output, unknown at classify-time) — so it can't go live as-is. v2
+drops it and trains on the **full classify-time `Signals` vector** captured via
+the production extractor.
+
+## The three re-runnable steps
+
+```bash
+# 1. CAPTURE — render the /audit 197-shape inventory through the REAL providers,
+#    run the PRODUCTION extractAllSignals + hashSvg + ruleEngineProvider verbatim,
+#    dump the full Signals vector per (svgHash, regionPath). Builds + serves an
+#    isolated harness (touches ZERO production code).
+node tools/ml/capture-signals.mjs --serve        # → tools/ml/captured-signals.json
+
+# 2. ENRICH — join the captured signals onto the blessed golden role labels and
+#    UPSERT into datasets/smart-layer.dataset.jsonl (dedupe by exampleId; the
+#    1,394 golden rows are UPDATED in place with the full feature vector).
+#    fillStyle is recorded OUTSIDE `features` (as `fillStyleTreatment`) so it
+#    cannot leak; the old `features.fillStyle` is removed.
+node tools/ml/enrich-dataset.mjs                 # feeds the dataset
+
+# 3. TRAIN — softmax LR on signals-only, leakage-safe shape-grouped split,
+#    metrics on held-out unseen shapes vs the CURRENT rule engine on the SAME
+#    signals.
+node tools/ml/train-region-classifier-signals.mjs --seeds 5   # → datasets/smart-layer.signals.model.json
+```
+
+`lib-signals.mjs` owns the signals-only feature encoding (32 features: 6
+continuous geometric/perceptual + 6 topological + 5 stylistic-binary + stroke-bin
+& tag one-hots). It reuses the proven SGD trainer + metrics + shape-grouped split
+from `lib.mjs`. **fillStyle is excluded by construction** (the encoder reads only
+`ex.features`; fillStyle lives outside it).
+
+## Honest result (32 signals-only features; mean over 5 shape-grouped splits)
+
+| Model (held-out, unseen shapes) | accuracy | macro-F1 |
+|---|---|---|
+| majority-class baseline | 29.0% | 0.074 |
+| **CURRENT rule engine** (same real signals) | **77.5%** | 0.714 |
+| **LEARNED softmax LR (signals-only)** | **92.7%** | **0.881** |
+| (train-set acc, overfit check) | 94.8% | 0.894 |
+| signals + LEAKY fillStyle (ablation, NOT shippable) | 96.3% | 0.920 |
+
+**Beats the rule engine: YES, +15.2 pts** on the same real signals. Train≈test
+(94.8% vs 92.7%) → not overfit. Split disjointness asserted (0 shape overlap).
+
+### Why this is beyond rule-imitation (the skeptical check)
+
+On the **84 held-out HARD cases** (where the current rule engine disagrees with
+the blessed golden label), the model is **90.5% correct** — a pure rule-imitator
+would be ~0% there. On the 284 easy cases (rule == golden) it's 96.5%. So the
+model recovers human-blessed intent the rule engine misses, it doesn't just
+memorize the rules. Top features by |weight|: `enclosesSiblingCount`, `hasFill`,
+`isContained`, `tag=text`, `darknessL` — the same signals the rule clusters use,
+weighted better (`fillOpacity` is NOT a top feature → no soft darkness-proxy
+leak).
+
+## The label-regime caveat (printed + in the artifact — not hidden)
+
+Golden v2 was blessed under the **OLD darkness regime**. The wash-darkness fix
+(`signals.ts` color-mix → 8%) changed `darknessL` on **345/1394** regions AFTER
+blessing. So golden labels are **partly independent** of the current rule engine
+(75.3% full-set agreement). This is why the rule baseline is "only" 77.5% — the
+fix legitimately moved the rule engine away from the old blessed reads. Both the
+learned model and the rule baseline read the SAME current signals; the held-out
+metric is fair. A **golden v3 re-bless** (already pending per SESSION-HANDOFF —
+the 279 wash flips) would tighten both numbers.
+
+## Wiring — FLAGGED FOR THE PENDING QUEUE (not done this phase)
+
+The model beats the rule baseline and all wiring files (`classifier.ts`,
+`index.ts`, `learnedProvider.ts`) are COLD — so wiring is now *permitted*. But
+it is **deliberately deferred to the next phase** (per the retrain task: "Do NOT
+wire yet — the next phase decides wiring"). When wiring is decided:
+1. point `learnedProvider.ts` at `datasets/smart-layer.signals.model.json` +
+   the 32-feature signals-only encoder (it currently loads the v1 3-feature
+   artifact);
+2. `index.ts:194` → `providers = opts.providers ?? [ruleEngineProvider, learnedProvider]`
+   (rules first for provenance + confident cases; learned fills where rules
+   abstain). Before flipping: re-bless golden v3, re-run the regression check
+   (6 representative shape classes) per `feedback_never_declare_fixed_without_regression_check`.
