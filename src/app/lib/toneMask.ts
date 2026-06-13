@@ -538,27 +538,29 @@ function rdp(points: Array<[number, number]>, epsilon: number): Array<[number, n
   return out;
 }
 
-/** One Chaikin corner-cutting pass on a CLOSED loop (mirror of strokeTo3d
- *  chaikinClosed) — rounds the RDP corners so merged patches keep a soft
- *  region read instead of a low-poly facet read. */
-function chaikinClosed(loop: Array<[number, number]>): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let i = 0; i < loop.length; i++) {
-    const [ax, ay] = loop[i];
-    const [bx, by] = loop[(i + 1) % loop.length];
-    out.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25]);
-    out.push([ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]);
-  }
-  return out;
-}
+// (Chaikin corner-cutting was removed from the tone extractor — see the C2
+// conformance note on simplifyLoopToPx: flat tone patches keep crisp drawn
+// corners; rounding turned brushed rectangles into blobs. The 3D Solid
+// pipeline keeps its own chaikinClosed for the soft extruded-mass read.)
 
 /** Simplify a raw marching-squares loop (padded-sample units) and map to
- *  draw-frame px, decimated + rounded for the record. */
+ *  draw-frame px, decimated + rounded for the record.
+ *
+ *  CONFORMANCE (the C2 blob fix): NO Chaikin pass. Chaikin's corner-cutting
+ *  "slices off every corner" (Chaikin 1974) — applied here it turns a brushed
+ *  RECTANGLE into a rounded octagon/blob, so the tone region stops conforming
+ *  to the boundary the user actually painted. RDP already removes the marching-
+ *  squares staircase while keeping crisp corners exactly where the mask has
+ *  them; the 2px tone cells (TONE_CELL_PX) put residual stair steps well below
+ *  the ~3px corner-cut target. Keeping crisp corners is the whole point of a
+ *  region fill — a drawn rectangle must fill as a rectangle. (The Solid 3D
+ *  pipeline keeps Chaikin on purpose — it wants the soft hand-drawn curve read
+ *  on an extruded mass; flat tone patches want the crisp drawn edge.) */
 function simplifyLoopToPx(loop: Array<[number, number]>): [number, number][] {
   const open = [...loop, loop[0]] as Array<[number, number]>;
   const simple = rdp(open, RDP_EPSILON_CELLS);
   simple.pop(); // re-open (closed implicitly)
-  let rounded = simple.length >= 3 ? chaikinClosed(simple) : simple;
+  let rounded = simple;
   while (rounded.length > TONE_MASK_MAX_PTS) {
     rounded = rounded.filter((_, i) => i % 2 === 0);
   }
@@ -674,14 +676,30 @@ export function extractToneFills(grid: ToneMaskGrid): ToneFill[] {
 
   for (let band = 1; band <= 7; band++) {
     if (!present[band]) continue;
-    // Per-band EXACT-equality mask (disjoint regions — one region per area;
-    // a darker blob inside a lighter field reads as the lighter island's
-    // hole + its own island, never overlapping statements), padded by one
-    // empty cell so every contour closes.
+    // Per-band SUPERSET (isoband / nested level-set) mask: cell is IN band N's
+    // region when its value is >= N. This is the canonical marching-squares
+    // "isoband" representation (Wikipedia: Marching squares — filled areas
+    // between isolines / nested level sets): each darker level's region is
+    // strictly CONTAINED by every lighter level's region.
+    //
+    // Why superset, not exact-equality (the C1 carve fix): the grid stores ONE
+    // band per cell, so a darker stroke through a lighter patch OVERWRITES
+    // those cells (stampToneCapsule §3 "darker over lighter → replace"). An
+    // exact-equality mask for the lighter band would then see a darker-shaped
+    // GAP cut through it — fragmenting the continuous lighter patch into
+    // disconnected islands. The superset mask keeps the lighter band's region
+    // WHOLE underneath the darker stroke; the darker band extracts as its own
+    // (smaller, contained) region. The consumer paints ascending by band with
+    // OPAQUE band greys (painter's algorithm — DrawSurface TONE_BAND_HEX +
+    // sortedToneFills), so the darker region simply composites OVER the
+    // unbroken lighter patch — it never carves. Genuine paper voids inside a
+    // region (cells < N that are fully enclosed) still extract as holes via the
+    // containment-depth parity below. Padded by one empty cell so every contour
+    // closes.
     mask.fill(0);
     for (let row = 0; row < h; row++) {
       for (let col = 0; col < w; col++) {
-        if (bands[row * w + col] === band) mask[(row + 1) * pw + (col + 1)] = 1;
+        if (bands[row * w + col] >= band) mask[(row + 1) * pw + (col + 1)] = 1;
       }
     }
     const loops = marchingSquaresLoops(mask, pw, ph).filter(
