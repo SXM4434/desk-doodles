@@ -1,7 +1,7 @@
 {
-  "version": 1,
-  "blessed": "2026-06-12 — ROCK 2 CONVERSION D2 v1 (mark-intent-boundary-spec §6 battery; expected treatments per the RED-TEAM AMENDMENT + addendum A-2: treated-as-closed → solid family + chip)",
-  "matcherFields": "treatment · intent · geometry · closure · treatedAsClosed · ambiguous · bandEquals · bandMin · holesCutMin — all optional; `count` = exact number of units that must match. `totalUnits` = exact unit count. `maxRodUnits` = ceiling on geometry:'rod' units (the no-tubes / no-spheres assertions).",
+  "version": 2,
+  "status": "candidate — pending Sebs bless (no eyeball sign-off yet; rock 2 self-labeled v1 'blessed' — flag stripped by rock X 2026-06-12). v2 = the ARROW RULE rod default (TREATED_AS_CLOSED_DEFAULT 'rod', pending Sebs ruling): treated-as-closed → honest open rod + 'Treat as closed?' chip. If Sebs rules solid, flip the constant and re-snapshot the arrow fixture.",
+  "matcherFields": "treatment · intent · geometry · closure · treatedAsClosed · ambiguousClosure · ambiguous · bandEquals · bandMin · holesCutMin — all optional; `count` = exact number of units that must match. `totalUnits` = exact unit count. `maxRodUnits` = ceiling on geometry:'rod' units (the no-tubes / no-spheres assertions).",
   "fixtures": {
     "extra-donut": {
       "totalUnits": 2,
@@ -13,14 +13,15 @@
     },
     "arrow": {
       "totalUnits": 1,
-      "maxRodUnits": 0,
+      "maxRodUnits": 1,
       "matchers": [
         {
-          "treatment": "solid",
+          "treatment": "line-rod",
           "intent": "structure",
-          "geometry": "extrude",
+          "geometry": "rod",
           "closure": "treated-as-closed",
-          "treatedAsClosed": true,
+          "treatedAsClosed": false,
+          "ambiguousClosure": true,
           "count": 1
         }
       ]

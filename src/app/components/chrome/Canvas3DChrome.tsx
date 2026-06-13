@@ -39,14 +39,21 @@ import {
 } from '../../state/Canvas3DContext';
 import { useF3RoughModifiers } from '../../state/F3RoughModifiersContext';
 import {
+  EXTRUDE_BEVEL_PROFILE_OPTIONS,
+  EXTRUDE_SIDE_WALL_OPTIONS,
   EXTRUDE_SLIDER_SPECS,
   EXTRUDE_TINY_WIDTH,
+  INFLATE_PROFILE_FAMILY_OPTIONS,
   INFLATE_SLIDER_SPECS,
+  ROD_CAP_STYLE_OPTIONS,
+  ROD_JOINT_STYLE_OPTIONS,
   ROD_SLIDER_SPECS,
+  SOLID_EDGE_OPTIONS,
   SOLID_SLIDER_SPECS,
   extrudeBevelAutoDisabled,
   extrudeEffectiveDepth,
   extrudeWidthFromSlider,
+  type FamilyOption3D,
   type Param3DSliderSpec,
 } from '../canvas3d/modeParams';
 import { MATERIAL_PRESET_OPTIONS } from '../canvas3d/materials3d';
@@ -201,6 +208,70 @@ function TogglePills({
             }}
           >
             {v ? 'On' : 'Off'}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Tier-2 family picker — N-option pill row (the discrete "look" choices the
+ *  three-tier amendment slots between the mode dropdown and the sliders).
+ *  Same visual grammar as TogglePills, generalized. */
+function FamilyPills<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: FamilyOption3D<T>[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <span
+        style={{
+          fontFamily: IS,
+          fontSize: 10,
+          fontWeight: 500,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'var(--dir-text-secondary)',
+        }}
+      >
+        {label}
+      </span>
+      <div
+        role="group"
+        aria-label={label}
+        style={{
+          display: 'inline-flex',
+          border: '1px solid var(--dir-border)',
+          borderRadius: 999,
+          overflow: 'hidden',
+        }}
+      >
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={value === o.value}
+            title={o.title}
+            onClick={() => onChange(o.value)}
+            style={{
+              ...PILL,
+              border: 'none',
+              borderRadius: 0,
+              padding: '4px 10px',
+              fontSize: 10,
+              cursor: 'pointer',
+              background: value === o.value ? 'var(--dir-accent)' : 'transparent',
+              color: value === o.value ? 'var(--dir-bg)' : 'var(--dir-text-body)',
+            }}
+          >
+            {o.label}
           </button>
         ))}
       </div>
@@ -390,6 +461,20 @@ export function Canvas3DChrome() {
 
         {geometryMode === 'rod' && (
           <>
+            {/* TIER 2 — rod style families (three-tier amendment), above the
+                Tier-3 sliders. */}
+            <FamilyPills
+              label="Cap"
+              value={modeParams.rod.capStyle}
+              options={ROD_CAP_STYLE_OPTIONS}
+              onChange={(v) => setRodParams({ capStyle: v })}
+            />
+            <FamilyPills
+              label="Joint"
+              value={modeParams.rod.jointStyle}
+              options={ROD_JOINT_STYLE_OPTIONS}
+              onChange={(v) => setRodParams({ jointStyle: v })}
+            />
             <SpecSlider
               spec={ROD_SLIDER_SPECS.radius}
               value={modeParams.rod.radius}
@@ -399,15 +484,9 @@ export function Canvas3DChrome() {
               label="End caps"
               value={modeParams.rod.caps}
               onChange={(v) => setRodParams({ caps: v })}
-              title="Spherical caps inset 0.35×radius along the tangent — rounded ink tip, not a bead"
+              title="Cap geometry at the tube ends (the Cap family picks its shape)"
             />
-            <TogglePills
-              label="Joint blobs"
-              value={modeParams.rod.jointBlobs}
-              onChange={(v) => setRodParams({ jointBlobs: v })}
-              title="Spheres at sharp corners fill the tube's pinch crease — the ink-blob feel"
-            />
-            {modeParams.rod.jointBlobs && (
+            {modeParams.rod.jointStyle === 'blob' && (
               <SpecSlider
                 spec={ROD_SLIDER_SPECS.jointSensitivityDeg}
                 value={modeParams.rod.jointSensitivityDeg}
@@ -419,6 +498,19 @@ export function Canvas3DChrome() {
 
         {geometryMode === 'extrude' && (
           <>
+            {/* TIER 2 — extrude style families. */}
+            <FamilyPills
+              label="Bevel"
+              value={modeParams.extrude.bevelProfile}
+              options={EXTRUDE_BEVEL_PROFILE_OPTIONS}
+              onChange={(v) => setExtrudeParams({ bevelProfile: v })}
+            />
+            <FamilyPills
+              label="Wall"
+              value={modeParams.extrude.sideWall}
+              options={EXTRUDE_SIDE_WALL_OPTIONS}
+              onChange={(v) => setExtrudeParams({ sideWall: v })}
+            />
             <SpecSlider
               spec={EXTRUDE_SLIDER_SPECS.width}
               value={modeParams.extrude.width}
@@ -433,17 +525,11 @@ export function Canvas3DChrome() {
             <p style={{ ...SECTION_NOTE, fontVariantNumeric: 'tabular-nums' }}>
               effective width {effWidth.toFixed(3)}w · depth {effDepth.toFixed(3)}w
             </p>
-            <TogglePills
-              label="Bevel"
-              value={modeParams.extrude.bevel}
-              onChange={(v) => setExtrudeParams({ bevel: v })}
-              title="Rounded extrusion edges (constants, not sliders — FS DEFAULT_EXTRUDE_PARAMS)"
-            />
-            {bevelAutoOff && modeParams.extrude.bevel && (
+            {bevelAutoOff && modeParams.extrude.bevelProfile !== 'sharp' && (
               // Spec §2.2: auto-disable below tiny width is a CHIP, never silent.
               <div style={STATUS_CHIP}>
-                Bevel auto-off — width {effWidth.toFixed(3)}w is under the{' '}
-                {EXTRUDE_TINY_WIDTH.toFixed(2)}w floor; edges would swallow the face.
+                Bevel auto-sharp — width {effWidth.toFixed(3)}w is under the{' '}
+                {EXTRUDE_TINY_WIDTH.toFixed(2)}w floor; bevel edges would swallow the face.
               </div>
             )}
           </>
@@ -451,6 +537,14 @@ export function Canvas3DChrome() {
 
         {geometryMode === 'inflate' && (
           <>
+            {/* TIER 2 — inflate profile family (presets OVER the Puff curve;
+                the sliders keep working inside every family). */}
+            <FamilyPills
+              label="Profile"
+              value={modeParams.inflate.profileFamily}
+              options={INFLATE_PROFILE_FAMILY_OPTIONS}
+              onChange={(v) => setInflateParams({ profileFamily: v })}
+            />
             <SpecSlider
               spec={INFLATE_SLIDER_SPECS.baseRadius}
               value={modeParams.inflate.baseRadius}
@@ -477,6 +571,22 @@ export function Canvas3DChrome() {
 
         {geometryMode === 'solid' && (
           <>
+            {/* TIER 2 — solid style families (Edge + Holes), ABOVE the Tier-3
+                sliders per the three-tier layout. D-B Holes (default ON) is
+                LIVE: buildSolidGeometry grew the real `holes` option (rock X);
+                OFF = filled silhouette. */}
+            <FamilyPills
+              label="Edge"
+              value={modeParams.solid.edge}
+              options={SOLID_EDGE_OPTIONS}
+              onChange={(v) => setSolidParams({ edge: v })}
+            />
+            <TogglePills
+              label="Holes"
+              value={modeParams.solid.holes}
+              onChange={(v) => setSolidParams({ holes: v })}
+              title="ON: interior holes survive (donut stays a donut) · OFF: filled silhouette"
+            />
             <SpecSlider
               spec={SOLID_SLIDER_SPECS.inkRadius}
               value={modeParams.solid.inkRadius}
@@ -487,22 +597,6 @@ export function Canvas3DChrome() {
               value={modeParams.solid.depth}
               onChange={(v) => setSolidParams({ depth: v })}
             />
-            {/* D-B: Holes defaults ON. HONESTY GATE: the toggle is wired
-                through the scene's options, but the geometry engine's solid
-                builder doesn't accept a holes flag yet (cross-rock option
-                need, filed). Disabled-with-note until it lands — never a
-                silent no-op (project_f3_styles_must_all_be_real). */}
-            <TogglePills
-              label="Holes"
-              value={modeParams.solid.holes}
-              onChange={(v) => setSolidParams({ holes: v })}
-              disabled
-              disabledNote="Wired, awaiting the geometry engine's holes option — donut holes currently always preserve (the default ON behavior)."
-            />
-            <div style={STATUS_CHIP}>
-              Holes toggle lands with the geometry engine's option — today the engine
-              always preserves holes (the ON default).
-            </div>
           </>
         )}
       </Section>

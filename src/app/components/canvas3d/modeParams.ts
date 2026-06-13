@@ -16,15 +16,76 @@
 // unit conversion ×8/3 locked in the spec §0.4 (FS maps longest side → 3
 // world units; we map 800px → 8).
 
-// ─── Param state shapes (spec §2.1–2.4) ─────────────────────────────────────
+// ─── Tier-2 style families (3d-mode-controls-spec THREE-TIER AMENDMENT) ─────
+// Discrete per-mode "look" pickers, distinct from the Tier-3 sliders. String
+// unions mirror the geometry3d option types (duplicated here as literals —
+// this module must stay three-free; Stroke3DScene dev-asserts geometry3d
+// agreement where defaults overlap). Family value lists LOCK only after
+// Sebs eyeballs the render boards (tools/3d/tier2-board).
+
+export type RodCapStyle3D = 'round' | 'flat' | 'ink-blob';
+export type RodJointStyle3D = 'blob' | 'clean';
+export type ExtrudeBevelProfile3D = 'sharp' | 'soft' | 'rounded';
+export type ExtrudeSideWall3D = 'straight' | 'drafted';
+export type InflateProfileFamily3D = 'balloon' | 'cushion' | 'bead';
+export type SolidEdge3D = 'crisp' | 'eased';
+
+export type FamilyOption3D<T extends string> = { value: T; label: string; title: string };
+
+export const ROD_CAP_STYLE_OPTIONS: FamilyOption3D<RodCapStyle3D>[] = [
+  { value: 'round', label: 'Round', title: 'Inset sphere cap — the FS rounded ink tip (today)' },
+  { value: 'flat', label: 'Flat', title: 'Flush disk cap — crisp chopped marker end' },
+  { value: 'ink-blob', label: 'Ink blob', title: 'Swollen bead at the very tip — the nib-rest ink pool' },
+];
+export const ROD_JOINT_STYLE_OPTIONS: FamilyOption3D<RodJointStyle3D>[] = [
+  { value: 'blob', label: 'Blob', title: 'Spheres fill the corner creases — the FS ink-blob feel (today)' },
+  { value: 'clean', label: 'Clean', title: 'No joint spheres — clean mitered corner read' },
+];
+export const EXTRUDE_BEVEL_PROFILE_OPTIONS: FamilyOption3D<ExtrudeBevelProfile3D>[] = [
+  { value: 'sharp', label: 'Sharp', title: 'No bevel — hard 90° die-cut edge' },
+  { value: 'soft', label: 'Soft', title: 'Single chamfer — cut corner, no curve' },
+  { value: 'rounded', label: 'Rounded', title: 'Curved 3-segment rim band — the pressed-cookie read (today)' },
+];
+export const EXTRUDE_SIDE_WALL_OPTIONS: FamilyOption3D<ExtrudeSideWall3D>[] = [
+  { value: 'straight', label: 'Straight', title: 'Vertical side walls (today)' },
+  { value: 'drafted', label: 'Drafted', title: 'Walls taper toward the back — pressed/molded read' },
+];
+export const INFLATE_PROFILE_FAMILY_OPTIONS: FamilyOption3D<InflateProfileFamily3D>[] = [
+  { value: 'balloon', label: 'Balloon', title: 'Full round middle, tuned default profile (today)' },
+  { value: 'cushion', label: 'Cushion', title: 'Pressed-flat plateau — pillow read' },
+  { value: 'bead', label: 'Bead', title: 'Tighter pointed bulb — glass-bead read' },
+];
+export const SOLID_EDGE_OPTIONS: FamilyOption3D<SolidEdge3D>[] = [
+  { value: 'crisp', label: 'Crisp', title: 'No bevel — die-cut rim' },
+  { value: 'eased', label: 'Eased', title: 'Rounded rim band (today)' },
+];
+
+/** Inflate family → engine preset: presets OVER the Puff curve (the slider
+ *  keeps working inside every family). profileExp drives the longitudinal
+ *  sin(πt)^exp taper in buildInflateGeometry (default 0.8 = strokeTo3d
+ *  INFLATE_PROFILE_EXP, provenance comment there); aspectScale multiplies
+ *  the puff-derived Z aspect. */
+export const INFLATE_PROFILE_FAMILY_PRESETS: Record<
+  InflateProfileFamily3D,
+  { profileExp: number; aspectScale: number }
+> = {
+  balloon: { profileExp: 0.8, aspectScale: 1.0 }, // strokeTo3d INFLATE_PROFILE_EXP — today
+  cushion: { profileExp: 0.5, aspectScale: 0.58 }, // fuller plateau, pressed flat
+  bead: { profileExp: 1.7, aspectScale: 1.12 }, // pointier taper, rounder section
+};
+
+// ─── Param state shapes (spec §2.1–2.4 + Tier-2 families) ───────────────────
 
 export type RodParams3D = {
   /** Tube half-thickness, world units (spec §2.1 / FS TUBE_RADIUS ×8/3). */
   radius: number;
-  /** Spherical end caps inset 0.35×radius along the tangent. */
+  /** End caps on/off (off = open tube ends — Tier-3 toggle, spec §2.1). */
   caps: boolean;
-  /** Joint spheres at sharp corners (FS detectJoints3D ink-blob feel). */
-  jointBlobs: boolean;
+  /** Tier-2 cap family (applies while caps are on). */
+  capStyle: RodCapStyle3D;
+  /** Tier-2 joint family — 'blob' = FS joint spheres, 'clean' = none.
+   *  (Replaces the old jointBlobs boolean.) */
+  jointStyle: RodJointStyle3D;
   /** Corner angle (deg) that earns a blob — lower = blobbier. */
   jointSensitivityDeg: number;
 };
@@ -34,8 +95,11 @@ export type ExtrudeParams3D = {
   width: number;
   /** Width-relative depth multiplier (decoupled — depth never bloats XY). */
   depthMult: number;
-  /** Rounded extrusion edges. Auto-disables below EXTRUDE_TINY_WIDTH (chip, never silent). */
-  bevel: boolean;
+  /** Tier-2 bevel profile family (replaces the old bevel boolean; 'sharp' =
+   *  off). Auto-falls to sharp below EXTRUDE_TINY_WIDTH (chip, never silent). */
+  bevelProfile: ExtrudeBevelProfile3D;
+  /** Tier-2 side-wall family. */
+  sideWall: ExtrudeSideWall3D;
 };
 
 export type InflateParams3D = {
@@ -47,6 +111,8 @@ export type InflateParams3D = {
   pressureInfluence: number;
   /** Z-aspect / cross-section roundness — FS feel bundle, one slider (D-A). */
   puff: number;
+  /** Tier-2 profile family — discrete presets over the Puff curve. */
+  profileFamily: InflateProfileFamily3D;
 };
 
 export type SolidParams3D = {
@@ -56,6 +122,8 @@ export type SolidParams3D = {
   depth: number;
   /** Preserve interior holes (donut stays a donut) vs filled silhouette (D-B). */
   holes: boolean;
+  /** Tier-2 edge family. */
+  edge: SolidEdge3D;
 };
 
 export type Mode3DParams = {
@@ -71,24 +139,28 @@ export const DEFAULT_MODE3D_PARAMS: Mode3DParams = {
   rod: {
     radius: 0.032, // strokeTo3d ROD_RADIUS (FS TUBE_RADIUS 0.012 ×8/3)
     caps: true,
-    jointBlobs: true,
+    capStyle: 'round', // today's FS inset-sphere cap
+    jointStyle: 'blob', // today's FS joint spheres
     jointSensitivityDeg: 40, // strokeTo3d JOINT_ANGLE_THRESHOLD_DEG (FS verbatim)
   },
   extrude: {
     width: 0.5, // mid-slider = FS's tuned "clean default" (mapExtrudeWidthSlider)
     depthMult: 1.0, // FS anchor: "as deep as half-wide"
-    bevel: true,
+    bevelProfile: 'rounded', // today's EXTRUDE_BEVEL_* constants
+    sideWall: 'straight',
   },
   inflate: {
     baseRadius: 0.22, // strokeTo3d INFLATE_BASE_RADIUS
     tipRadius: 0.035, // strokeTo3d INFLATE_TIP_RADIUS
     pressureInfluence: 0.35, // strokeTo3d INFLATE_PRESSURE_INFLUENCE
     puff: 0.5, // FS inflateBuildStaticGeometries neutral
+    profileFamily: 'balloon', // today's INFLATE_PROFILE_EXP read
   },
   solid: {
     inkRadius: 0.08, // strokeTo3d SOLID_INK_RADIUS
     depth: 0.48, // spec §2.4 (≈ today's EXTRUDE_DEPTH 0.5 look, FS ×8/3 family)
     holes: true, // D-B recommendation: ON — donuts stay donuts
+    edge: 'eased', // today's rounded rim
   },
 };
 

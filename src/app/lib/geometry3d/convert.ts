@@ -36,6 +36,7 @@ import {
   buildStrokeGeometry,
   closureStateOf,
   containmentDepths,
+  isSolidFamilyClosure,
   normalizeStrokePoints,
   pointInLoop,
   poolCenter,
@@ -52,6 +53,7 @@ import {
   pushConversionReceipt,
   type ConversionReceipt,
   type ConversionTreatmentKind,
+  type DecisionSurface,
   type MarkIntent,
 } from '../smart/conversionMap.ts';
 
@@ -83,7 +85,12 @@ export interface ConversionUnit {
   closure: ClosureState | null;
   /** Coverage band (surface-hatch density / fill = 7); null when N/A. */
   band: number | null;
-  /** THE chip: solid family applied inside the ambiguous closure band. */
+  /** Closure landed in the ambiguous band — THE chip renders when true
+   *  (both arrow-rule variants; copy depends on treatedAsClosed). */
+  ambiguousClosure: boolean;
+  /** How the ambiguous band resolved: true = solid family applied (chip
+   *  "Treated as closed"); false = honest rod (chip "Treat as closed?").
+   *  Resolution = per-object chip override > TREATED_AS_CLOSED_DEFAULT. */
   treatedAsClosed: boolean;
   /** Mark-intent margin < 0.15 — the 3-way Lines/Shading/Fill chip. */
   ambiguous: boolean;
@@ -110,6 +117,13 @@ export interface ConvertOptions {
   inflateRadius?: number;
   /** D2-B Holes toggle (donut parity). Default ON. */
   holes?: boolean;
+  /** ARROW RULE per-object chip overrides, keyed by ORIGINAL stroke index:
+   *  true = treat this ambiguous stroke as closed (solid family), false =
+   *  treat as open (rod). Absent = TREATED_AS_CLOSED_DEFAULT. Only the
+   *  ambiguous band consults this — truly closed/open strokes never flip. */
+  treatAsClosed?: Record<number, boolean>;
+  /** G-10 provenance tag stamped on every receipt (null = unwired host). */
+  renderSurface?: DecisionSurface | null;
   /** Optional correlation id stamped on every receipt. */
   svgHash?: string;
 }
@@ -168,7 +182,9 @@ export function convertStrokePool(
   ) => {
     units.push(unit);
     const receipt: ConversionReceipt = {
+      entryType: 'conversion',
       surface: 'conversion',
+      renderSurface: opts.renderSurface ?? null,
       register: extra.register ?? 'drawn',
       unitId: unit.id,
       strokeIndices: unit.strokeIndices,
@@ -178,6 +194,7 @@ export function convertStrokePool(
       directive: directiveForTreatment(unit.treatment, mode),
       geometry: geometryKindOf(unit.build),
       band: unit.band,
+      ambiguousClosure: unit.ambiguousClosure,
       treatedAsClosed: unit.treatedAsClosed,
       ambiguous: unit.ambiguous,
       rawScore: extra.rawScore,
@@ -214,6 +231,7 @@ export function convertStrokePool(
         intent: null,
         closure: null,
         band: null,
+        ambiguousClosure: false,
         treatedAsClosed: false,
         ambiguous: false,
         holesCut: build.kind === 'solid' ? build.holes : 0,
@@ -251,6 +269,7 @@ export function convertStrokePool(
           intent: cluster?.intent ?? null,
           closure,
           band: cluster?.band ?? null,
+          ambiguousClosure: closure === 'treated-as-closed', // recorded; no chip in explicit modes
           treatedAsClosed: false, // no solid-family default was applied
           ambiguous: cluster?.ambiguous ?? false,
           holesCut: 0,
@@ -297,10 +316,18 @@ export function convertStrokePool(
       continue;
     }
     // Singles (incl. dot beads — beads are open by construction).
+    // FAMILY RESOLUTION (THE ARROW RULE): in 'auto' the ambiguous closure
+    // band resolves through the per-object chip override, else
+    // TREATED_AS_CLOSED_DEFAULT. Explicit 'extrude' keeps the loose closure —
+    // the pick is sacred, everything the old boolean called closed extrudes.
     const index = c.strokeIndices[0];
     const simplified = simplifiedOf(index);
     const closure = closureStateOf(simplified);
-    if (closure !== 'open' && !analysis.features[index].dotness) {
+    const solidFamily =
+      mode === 'auto'
+        ? isSolidFamilyClosure(closure, opts.treatAsClosed?.[index])
+        : closure !== 'open';
+    if (solidFamily && !analysis.features[index].dotness) {
       const loop = analysis.loops.find(
         (l) => !l.composite && l.strokeIndices.length === 1 && l.strokeIndices[0] === index,
       );
@@ -374,6 +401,7 @@ export function convertStrokePool(
           intent: 'structure',
           closure: ref.closure,
           band: null,
+          ambiguousClosure: ref.closure === 'treated-as-closed',
           treatedAsClosed: ref.closure === 'treated-as-closed',
           ambiguous: ref.cluster.ambiguous,
           holesCut: 0,
@@ -394,6 +422,9 @@ export function convertStrokePool(
       depth: opts.depth,
       rodRadius: opts.radius,
     });
+    const ambiguousHere = ref.closure === 'treated-as-closed';
+    const userClosed =
+      ambiguousHere && opts.treatAsClosed?.[ref.strokeIndices[0]] === true;
     emit(
       {
         id: ref.loopId ?? `loop-extra-${i}`,
@@ -403,7 +434,8 @@ export function convertStrokePool(
         intent: 'structure',
         closure: ref.closure,
         band: ref.loopId ? analysis.loopBands[ref.loopId] ?? null : null,
-        treatedAsClosed: ref.closure === 'treated-as-closed',
+        ambiguousClosure: ambiguousHere,
+        treatedAsClosed: ambiguousHere,
         ambiguous: ref.cluster.ambiguous,
         holesCut: build.kind === 'extrude' ? build.holesCut : 0,
       },
@@ -411,8 +443,10 @@ export function convertStrokePool(
         rawScore: ref.cluster.rawScore,
         margin: ref.cluster.margin,
         firedRules: [
-          ref.closure === 'treated-as-closed'
-            ? 'CLOSURE_treated_as_closed_solid_chip'
+          ambiguousHere
+            ? userClosed
+              ? 'CLOSURE_ambiguous_user_closed_chip' // chip override welded it shut
+              : 'CLOSURE_treated_as_closed_solid_chip' // the 'solid' default branch
             : 'CLOSURE_closed_solid_silent',
           ...ref.cluster.firedRules,
         ],
@@ -425,12 +459,15 @@ export function convertStrokePool(
     structureLoopRefs.filter((r, i) => !isHole[i] && r.loopId).map((r) => r.loopId as string),
   );
 
-  // 4. Open structure strokes → rods (line-rod row; in explicit 'extrude' the
-  //    pick is sacred: open strokes keep today's per-stroke extrude attempt).
+  // 4. Open-family structure strokes → rods (line-rod row; in explicit
+  //    'extrude' the pick is sacred: open strokes keep today's per-stroke
+  //    extrude attempt). Under the 'rod' arrow-rule default this also carries
+  //    the AMBIGUOUS band — honest open rod + "Treat as closed?" chip.
   for (const c of structureOpen) {
     const index = c.strokeIndices[0];
     const simplified = simplifiedOf(index);
     const closure = closureStateOf(simplified);
+    const ambiguousHere = closure === 'treated-as-closed';
     const world = worldOf(simplified);
     let build: StrokeGeometryResult;
     let firedRule: string;
@@ -442,7 +479,13 @@ export function convertStrokePool(
       firedRule = 'MODE_explicit_extrude_open_stroke';
     } else {
       build = buildRodGeometry(world, { radius: opts.radius, closed: false });
-      firedRule = analysis.features[index].dotness ? 'R1_dot_bead_rod' : 'TREATMENT_line_rod';
+      firedRule = ambiguousHere
+        ? opts.treatAsClosed?.[index] === false
+          ? 'CLOSURE_ambiguous_user_open_chip' // chip override re-opened it
+          : 'CLOSURE_ambiguous_default_rod_chip' // the 'rod' default branch
+        : analysis.features[index].dotness
+          ? 'R1_dot_bead_rod'
+          : 'TREATMENT_line_rod';
       // Ink rides the solid (addendum §1.4): a decoration stroke contained in
       // a rendered slab shifts to the host's front face.
       const f = analysis.features[index];
@@ -460,6 +503,7 @@ export function convertStrokePool(
         intent: 'structure',
         closure,
         band: null,
+        ambiguousClosure: ambiguousHere,
         treatedAsClosed: false,
         ambiguous: c.ambiguous,
         holesCut: 0,
@@ -482,6 +526,7 @@ export function convertStrokePool(
           depth: opts.depth,
           rodRadius: opts.radius,
         });
+        const strokeClosure = closureStateOf(simplifiedOf(index));
         emit(
           {
             id: `stroke-${index}`,
@@ -489,8 +534,9 @@ export function convertStrokePool(
             build: b,
             treatment: 'surface-hatch',
             intent: 'shading-gesture',
-            closure: closureStateOf(simplifiedOf(index)),
+            closure: strokeClosure,
             band: c.band,
+            ambiguousClosure: strokeClosure === 'treated-as-closed',
             treatedAsClosed: false,
             ambiguous: c.ambiguous,
             holesCut: 0,
@@ -513,6 +559,7 @@ export function convertStrokePool(
         intent: 'shading-gesture',
         closure: null,
         band: c.band,
+        ambiguousClosure: false,
         treatedAsClosed: false,
         ambiguous: c.ambiguous,
         holesCut: 0,
@@ -549,6 +596,7 @@ export function convertStrokePool(
         intent: 'fill-intent',
         closure: null,
         band: c.band ?? 7,
+        ambiguousClosure: false,
         treatedAsClosed: false,
         ambiguous: c.ambiguous,
         holesCut: 0,

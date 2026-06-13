@@ -14,15 +14,28 @@
 // PURITY CONTRACT (node-runnable like strokeTo3d.ts): no React, no DOM
 // (window receipt hook is guarded), no wall-clock, no randomness.
 //
-// Receipts (gap G-1, QW-1 pattern — same idiom as smartHachure's
-// __dd_decisionLog): every conversion decision logs to
-// window.__dd_conversionLog. This is the training collector — chip flips and
-// per-region corrections become labeled tuples through the same channel.
+// Receipts (gap G-1, QW-1 pattern) — UNIFIED COLLECTOR (rock X, 2026-06-12):
+// the specs name ONE decision log (conversion-semantics §8 logs to
+// window.__dd_decisionLog). Conversion receipts + chip-flip corrections now
+// flow into that same channel: this module wraps the window-visible
+// __dd_decisionLog so get() returns smartHachure shading entries (tagged
+// entryType:'shading' at read time — their stored shape is untouched, that
+// module is another rock's file) PLUS conversion entries (entryType:
+// 'conversion' / 'conversion-correction'). window.__dd_conversionLog stays as
+// a THIN COMPAT ALIAS reading the conversion-filtered view. G-10 provenance:
+// receipts carry `renderSurface` (which host surface ran the conversion);
+// callers pass it via ConvertOptions — null = honest "unwired".
 
 import type { TonalRole } from '../smartHachure/types';
-import type { ClosureState, GeometryModeSetting } from '../geometry3d/strokeTo3d';
+import type { DecisionSurface } from '../smartHachure/index';
+import type {
+  ClosureState,
+  GeometryModeSetting,
+  TreatedAsClosedDefault,
+} from '../geometry3d/strokeTo3d';
 
 export type { ClosureState };
+export type { DecisionSurface };
 
 // ─── The treatment vocabulary (conversion-semantics §3 — shared by BOTH
 //     registers; the drawn brain and the upload brain emit into this) ───────
@@ -146,7 +159,14 @@ export function directiveForTreatment(
 // cluster / composite loop / pool).
 
 export interface ConversionReceipt {
+  /** Type discriminator in the UNIFIED decision log (shading entries are
+   *  tagged 'shading' at read time; they don't carry the field in storage). */
+  entryType: 'conversion';
   surface: 'conversion';
+  /** G-10 provenance — WHICH host surface ran this conversion (record /
+   *  desk-lens / pen-preview / sandbox / audit). Null = honest "unwired"
+   *  (export scripts exclude-or-triage, never guess). */
+  renderSurface: DecisionSurface | null;
   /** Which brain decided (two-register architecture). */
   register: ConversionRegister;
   /** Deterministic unit id within one conversion pass:
@@ -165,9 +185,12 @@ export interface ConversionReceipt {
   geometry: 'rod' | 'extrude' | 'inflate' | 'solid' | 'none';
   /** Coverage band 0-7 (surface-hatch / fill); null when no band applies. */
   band: number | null;
-  /** THE chip flag: closure fell in the ambiguous gap band and the solid
-   *  family was applied by default (addendum A-2). One tap flips it — every
-   *  flip is a labeled correction. */
+  /** Closure fell in the ambiguous gap band ('treated-as-closed') — the chip
+   *  renders whenever this is true, in BOTH arrow-rule variants. */
+  ambiguousClosure: boolean;
+  /** How the ambiguous band RESOLVED: true = solid family applied (chip reads
+   *  "Treated as closed"), false = honest rod (chip reads "Treat as
+   *  closed?"). Resolution = chip override > TREATED_AS_CLOSED_DEFAULT. */
   treatedAsClosed: boolean;
   /** Mark-intent margin < threshold — the 3-way Lines/Shading/Fill chip. */
   ambiguous: boolean;
@@ -184,19 +207,49 @@ export interface ConversionReceipt {
   svgHash?: string;
 }
 
+// ─── Chip-flip corrections — the labeled training tuples (spec §8 pattern:
+//     "every flip = a labeled correction") ─────────────────────────────────
+
+export interface ClosureCorrection {
+  entryType: 'conversion-correction';
+  surface: 'conversion';
+  renderSurface: DecisionSurface | null;
+  /** strokeSignature of the flipped stroke (stable identity; invalidates on
+   *  stroke edit). */
+  strokeSignature: string;
+  /** Resolution BEFORE the tap (true = was solid family). */
+  from: boolean;
+  /** Resolution AFTER the tap. */
+  to: boolean;
+  /** The pending-Sebs default the flip corrected against. */
+  defaultAtFlip: TreatedAsClosedDefault;
+  mode: GeometryModeSetting;
+}
+
 // FIFO cap — same guard as smartHachure's decision log.
 const CONVERSION_LOG_MAX = 5000;
-const conversionLog: ConversionReceipt[] = [];
+const conversionLog: Array<ConversionReceipt | ClosureCorrection> = [];
 
-export function pushConversionReceipt(receipt: ConversionReceipt): void {
-  conversionLog.push(receipt);
+function pushEntry(entry: ConversionReceipt | ClosureCorrection): void {
+  conversionLog.push(entry);
   if (conversionLog.length > CONVERSION_LOG_MAX) {
     conversionLog.splice(0, conversionLog.length - CONVERSION_LOG_MAX);
   }
 }
 
-/** Snapshot of the in-memory receipt log (copy — safe to mutate/serialize). */
-export function getConversionLog(): ConversionReceipt[] {
+export function pushConversionReceipt(receipt: ConversionReceipt): void {
+  pushEntry(receipt);
+}
+
+/** Chip flip → labeled correction into the SAME collector. */
+export function pushClosureCorrection(c: ClosureCorrection): void {
+  pushEntry(c);
+}
+
+/** Snapshot of the in-memory conversion view — receipts + corrections
+ *  (copy, safe to mutate/serialize). This is what the thin
+ *  window.__dd_conversionLog compat alias returns. */
+export function getConversionLog(): Array<ConversionReceipt | ClosureCorrection> {
   return conversionLog.slice();
 }
 
@@ -205,12 +258,52 @@ export function clearConversionLog(): void {
   conversionLog.length = 0;
 }
 
-// Harness access from DevTools / playwright — same window-flag idiom as
-// __dd_decisionLog (smartHachure/index.ts) and __dd_diag.
+// ─── UNIFIED window install (rock X) ────────────────────────────────────────
+// One window-visible decision log, two storage modules:
+//   - smartHachure/index.ts keeps its own array + installs its collector
+//     (that file is another rock's — untouched);
+//   - this module FACES the window: __dd_decisionLog.get() = shading entries
+//     (entryType:'shading' added at read time) + conversion entries.
+// Load-order safe via defineProperty: if smartHachure installed first, it
+// becomes the wrapped host; if it installs LATER, its assignment lands in the
+// setter and becomes the host — the unified face persists either way.
+// __dd_conversionLog = the filtered compat alias (battery/tools keep working).
+
+type HostDecisionLog = {
+  get: () => Array<Record<string, unknown>>;
+  clear: () => void;
+  setSurface?: (s: DecisionSurface | null) => void;
+};
+
 if (typeof window !== 'undefined') {
-  (
-    window as {
-      __dd_conversionLog?: { get: () => ConversionReceipt[]; clear: () => void };
-    }
-  ).__dd_conversionLog = { get: getConversionLog, clear: clearConversionLog };
+  const w = window as unknown as Record<string, unknown>;
+  let host = (w.__dd_decisionLog as HostDecisionLog | undefined) ?? null;
+  const unified = {
+    get: () => [
+      ...(host
+        ? host.get().map((e) => ('entryType' in e ? e : { entryType: 'shading', ...e }))
+        : []),
+      ...getConversionLog(),
+    ],
+    clear: () => {
+      host?.clear();
+      clearConversionLog();
+    },
+    setSurface: (s: DecisionSurface | null) => host?.setSurface?.(s),
+  };
+  try {
+    Object.defineProperty(w, '__dd_decisionLog', {
+      configurable: true,
+      get: () => unified,
+      // A later smartHachure install assigns here — it becomes the host
+      // behind the unified face instead of replacing it.
+      set: (v: HostDecisionLog) => {
+        host = v;
+      },
+    });
+  } catch {
+    // defineProperty refused (frozen window?) — fall back to plain assignment.
+    w.__dd_decisionLog = unified;
+  }
+  w.__dd_conversionLog = { get: getConversionLog, clear: clearConversionLog };
 }

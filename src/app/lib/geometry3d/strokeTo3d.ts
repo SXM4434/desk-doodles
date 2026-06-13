@@ -47,6 +47,13 @@ export interface RodGeometryResult {
    *  tangents by radius × CAP_INSET_FACTOR (free-stroke character). Rendered
    *  as sibling sphere meshes — simpler than CSG merge (plan §1.1). */
   capPositions: THREE.Vector3[];
+  /** Raw stroke endpoints (start, end — empty when closed). The Tier-2 cap
+   *  families place flat disks / ink-blob beads relative to the TRUE end,
+   *  not the inset sphere center (rodAdornments.ts consumes these). */
+  endPositions: THREE.Vector3[];
+  /** Outward unit tangents at the endpoints (start points backward along the
+   *  curve, end points forward — empty when closed). Orients flat-disk caps. */
+  endDirections: THREE.Vector3[];
   /** Joint-sphere centers (free-stroke detectJoints3D port) — centerline
    *  spheres that fill the crease where the tube kinks. Same radius as the
    *  tube; rendered as sibling sphere meshes like the caps. */
@@ -149,6 +156,35 @@ export const EXTRUDE_BEVEL_SIZE = 0.05;
 export const EXTRUDE_BEVEL_THICKNESS = 0.05;
 export const EXTRUDE_BEVEL_SEGMENTS = 3;
 
+// ── Tier-2 Extrude style families (3d-mode-controls-spec three-tier
+//    amendment — discrete look choices, additive engine options) ─────────────
+
+/** Bevel profile family: how the front/back faces meet the side wall.
+ *  'rounded' = today's tuned default (the constants above, byte-identical);
+ *  'soft' = a single-segment chamfer (cut corner, no curve); 'sharp' =
+ *  bevel disabled (hard 90° die-cut edge). */
+export type ExtrudeBevelProfile = 'sharp' | 'soft' | 'rounded';
+export const EXTRUDE_BEVEL_PROFILES: Record<
+  ExtrudeBevelProfile,
+  { enabled: boolean; size: number; thickness: number; segments: number }
+> = {
+  sharp: { enabled: false, size: 0, thickness: 0, segments: 0 },
+  soft: { enabled: true, size: 0.022, thickness: 0.022, segments: 1 },
+  rounded: {
+    enabled: true,
+    size: EXTRUDE_BEVEL_SIZE,
+    thickness: EXTRUDE_BEVEL_THICKNESS,
+    segments: EXTRUDE_BEVEL_SEGMENTS,
+  },
+};
+
+/** Side-wall family: 'straight' = vertical walls (today); 'drafted' = walls
+ *  taper toward the BACK face (pressed/molded read — the front face keeps the
+ *  drawn silhouette, the back shrinks by EXTRUDE_DRAFT_AMOUNT around the
+ *  slab's own xy center). */
+export type ExtrudeSideWall = 'straight' | 'drafted';
+export const EXTRUDE_DRAFT_AMOUNT = 0.18;
+
 /** Inflate-Lite (swept capsule, research §5b "Free Stroke heuristic" — true
  *  Teddy chordal-axis inflation is explicitly OUT of scope). */
 export const INFLATE_BASE_RADIUS = 0.22; // mid-stroke fullness, world units
@@ -178,6 +214,11 @@ export const SOLID_MIN_LOOP_AREA = 2;
  *  drawn circle reads as a circle, not a 14-gon. */
 export const SOLID_RDP_EPSILON_CELLS = 0.6;
 
+/** Tier-2 Solid edge family: 'eased' = today's rounded bevel band (the
+ *  EXTRUDE_BEVEL_* constants, byte-identical default); 'crisp' = bevel off —
+ *  the die-cut hard rim. */
+export type SolidEdge = 'crisp' | 'eased';
+
 /** Closed-stroke endpoint gap thresholds (plan §1.1 isClosedStroke). These
  *  are the LOOSE bounds of the 3-state closure below — kept as the outer
  *  edge of the solid family per the conversion-semantics RED-TEAM AMENDMENT. */
@@ -197,6 +238,45 @@ export const CLOSE_GAP_TIGHT_BBOX_RATIO = 0.025;
  *  0.005 world² ≈ 50 viewBox px² at WORLD_SCALE 0.01 — same order as the 2D
  *  tiny-area clamp (40px², 18-scope-audit row 13). */
 export const MIN_EXTRUDE_AREA = 0.005;
+
+// ─── THE ARROW RULE — PENDING SEBS RULING (rock X, 2026-06-12) ──────────────
+// What does the AMBIGUOUS closure band ('treated-as-closed') resolve to by
+// DEFAULT in auto mode? Two ratified candidates, both implemented:
+//   'rod'   — open-ish stays an honest open rod + "Treat as closed?" chip
+//             (the verifier's red-team amendment; matches Sebs's original
+//             anti-auto-fill complaint — nothing fills unless he says so)
+//   'solid' — open-ish welds into the solid family + "Treated as closed" chip
+//             (addendum A-2: closed-means-mass is the drawn-register law)
+// The chip flips PER OBJECT either way (see isSolidFamilyClosure overrides +
+// the conversion-log corrections — every flip is a labeled training tuple).
+// Flip = change this one literal. Fixture board: tools/3d/arrow-rule-board.
+export type TreatedAsClosedDefault = 'rod' | 'solid';
+export const TREATED_AS_CLOSED_DEFAULT: TreatedAsClosedDefault = 'rod';
+
+/** Per-stroke identity key for chip-override maps — stable across re-renders,
+ *  invalidates the moment the stroke is edited (same fields strokesKey uses). */
+export function strokeSignature(stroke: StrokeInputPoint[]): string {
+  if (stroke.length === 0) return '0';
+  const [fx, fy] = stroke[0];
+  const [lx, ly] = stroke[stroke.length - 1];
+  return `${stroke.length}:${fx.toFixed(1)},${fy.toFixed(1)}:${lx.toFixed(1)},${ly.toFixed(1)}`;
+}
+
+/** Resolve a closure state to solid-family membership under the arrow rule:
+ *  'closed' → always solid family; 'open' → never; 'treated-as-closed' → the
+ *  per-object chip override when present, else the pending-Sebs default.
+ *  `dflt` is parameterized for the smoke suite (proves both branches without
+ *  flipping the constant); callers omit it. */
+export function isSolidFamilyClosure(
+  state: ClosureState,
+  treatAsClosed?: boolean,
+  dflt: TreatedAsClosedDefault = TREATED_AS_CLOSED_DEFAULT,
+): boolean {
+  if (state === 'closed') return true;
+  if (state === 'open') return false;
+  if (treatAsClosed !== undefined) return treatAsClosed;
+  return dflt === 'solid';
+}
 
 // ─── Simplification ──────────────────────────────────────────────────────────
 
@@ -271,29 +351,36 @@ export function closureStateOf(points: StrokeInputPoint[]): ClosureState {
   return 'open';
 }
 
-/** Closed iff the endpoint gap < max(24 viewBox px, 8% of the stroke's bbox
- *  diagonal). Drives the auto Rod/Extrude pick (plan §1.1). UNCHANGED
- *  SEMANTICS: the solid family = 'closed' ∪ 'treated-as-closed' — exactly the
- *  old boolean, so every existing caller renders identically; the 3-state
- *  split only adds the honesty flag. */
+/** LOOSE closure boolean: gap < max(24 viewBox px, 8% of the stroke's bbox
+ *  diagonal) — i.e. 'closed' ∪ 'treated-as-closed'. This is the EXPLICIT-mode
+ *  + raster-fill reading (Solid scanline interiors, explicit-Rod ring
+ *  closure, region extraction): those paths keep today's tolerant behavior
+ *  regardless of the arrow rule. The AUTO family pick goes through
+ *  pickGeometryMode, which respects TREATED_AS_CLOSED_DEFAULT + the chip. */
 export function isClosedStroke(points: StrokeInputPoint[]): boolean {
   return closureStateOf(points) !== 'open';
 }
 
-/** Auto pick: closed → Extrude, open → Rod (§5b Phase-D auto-pick; the user
- *  toggle overrides per the I-1 spirit — see resolveGeometryMode).
- *  UNTOUCHED SEMANTICS: auto resolves rod/extrude ONLY — 'inflate' is an
- *  explicit user choice, enforced by the AutoGeometryMode return type. */
-export function pickGeometryMode(points: StrokeInputPoint[]): AutoGeometryMode {
-  return isClosedStroke(points) ? 'extrude' : 'rod';
+/** Auto pick: solid-family closure → Extrude, else Rod (§5b Phase-D
+ *  auto-pick; the user toggle overrides per the I-1 spirit — see
+ *  resolveGeometryMode). The ambiguous closure band resolves through the
+ *  ARROW RULE (TREATED_AS_CLOSED_DEFAULT + per-object `treatAsClosed` chip
+ *  override). UNTOUCHED: auto resolves rod/extrude ONLY — 'inflate'/'solid'
+ *  are explicit user choices, enforced by the AutoGeometryMode return type. */
+export function pickGeometryMode(
+  points: StrokeInputPoint[],
+  opts: { treatAsClosed?: boolean } = {},
+): AutoGeometryMode {
+  return isSolidFamilyClosure(closureStateOf(points), opts.treatAsClosed) ? 'extrude' : 'rod';
 }
 
 /** Map the chrome setting onto a concrete mode for one stroke. */
 export function resolveGeometryMode(
   setting: GeometryModeSetting,
   points: StrokeInputPoint[],
+  opts: { treatAsClosed?: boolean } = {},
 ): GeometryMode {
-  return setting === 'auto' ? pickGeometryMode(points) : setting;
+  return setting === 'auto' ? pickGeometryMode(points, opts) : setting;
 }
 
 // ─── Normalization (viewBox y-down → world y-up) ─────────────────────────────
@@ -395,9 +482,12 @@ export function detectJointPositions(
   startPt: THREE.Vector3,
   endPt: THREE.Vector3,
   radius: number,
+  /** Corner angle (deg) that earns a blob — the chrome's Joint-sensitivity
+   *  slider (20–70°) drives this directly; default = FS verbatim 40°. */
+  angleThresholdDeg: number = JOINT_ANGLE_THRESHOLD_DEG,
 ): THREE.Vector3[] {
   const positions: THREE.Vector3[] = [];
-  const angleThresholdRad = (JOINT_ANGLE_THRESHOLD_DEG * Math.PI) / 180;
+  const angleThresholdRad = (angleThresholdDeg * Math.PI) / 180;
   const endpointEps = radius * JOINT_ENDPOINT_EPS_FACTOR;
   const jointDedup = radius * JOINT_DEDUP_FACTOR;
 
@@ -439,7 +529,13 @@ export function detectJointPositions(
  *  MIN_STROKE_LENGTH strokes; we keep the honest ink-bead instead. */
 export function buildRodGeometry(
   world: THREE.Vector3[],
-  opts: { radius?: number; closed?: boolean } = {},
+  opts: {
+    radius?: number;
+    closed?: boolean;
+    /** REAL engine option (rock-1 cross-contract): joint detection angle in
+     *  degrees — the chrome slider drives the engine, not a local mirror. */
+    jointAngleThresholdDeg?: number;
+  } = {},
 ): RodGeometryResult {
   const radius = opts.radius ?? ROD_RADIUS;
   const closed = opts.closed ?? false;
@@ -459,7 +555,13 @@ export function buildRodGeometry(
   // DENSE resampled centerline, free-stroke's actual curve input (their
   // pipeline resamples every 4 canvas px BEFORE the CatmullRom — sparse
   // anchors under-sample corners and the joint spheres float off the ink).
-  const jointPositions = detectJointPositions(pts, pts[0], pts[pts.length - 1], radius);
+  const jointPositions = detectJointPositions(
+    pts,
+    pts[0],
+    pts[pts.length - 1],
+    radius,
+    opts.jointAngleThresholdDeg,
+  );
   const dense = resampleWorldPolyline(pts, ROD_RESAMPLE_SPACING);
   const curve = new THREE.CatmullRomCurve3(dense, canClose, 'centripetal', 0.5);
   const tubularSegments = Math.min(
@@ -470,6 +572,8 @@ export function buildRodGeometry(
   // Caps inset along the curve tangents so they sit inside the tube ends
   // (free-stroke RodEngine, verbatim: inset = TUBE_RADIUS * 0.35).
   let capPositions: THREE.Vector3[] = [];
+  let endPositions: THREE.Vector3[] = [];
+  let endDirections: THREE.Vector3[] = [];
   if (!canClose) {
     const inset = radius * CAP_INSET_FACTOR;
     const startTangent = curve.getTangentAt(0);
@@ -478,8 +582,11 @@ export function buildRodGeometry(
       pts[0].clone().addScaledVector(startTangent, inset),
       pts[pts.length - 1].clone().addScaledVector(endTangent, -inset),
     ];
+    endPositions = [pts[0].clone(), pts[pts.length - 1].clone()];
+    // Outward = away from the tube body at each end.
+    endDirections = [startTangent.clone().negate(), endTangent.clone()];
   }
-  return { kind: 'rod', geometry, capPositions, jointPositions, radius };
+  return { kind: 'rod', geometry, capPositions, endPositions, endDirections, jointPositions, radius };
 }
 
 /** Signed shoelace area of the world-space polygon (xy plane). */
@@ -549,11 +656,46 @@ function smoothClosedOutline(pts: THREE.Vector3[]): THREE.Vector3[] {
  *  PROACTIVELY; triangulation throws / NaN output fall back in the catch —
  *  honest degradation, never a crash. Geometry is z-centered so Rods and
  *  Extrudes share the z=0 plane. */
+export interface ExtrudeBuildOpts {
+  depth?: number;
+  rodRadius?: number;
+  /** Tier-2 bevel profile family. Default 'rounded' (today's constants —
+   *  existing callers render byte-identically). */
+  bevelProfile?: ExtrudeBevelProfile;
+  /** Tier-2 side-wall family. Default 'straight' (today). */
+  sideWall?: ExtrudeSideWall;
+}
+
 export function buildExtrudeGeometry(
   world: THREE.Vector3[],
-  opts: { depth?: number; rodRadius?: number } = {},
+  opts: ExtrudeBuildOpts = {},
 ): StrokeGeometryResult {
   return buildExtrudeGeometryWithHoles(world, [], opts);
+}
+
+/** Drafted side-wall deform: linear xy taper toward the back face (−z) around
+ *  the geometry's own bbox center. Runs AFTER z-centering; recomputes vertex
+ *  normals (side walls are face-shaded anyway — the deform keeps the read). */
+function applyDraftTaper(geometry: THREE.BufferGeometry, draft: number): void {
+  geometry.computeBoundingBox();
+  const bb = geometry.boundingBox;
+  if (!bb) return;
+  const cx = (bb.min.x + bb.max.x) / 2;
+  const cy = (bb.min.y + bb.max.y) / 2;
+  const zMin = bb.min.z;
+  const zMax = bb.max.z;
+  const span = zMax - zMin;
+  if (span <= 1e-9) return;
+  const pos = geometry.getAttribute('position');
+  const arr = pos.array as Float32Array;
+  for (let i = 0; i < pos.count; i++) {
+    const z = arr[i * 3 + 2];
+    const s = 1 - draft * ((zMax - z) / span); // front face (zMax) keeps 1.0
+    arr[i * 3] = cx + (arr[i * 3] - cx) * s;
+    arr[i * 3 + 1] = cy + (arr[i * 3 + 1] - cy) * s;
+  }
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
 }
 
 /** Extrude with donut-parity holes (conversion-semantics §4 hole row +
@@ -565,9 +707,10 @@ export function buildExtrudeGeometry(
 export function buildExtrudeGeometryWithHoles(
   world: THREE.Vector3[],
   holeWorlds: THREE.Vector3[][],
-  opts: { depth?: number; rodRadius?: number } = {},
+  opts: ExtrudeBuildOpts = {},
 ): StrokeGeometryResult {
   const depth = opts.depth ?? EXTRUDE_DEPTH;
+  const profile = EXTRUDE_BEVEL_PROFILES[opts.bevelProfile ?? 'rounded'];
   const pts = dedupeClosedLoop(world);
   if (!pts) {
     return buildRodGeometry(world, { radius: opts.rodRadius });
@@ -586,10 +729,10 @@ export function buildExtrudeGeometryWithHoles(
     }
     const geometry = new THREE.ExtrudeGeometry(shape, {
       depth,
-      bevelEnabled: true,
-      bevelSize: EXTRUDE_BEVEL_SIZE,
-      bevelThickness: EXTRUDE_BEVEL_THICKNESS,
-      bevelSegments: EXTRUDE_BEVEL_SEGMENTS,
+      bevelEnabled: profile.enabled,
+      bevelSize: profile.size,
+      bevelThickness: profile.thickness,
+      bevelSegments: profile.segments,
       curveSegments: 12,
       steps: 1,
     });
@@ -598,6 +741,9 @@ export function buildExtrudeGeometryWithHoles(
       throw new Error('extrude produced non-finite positions');
     }
     geometry.translate(0, 0, -depth / 2);
+    if ((opts.sideWall ?? 'straight') === 'drafted') {
+      applyDraftTaper(geometry, EXTRUDE_DRAFT_AMOUNT);
+    }
     return { kind: 'extrude', geometry, holesCut };
   } catch {
     return buildRodGeometry(world, { radius: opts.rodRadius, closed: true });
@@ -676,6 +822,10 @@ export function buildInflateGeometry(
      *  extractPressures(simplifiedPoints). Omit for pure sine profile. */
     pressures?: number[];
     pressureInfluence?: number;
+    /** sin(πt)^exp longitudinal profile exponent (Tier-2 Inflate profile
+     *  family drives this: cushion < balloon < bead). Default = the tuned
+     *  INFLATE_PROFILE_EXP (balloon). */
+    profileExp?: number;
     /** Radius for the Rod fallback, not the capsule. */
     rodRadius?: number;
   } = {},
@@ -684,6 +834,7 @@ export function buildInflateGeometry(
   const radialSegments = opts.radialSegments ?? INFLATE_RADIAL_SEGMENTS;
   const pressures = opts.pressures;
   const influence = opts.pressureInfluence ?? INFLATE_PRESSURE_INFLUENCE;
+  const profileExp = opts.profileExp ?? INFLATE_PROFILE_EXP;
 
   const pts = dedupeConsecutive(world);
   if (pts.length < 2) return buildRodGeometry(world, { radius: opts.rodRadius });
@@ -743,7 +894,7 @@ export function buildInflateGeometry(
     const ringRadii: number[] = [];
     for (let i = 0; i < rings; i++) {
       const u = i / segments;
-      const profile = Math.pow(Math.sin(Math.PI * u), INFLATE_PROFILE_EXP);
+      const profile = Math.pow(Math.sin(Math.PI * u), profileExp);
       let r = tipRadius + (baseRadius - tipRadius) * profile;
       if (pressures && influence > 0) {
         const p = samplePressure(pressures, u);
@@ -1152,10 +1303,18 @@ export function buildSolidGeometry(
      *  available); computed from world points when omitted. */
     closedFlags?: boolean[];
     rodRadius?: number;
+    /** D2-B Holes toggle (rock-1 cross-contract, now a REAL engine option):
+     *  true (default) preserves interior holes — donut stays a donut; false =
+     *  filled silhouette (odd-depth loops are NOT subtracted). */
+    holes?: boolean;
+    /** Tier-2 edge family. Default 'eased' (today's rounded bevel). */
+    edge?: SolidEdge;
   } = {},
 ): StrokeGeometryResult {
   const inkRadius = opts.inkRadius ?? SOLID_INK_RADIUS;
   const depth = opts.depth ?? EXTRUDE_DEPTH;
+  const holesEnabled = opts.holes ?? true;
+  const eased = (opts.edge ?? 'eased') === 'eased';
   const resolution = Math.min(opts.resolution ?? SOLID_GRID_RESOLUTION, SOLID_MAX_GRID_RESOLUTION);
 
   const pool = worldStrokes.map(dedupeConsecutive).filter((s) => s.length > 0);
@@ -1191,6 +1350,7 @@ export function buildSolidGeometry(
 
     let holeCount = 0;
     for (let i = 0; i < rawLoops.length; i++) {
+      if (!holesEnabled) break; // holes OFF → filled silhouette, nothing subtracts
       if (depths[i] % 2 !== 1) continue;
       // Innermost containing outer = the smallest-area outer that contains it.
       const [x, y] = rawLoops[i][0];
@@ -1215,7 +1375,7 @@ export function buildSolidGeometry(
 
     const geometry = new THREE.ExtrudeGeometry(shapes, {
       depth,
-      bevelEnabled: true,
+      bevelEnabled: eased,
       bevelSize: EXTRUDE_BEVEL_SIZE,
       bevelThickness: EXTRUDE_BEVEL_THICKNESS,
       bevelSegments: EXTRUDE_BEVEL_SEGMENTS,
@@ -1246,6 +1406,10 @@ export function buildPoolSolidGeometry(
     resolution?: number;
     depth?: number;
     rodRadius?: number;
+    /** D2-B Holes toggle passthrough (default true — donuts stay donuts). */
+    holes?: boolean;
+    /** Tier-2 edge family passthrough (default 'eased'). */
+    edge?: SolidEdge;
   } = {},
 ): StrokeGeometryResult {
   const viewBox = opts.viewBox ?? DEFAULT_VIEWBOX;
@@ -1262,6 +1426,8 @@ export function buildPoolSolidGeometry(
     depth: opts.depth,
     closedFlags,
     rodRadius: opts.rodRadius,
+    holes: opts.holes,
+    edge: opts.edge,
   });
 }
 
@@ -1408,14 +1574,30 @@ export function buildStrokeGeometry(
     depth?: number;
     /** Mid-stroke fullness for the explicit 'inflate' mode. */
     inflateRadius?: number;
+    /** ARROW RULE chip override for the auto family pick (per-object flip). */
+    treatAsClosed?: boolean;
+    /** Engine option passthroughs (rock-1 cross-contract + Tier-2 families). */
+    jointAngleThresholdDeg?: number;
+    bevelProfile?: ExtrudeBevelProfile;
+    sideWall?: ExtrudeSideWall;
+    inflateProfileExp?: number;
+    solidHoles?: boolean;
+    solidEdge?: SolidEdge;
   } = {},
 ): StrokeGeometryResult {
   const viewBox = opts.viewBox ?? DEFAULT_VIEWBOX;
   const simplified = rdpPoints(points, opts.epsilon ?? RDP_EPSILON);
-  const mode = resolveGeometryMode(opts.mode ?? 'auto', simplified);
+  const mode = resolveGeometryMode(opts.mode ?? 'auto', simplified, {
+    treatAsClosed: opts.treatAsClosed,
+  });
   const world = normalizeStrokePoints(simplified, viewBox, WORLD_SCALE, opts.center);
   if (mode === 'extrude') {
-    return buildExtrudeGeometry(world, { depth: opts.depth, rodRadius: opts.radius });
+    return buildExtrudeGeometry(world, {
+      depth: opts.depth,
+      rodRadius: opts.radius,
+      bevelProfile: opts.bevelProfile,
+      sideWall: opts.sideWall,
+    });
   }
   if (mode === 'inflate') {
     // Explicit-only (auto never lands here). Pressure rides the rdp-simplified
@@ -1425,6 +1607,7 @@ export function buildStrokeGeometry(
     return buildInflateGeometry(world, {
       baseRadius: opts.inflateRadius,
       pressures: extractPressures(simplified),
+      profileExp: opts.inflateProfileExp,
       rodRadius: opts.radius,
     });
   }
@@ -1436,10 +1619,22 @@ export function buildStrokeGeometry(
       depth: opts.depth,
       closedFlags: [isClosedStroke(simplified)],
       rodRadius: opts.radius,
+      holes: opts.solidHoles,
+      edge: opts.solidEdge,
     });
   }
-  // Forced-Rod on a closed-ish stroke renders as a closed loop (honest read).
-  return buildRodGeometry(world, { radius: opts.radius, closed: isClosedStroke(simplified) });
+  // Rod: explicit pick keeps the tolerant ring closure (today's behavior); an
+  // AUTO-resolved rod from the ambiguous band stays an OPEN tube — the gap is
+  // the honest read (the chip welds it shut, not the engine).
+  const closeRing =
+    opts.mode !== undefined && opts.mode !== 'auto'
+      ? isClosedStroke(simplified)
+      : isSolidFamilyClosure(closureStateOf(simplified), opts.treatAsClosed);
+  return buildRodGeometry(world, {
+    radius: opts.radius,
+    closed: closeRing,
+    jointAngleThresholdDeg: opts.jointAngleThresholdDeg,
+  });
 }
 
 // ─── Memo key ────────────────────────────────────────────────────────────────
@@ -1449,12 +1644,5 @@ export function buildStrokeGeometry(
  *  per-stroke length + endpoints catch every add/clear/edit the draw flow
  *  can produce. */
 export function strokesKey(strokes: StrokeInputPoint[][]): string {
-  return strokes
-    .map((s) => {
-      if (s.length === 0) return '0';
-      const [fx, fy] = s[0];
-      const [lx, ly] = s[s.length - 1];
-      return `${s.length}:${fx.toFixed(1)},${fy.toFixed(1)}:${lx.toFixed(1)},${ly.toFixed(1)}`;
-    })
-    .join('|');
+  return strokes.map(strokeSignature).join('|');
 }

@@ -11,10 +11,16 @@ export type { GeometryMode, GeometryModeSetting } from '../../lib/geometry3d/str
 // material presets + hatch inputs.
 export type { HatchInputs, HatchVariant } from './hatchMaterial';
 export type {
+  ExtrudeBevelProfile3D,
   ExtrudeParams3D,
+  ExtrudeSideWall3D,
   InflateParams3D,
+  InflateProfileFamily3D,
   Mode3DParams,
+  RodCapStyle3D,
+  RodJointStyle3D,
   RodParams3D,
+  SolidEdge3D,
   SolidParams3D,
 } from './modeParams';
 export type { MaterialPresetId } from './materials3d';

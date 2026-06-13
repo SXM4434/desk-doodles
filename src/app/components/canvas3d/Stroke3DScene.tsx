@@ -5,45 +5,45 @@ import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-
 import * as THREE from 'three';
 import {
   DEFAULT_VIEWBOX,
-  DEDUPE_MIN_DIST,
-  EXTRUDE_BEVEL_SEGMENTS,
-  EXTRUDE_BEVEL_SIZE,
-  EXTRUDE_BEVEL_THICKNESS,
-  EXTRUDE_SMOOTH_MIN_ANCHORS,
   INFLATE_BASE_RADIUS,
   INFLATE_PRESSURE_INFLUENCE,
+  INFLATE_PROFILE_EXP,
   INFLATE_TIP_RADIUS,
   JOINT_ANGLE_THRESHOLD_DEG,
-  JOINT_DEDUP_FACTOR,
-  JOINT_ENDPOINT_EPS_FACTOR,
-  MIN_EXTRUDE_AREA,
   ROD_RADIUS,
   SOLID_INK_RADIUS,
   SPHERE_SEGMENTS,
+  TREATED_AS_CLOSED_DEFAULT,
   WORLD_SCALE,
   buildExtrudeGeometry,
   buildInflateGeometry,
   buildPoolSolidGeometry,
   buildRodGeometry,
+  closureStateOf,
   extractPressures,
   isClosedStroke,
+  isSolidFamilyClosure,
   normalizeStrokePoints,
   poolCenter,
   rdpPoints,
   resolveGeometryMode,
+  strokeSignature,
   strokesKey,
   type GeometryModeSetting,
   type StrokeGeometryResult,
   type StrokeInputPoint,
   type ViewBoxSize,
 } from '../../lib/geometry3d/strokeTo3d';
+import { pushClosureCorrection } from '../../lib/smart/conversionMap';
 import {
   DEFAULT_MODE3D_PARAMS,
+  INFLATE_PROFILE_FAMILY_PRESETS,
   extrudeBevelAutoDisabled,
   extrudeEffectiveDepth,
   inflatePuffAspectZ,
   type Mode3DParams,
 } from './modeParams';
+import { rodAdornmentSpecs, type RodAdornmentSpec } from './rodAdornments';
 import {
   INK_3D_DEFAULT,
   MATERIAL_PARAMS_3D,
@@ -160,6 +160,7 @@ if (import.meta.env.DEV) {
     d.inflate.baseRadius !== INFLATE_BASE_RADIUS ||
     d.inflate.tipRadius !== INFLATE_TIP_RADIUS ||
     d.inflate.pressureInfluence !== INFLATE_PRESSURE_INFLUENCE ||
+    INFLATE_PROFILE_FAMILY_PRESETS.balloon.profileExp !== INFLATE_PROFILE_EXP ||
     d.solid.inkRadius !== SOLID_INK_RADIUS
   ) {
     // eslint-disable-next-line no-console
@@ -169,161 +170,58 @@ if (import.meta.env.DEV) {
   }
 }
 
-// ── Local mirrors of strokeTo3d module-private steps ────────────────────────
-// strokeTo3d.ts is the geometry rock's file (exclusive ownership) — the two
-// helpers below mirror its private logic so the spec'd params (joint
-// sensitivity 20–70°, bevel toggle) are REAL today. Followup filed for the
-// builders to grow `jointAngleThresholdDeg` / `bevelEnabled` options so these
-// mirrors can be deleted (cross-rock contract, see rock report).
+// ── Engine-option wiring (rock X) ───────────────────────────────────────────
+// The rock-1 local mirrors (detectJointsWithAngle / buildExtrudeNoBevel) are
+// DELETED — joint sensitivity and bevel profile are REAL strokeTo3d options
+// now; the chrome drives the engine, not a copy.
 
-const DEDUPE_MIN_DIST_SQ = DEDUPE_MIN_DIST * DEDUPE_MIN_DIST;
-function dedupeConsecutiveLocal(world: THREE.Vector3[]): THREE.Vector3[] {
-  const out: THREE.Vector3[] = [];
-  for (const v of world) {
-    const prev = out[out.length - 1];
-    if (!prev || prev.distanceToSquared(v) > DEDUPE_MIN_DIST_SQ) out.push(v);
-  }
-  return out;
-}
-
-/** MIRROR of strokeTo3d detectJointPositions (FS detectJoints3D semantics)
- *  with the angle threshold as a PARAMETER — at 40° output is identical to
- *  the lib walk; the chrome's Joint-sensitivity slider drives it 20–70°. */
-function detectJointsWithAngle(
-  filtered: THREE.Vector3[],
-  startPt: THREE.Vector3,
-  endPt: THREE.Vector3,
-  radius: number,
-  angleDeg: number,
-): THREE.Vector3[] {
-  const positions: THREE.Vector3[] = [];
-  const angleThresholdRad = (angleDeg * Math.PI) / 180;
-  const endpointEps = radius * JOINT_ENDPOINT_EPS_FACTOR;
-  const jointDedup = radius * JOINT_DEDUP_FACTOR;
-  for (let i = 1; i < filtered.length - 1; i++) {
-    const prev = filtered[i - 1];
-    const curr = filtered[i];
-    const next = filtered[i + 1];
-    const ax = curr.x - prev.x, ay = curr.y - prev.y, az = curr.z - prev.z;
-    const bx = next.x - curr.x, by = next.y - curr.y, bz = next.z - curr.z;
-    const magA = Math.sqrt(ax * ax + ay * ay + az * az);
-    const magB = Math.sqrt(bx * bx + by * by + bz * bz);
-    if (magA < 1e-6 || magB < 1e-6) continue;
-    const dot = ax * bx + ay * by + az * bz;
-    const cosAngle = Math.max(-1, Math.min(1, dot / (magA * magB)));
-    const deviation = Math.PI - Math.acos(cosAngle);
-    if (deviation > angleThresholdRad) {
-      if (curr.distanceTo(startPt) < endpointEps) continue;
-      if (curr.distanceTo(endPt) < endpointEps) continue;
-      if (positions.length > 0 && curr.distanceTo(positions[positions.length - 1]) < jointDedup)
-        continue;
-      positions.push(curr.clone());
-    }
-  }
-  return positions;
-}
-
-/** Signed shoelace area (mirror of strokeTo3d's private helper). */
-function shoelaceAreaLocal(world: THREE.Vector3[]): number {
-  let area = 0;
-  for (let i = 0; i < world.length; i++) {
-    const a = world[i];
-    const b = world[(i + 1) % world.length];
-    area += a.x * b.y - b.x * a.y;
-  }
-  return area / 2;
-}
-
-function hasNonFinitePositionsLocal(geometry: THREE.BufferGeometry): boolean {
-  const pos = geometry.getAttribute('position');
-  if (!pos) return true;
-  const arr = pos.array as ArrayLike<number>;
-  for (let i = 0; i < arr.length; i++) {
-    if (!Number.isFinite(arr[i])) return true;
-  }
-  return false;
-}
-
-const EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR = 8; // mirror (private in strokeTo3d)
-const EXTRUDE_SMOOTH_MAX_SAMPLES = 256; // mirror (private in strokeTo3d)
-
-/** MIRROR of strokeTo3d buildExtrudeGeometry with `bevelEnabled` exposed —
- *  called ONLY when the Bevel toggle is OFF (or auto-disabled below the FS
- *  tiny-width threshold); bevel-ON extrudes go through the lib builder
- *  verbatim. Same smooth-dispatch, same degenerate fallbacks. */
-function buildExtrudeNoBevel(
-  world: THREE.Vector3[],
-  depth: number,
-  rodRadius: number,
-): StrokeGeometryResult {
-  const pts = dedupeConsecutiveLocal(world);
-  if (pts.length > 1 && pts[0].distanceToSquared(pts[pts.length - 1]) < 1e-12) pts.pop();
-  if (pts.length < 3 || Math.abs(shoelaceAreaLocal(pts)) < MIN_EXTRUDE_AREA) {
-    return buildRodGeometry(world, { radius: rodRadius });
-  }
-  try {
-    let outline = pts;
-    if (pts.length >= EXTRUDE_SMOOTH_MIN_ANCHORS) {
-      const loop = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
-      const divisions = Math.min(
-        pts.length * EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR,
-        EXTRUDE_SMOOTH_MAX_SAMPLES,
-      );
-      outline = loop.getPoints(divisions);
-      outline.pop();
-    }
-    const shape = new THREE.Shape(outline.map((v) => new THREE.Vector2(v.x, v.y)));
-    const geometry = new THREE.ExtrudeGeometry(shape, {
-      depth,
-      bevelEnabled: false,
-      curveSegments: 12,
-      steps: 1,
-    });
-    if (hasNonFinitePositionsLocal(geometry)) {
-      geometry.dispose();
-      throw new Error('extrude produced non-finite positions');
-    }
-    geometry.translate(0, 0, -depth / 2);
-    return { kind: 'extrude', geometry, holesCut: 0 };
-  } catch {
-    return buildRodGeometry(world, { radius: rodRadius, closed: true });
-  }
-}
-
-/** Per-stroke build with the FULL spec §2 param sets applied. */
-function buildStrokeWithParams(
+/** Per-stroke build with the FULL spec §2 param sets + Tier-2 families
+ *  applied. EXPORTED: the tools/3d board harness renders contact sheets
+ *  through this exact product path. `treatAsClosed` = the ARROW RULE chip
+ *  override for this stroke (auto mode only). */
+export function buildStrokeWithParams(
   points: StrokeInputPoint[],
   viewBox: ViewBoxSize,
   center: { x: number; y: number },
   setting: GeometryModeSetting,
   p: Mode3DParams,
+  treatAsClosed?: boolean,
 ): StrokeGeometryResult {
   const simplified = rdpPoints(points);
-  const mode = resolveGeometryMode(setting, simplified);
+  const mode = resolveGeometryMode(setting, simplified, { treatAsClosed });
   const world = normalizeStrokePoints(simplified, viewBox, WORLD_SCALE, center);
 
   if (mode === 'extrude') {
     const depth = extrudeEffectiveDepth(p.extrude.width, p.extrude.depthMult);
-    const bevelOn = p.extrude.bevel && !extrudeBevelAutoDisabled(p.extrude.width);
-    const result = bevelOn
-      ? buildExtrudeGeometry(world, { depth, rodRadius: p.rod.radius })
-      : buildExtrudeNoBevel(world, depth, p.rod.radius);
-    return result;
+    // Spec §2.2 tiny-width auto-disable: profile falls to 'sharp' under the
+    // floor (the chrome surfaces the chip — never silent).
+    const profile = extrudeBevelAutoDisabled(p.extrude.width)
+      ? 'sharp'
+      : p.extrude.bevelProfile;
+    return buildExtrudeGeometry(world, {
+      depth,
+      rodRadius: p.rod.radius,
+      bevelProfile: profile,
+      sideWall: p.extrude.sideWall,
+    });
   }
 
   if (mode === 'inflate') {
+    const family = INFLATE_PROFILE_FAMILY_PRESETS[p.inflate.profileFamily];
     const result = buildInflateGeometry(world, {
       baseRadius: p.inflate.baseRadius,
       tipRadius: p.inflate.tipRadius,
       pressures: extractPressures(simplified),
       pressureInfluence: p.inflate.pressureInfluence,
+      profileExp: family.profileExp,
       rodRadius: p.rod.radius,
     });
-    // Puff (D-A): FS Z-aspect applied as a geometry-space Z scale.
+    // Puff (D-A): FS Z-aspect applied as a geometry-space Z scale, modulated
+    // by the Tier-2 profile family (presets OVER the Puff curve).
     // applyMatrix4 runs positions AND normals through the normal matrix, so
     // the non-uniform scale shades correctly. aspect 1.0 is skipped (no-op).
     if (result.kind === 'inflate') {
-      const aspectZ = inflatePuffAspectZ(p.inflate.puff);
+      const aspectZ = inflatePuffAspectZ(p.inflate.puff) * family.aspectScale;
       if (Math.abs(aspectZ - 1) > 1e-3) {
         result.geometry.applyMatrix4(new THREE.Matrix4().makeScale(1, 1, aspectZ));
       }
@@ -331,35 +229,28 @@ function buildStrokeWithParams(
     return result;
   }
 
-  // rod (and auto-resolved rod)
-  const rod = buildRodGeometry(world, {
+  // rod — explicit pick keeps the tolerant ring closure (today); an
+  // AUTO-resolved rod from the ambiguous band stays an OPEN tube (the gap is
+  // the honest read; the chip welds it, not the engine).
+  const closeRing =
+    setting === 'auto'
+      ? isSolidFamilyClosure(closureStateOf(simplified), treatAsClosed)
+      : isClosedStroke(simplified);
+  return buildRodGeometry(world, {
     radius: p.rod.radius,
-    closed: isClosedStroke(simplified),
+    closed: closeRing,
+    jointAngleThresholdDeg: p.rod.jointSensitivityDeg,
   });
-  if (
-    rod.kind === 'rod' &&
-    p.rod.jointBlobs &&
-    p.rod.jointSensitivityDeg !== JOINT_ANGLE_THRESHOLD_DEG
-  ) {
-    // Re-detect joints at the user's sensitivity (lib walk is fixed at 40°).
-    const pts = dedupeConsecutiveLocal(world);
-    if (pts.length >= 3) {
-      rod.jointPositions = detectJointsWithAngle(
-        pts,
-        pts[0],
-        pts[pts.length - 1],
-        p.rod.radius,
-        p.rod.jointSensitivityDeg,
-      );
-    }
-  }
-  return rod;
 }
 
 export interface Stroke3DSceneProps {
   /** Raw strokes in viewBox coords (y-down). Points are [x, y] or
    *  [x, y, pressure] — DrawSurface's `stroke.points` pass through unchanged. */
   strokes: StrokeInputPoint[][];
+  /** ARROW RULE: seed chip overrides (strokeSignature → treat-as-closed).
+   *  The chip mutates scene-local state from here; harness boards use it to
+   *  show the 'solid' variant without flipping the constant. */
+  initialTreatAsClosed?: Record<string, boolean>;
   /** Source coordinate space. Defaults to the draw surface's 800×600. */
   viewBox?: ViewBoxSize;
   /** 'auto' picks per stroke: open → rod, closed → extrude. 'inflate' and
@@ -425,6 +316,7 @@ function StrokeMeshes({
   modeParams,
   showEdges,
   edgeColor,
+  treatAsClosedBySig,
 }: {
   strokes: StrokeInputPoint[][];
   viewBox: ViewBoxSize;
@@ -433,9 +325,11 @@ function StrokeMeshes({
   modeParams: Mode3DParams;
   showEdges: boolean;
   edgeColor: string;
+  /** ARROW RULE chip overrides, keyed by strokeSignature (auto mode only). */
+  treatAsClosedBySig?: Record<string, boolean>;
 }) {
   const key = strokesKey(strokes);
-  const paramsKey = JSON.stringify(modeParams);
+  const paramsKey = JSON.stringify(modeParams) + '|' + JSON.stringify(treatAsClosedBySig ?? {});
 
   const builds = useMemo<StrokeGeometryResult[]>(() => {
     const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES_3D);
@@ -445,10 +339,9 @@ function StrokeMeshes({
     const center = poolCenter(pool, viewBox);
     if (geometryMode === 'solid') {
       // Solid is pool-level by nature: ALL strokes rasterize into ONE
-      // watertight mass — a single mesh, not per-stroke. NOTE: `holes` rides
-      // along for the day the geometry rock's builder accepts it (option needs
-      // filed cross-rock); until then the chrome surfaces the toggle as
-      // pending — never a silent no-op.
+      // watertight mass — a single mesh, not per-stroke. Holes + edge are
+      // REAL engine options now (rock X) — the chrome toggle drives the
+      // builder directly.
       return [
         buildPoolSolidGeometry(pool, {
           viewBox,
@@ -457,11 +350,19 @@ function StrokeMeshes({
           depth: modeParams.solid.depth,
           rodRadius: modeParams.rod.radius,
           holes: modeParams.solid.holes,
-        } as Parameters<typeof buildPoolSolidGeometry>[1]),
+          edge: modeParams.solid.edge,
+        }),
       ];
     }
     return pool.map((points) =>
-      buildStrokeWithParams(points, viewBox, center, geometryMode, modeParams),
+      buildStrokeWithParams(
+        points,
+        viewBox,
+        center,
+        geometryMode,
+        modeParams,
+        treatAsClosedBySig?.[strokeSignature(points)],
+      ),
     );
     // `key`/`paramsKey` stand in for array/object identity (cheap deterministic keys).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -480,13 +381,22 @@ function StrokeMeshes({
     (window as unknown as Record<string, unknown>).__dd3d = {
       geometryMode,
       paramsKey,
+      rodFamilies: {
+        capStyle: modeParams.rod.capStyle,
+        jointStyle: modeParams.rod.jointStyle,
+        jointSensitivityDeg: modeParams.rod.jointSensitivityDeg,
+      },
       builds: builds.map((b) =>
         b.kind === 'rod'
           ? { kind: b.kind, joints: b.jointPositions.length, caps: b.capPositions.length, radius: b.radius }
-          : { kind: b.kind },
+          : b.kind === 'solid'
+            ? { kind: b.kind, outerContours: b.outerContours, holes: b.holes }
+            : b.kind === 'extrude'
+              ? { kind: b.kind, holesCut: b.holesCut }
+              : { kind: b.kind },
       ),
     };
-  }, [builds, geometryMode, paramsKey]);
+  }, [builds, geometryMode, paramsKey, modeParams.rod]);
 
   // SVG-port ink outline: EdgesGeometry per mesh (30° crease threshold —
   // smooth tubes contribute almost nothing, slab rims read as drawn lines).
@@ -509,13 +419,29 @@ function StrokeMeshes({
     return () => edgeMaterial.dispose();
   }, [edgeMaterial]);
 
-  // Shared unit sphere for rod endpoint caps AND joint spheres, scaled per
-  // use (plan §1.1 — sibling meshes instead of CSG merge). Tessellation =
-  // free-stroke SPHERE_SEGMENTS (14×14, origin/main lib/geometry-engines.ts).
+  // Shared UNIT primitives for rod adornments (caps + joint blobs), scaled/
+  // oriented per rodAdornmentSpecs (plan §1.1 — sibling meshes instead of CSG
+  // merge). Sphere tessellation = free-stroke SPHERE_SEGMENTS (14×14).
   const capSphere = useMemo(() => new THREE.SphereGeometry(1, SPHERE_SEGMENTS, SPHERE_SEGMENTS), []);
+  const capDisk = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 24), []);
   useEffect(() => {
-    return () => capSphere.dispose();
-  }, [capSphere]);
+    return () => {
+      capSphere.dispose();
+      capDisk.dispose();
+    };
+  }, [capSphere, capDisk]);
+
+  // Tier-2 rod families → adornment specs (ONE placement source of truth —
+  // rodAdornments.ts — shared with the tools/3d board harness).
+  const adornments = useMemo<RodAdornmentSpec[][]>(
+    () =>
+      builds.map((b) =>
+        b.kind === 'rod'
+          ? rodAdornmentSpecs(b, modeParams.rod.capStyle, modeParams.rod.jointStyle, modeParams.rod.caps)
+          : [],
+      ),
+    [builds, modeParams.rod.capStyle, modeParams.rod.jointStyle, modeParams.rod.caps],
+  );
 
   // World-space pool bounds across every geometry (incl. cap/joint spheres,
   // which extend radius around their centerline positions). Drives the
@@ -532,9 +458,12 @@ function StrokeMeshes({
         max.max(bb.max);
       }
       if (b.kind === 'rod') {
-        for (const p of b.capPositions.concat(b.jointPositions)) {
-          min.min(new THREE.Vector3(p.x - b.radius, p.y - b.radius, p.z - b.radius));
-          max.max(new THREE.Vector3(p.x + b.radius, p.y + b.radius, p.z + b.radius));
+        // Pad by the largest adornment reach (ink-blob bead = 1.5×radius) so
+        // shadow + framing cover every cap family without re-measuring.
+        const pad = b.radius * 1.5;
+        for (const p of b.capPositions.concat(b.jointPositions, b.endPositions)) {
+          min.min(new THREE.Vector3(p.x - pad, p.y - pad, p.z - pad));
+          max.max(new THREE.Vector3(p.x + pad, p.y + pad, p.z + pad));
         }
       }
     }
@@ -552,19 +481,20 @@ function StrokeMeshes({
           {showEdges && edges[i] && (
             <lineSegments geometry={edges[i]} material={edgeMaterial} />
           )}
-          {/* Endpoint caps — chrome-controlled (spec §2.1 End caps toggle). */}
-          {b.kind === 'rod' &&
-            modeParams.rod.caps &&
-            b.capPositions.map((p, j) => (
-              <mesh key={j} geometry={capSphere} position={p} scale={b.radius} material={material} />
-            ))}
-          {/* Joint spheres (free-stroke ink-blob character) — chrome-controlled
-              (spec §2.1 Joint blobs toggle + sensitivity slider). */}
-          {b.kind === 'rod' &&
-            modeParams.rod.jointBlobs &&
-            b.jointPositions.map((p, j) => (
-              <mesh key={`j${j}`} geometry={capSphere} position={p} scale={b.radius} material={material} />
-            ))}
+          {/* Rod adornments — Tier-2 cap family (round/flat/ink-blob) + joint
+              family (blob/clean) + the End-caps toggle, all through
+              rodAdornmentSpecs (one placement source, shared with the board
+              harness). */}
+          {adornments[i]?.map((spec, j) => (
+            <mesh
+              key={`a${j}`}
+              geometry={spec.shape === 'sphere' ? capSphere : capDisk}
+              position={spec.position}
+              scale={spec.scale}
+              quaternion={spec.quaternion}
+              material={material}
+            />
+          ))}
         </group>
       ))}
       {/* Soft ground-contact shadow (rig adaptation for white paper). frames={1}
@@ -590,6 +520,7 @@ function StrokeMeshes({
 
 export function Stroke3DScene({
   strokes,
+  initialTreatAsClosed,
   viewBox = DEFAULT_VIEWBOX,
   geometryMode = 'auto',
   style3d = 'native',
@@ -605,6 +536,47 @@ export function Stroke3DScene({
   const [paper] = useState(resolvePaperHex);
   const bg = background ?? paper;
   const ink = inkColor ?? INK_3D_DEFAULT;
+
+  // ── ARROW RULE chip state (scene-local, signature-keyed — a stroke edit
+  // changes its signature and the stale override simply stops matching). ──
+  const [treatAsClosedBySig, setTreatAsClosedBySig] = useState<Record<string, boolean>>(
+    () => initialTreatAsClosed ?? {},
+  );
+
+  /** Ambiguous-closure strokes (auto mode only — explicit picks are sacred,
+   *  no chip). One chip per stroke; resolution = override > default. */
+  const ambiguousStrokes = useMemo(() => {
+    if (geometryMode !== 'auto') return [];
+    const out: Array<{ sig: string; index: number; resolvedSolid: boolean }> = [];
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES_3D);
+    for (let i = 0; i < pool.length; i++) {
+      const simplified = rdpPoints(pool[i]);
+      if (closureStateOf(simplified) !== 'treated-as-closed') continue;
+      const sig = strokeSignature(pool[i]);
+      out.push({
+        sig,
+        index: i,
+        resolvedSolid: isSolidFamilyClosure('treated-as-closed', treatAsClosedBySig[sig]),
+      });
+    }
+    return out;
+  }, [strokes, geometryMode, treatAsClosedBySig]);
+
+  const flipTreatAsClosed = (sig: string, resolvedSolid: boolean) => {
+    // Every flip = a labeled correction into the unified decision log
+    // (conversion-semantics §8 / addendum §1.1 chip-flip training tuples).
+    pushClosureCorrection({
+      entryType: 'conversion-correction',
+      surface: 'conversion',
+      renderSurface: null,
+      strokeSignature: sig,
+      from: resolvedSolid,
+      to: !resolvedSolid,
+      defaultAtFlip: TREATED_AS_CLOSED_DEFAULT,
+      mode: geometryMode,
+    });
+    setTreatAsClosedBySig((prev) => ({ ...prev, [sig]: !resolvedSolid }));
+  };
 
   // ── Native: FS preset MeshPhysicalMaterial (materials3d.ts, verbatim) ──
   const preset: MaterialPresetId = materialPreset ?? MODE_MATERIAL_DEFAULTS_3D[geometryMode];
@@ -645,12 +617,14 @@ export function Stroke3DScene({
   const material: THREE.Material = hatchMaterial ?? nativeMaterial;
 
   return (
+    // Wrapper carries the caller's style/className (the Canvas fills it) so
+    // the ARROW RULE chips can overlay the GL viewport as HTML.
+    <div style={{ position: 'relative', ...style }} className={className}>
     <Canvas
       dpr={[1, 2]}
       camera={{ position: [0, 1.5, 7], fov: 40 }}
       gl={{ antialias: true }}
-      style={style}
-      className={className}
+      style={{ width: '100%', height: '100%' }}
     >
       <color attach="background" args={[bg]} />
       {/* Studio rig — Free Stroke key+fill+rim structure (positions verbatim
@@ -730,9 +704,59 @@ export function Stroke3DScene({
         modeParams={modeParams}
         showEdges={style3d === 'svg-port'}
         edgeColor={ink}
+        treatAsClosedBySig={treatAsClosedBySig}
       />
       <OrbitControls makeDefault enableDamping />
     </Canvas>
+    {/* ARROW RULE chips — the honest boundary made tappable (conversion-
+        semantics §6 row 2). One pill per ambiguous stroke; copy follows the
+        RESOLVED family; every tap is a logged correction. */}
+    {ambiguousStrokes.length > 0 && (
+      <div
+        style={{
+          position: 'absolute',
+          left: 12,
+          bottom: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+          gap: 6,
+          zIndex: 2,
+        }}
+      >
+        {ambiguousStrokes.map((a, n) => (
+          <button
+            key={a.sig}
+            type="button"
+            data-dd-chip="treat-as-closed"
+            data-resolved={a.resolvedSolid ? 'closed' : 'open'}
+            onClick={() => flipTreatAsClosed(a.sig, a.resolvedSolid)}
+            title={
+              a.resolvedSolid
+                ? 'This nearly-closed stroke was welded into a solid — tap to keep it an open line instead.'
+                : 'This stroke nearly closes — tap to weld the gap and fill it as a solid.'
+            }
+            style={{
+              fontFamily:
+                "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+              fontSize: 10,
+              letterSpacing: '0.04em',
+              lineHeight: 1.2,
+              padding: '5px 12px',
+              borderRadius: 999,
+              border: '1px solid var(--dir-border, #d8d2c6)',
+              background: 'var(--dir-raised, #ffffff)',
+              color: 'var(--dir-text-secondary, #5f5b54)',
+              cursor: 'pointer',
+            }}
+          >
+            {ambiguousStrokes.length > 1 ? `Stroke ${n + 1} · ` : ''}
+            {a.resolvedSolid ? 'Treated as closed — tap to open' : 'Open-ish — treat as closed?'}
+          </button>
+        ))}
+      </div>
+    )}
+    </div>
   );
 }
 

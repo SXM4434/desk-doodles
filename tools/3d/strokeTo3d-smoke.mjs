@@ -12,6 +12,7 @@ const {
   rdpPoints,
   normalizeStrokePoints,
   isClosedStroke,
+  isSolidFamilyClosure,
   closureStateOf,
   pickGeometryMode,
   resolveGeometryMode,
@@ -28,8 +29,10 @@ const {
   extractPressures,
   poolCenter,
   strokesKey,
+  strokeSignature,
   DEFAULT_VIEWBOX,
   REGION_EXTRACTOR_VERSION,
+  TREATED_AS_CLOSED_DEFAULT,
 } = mod;
 const { convertStrokePool } = await import(
   new URL('../../src/app/lib/geometry3d/convert.ts', import.meta.url)
@@ -72,6 +75,34 @@ const collinear = [
   [200, 300, 0.5],
   [300, 300, 0.5],
   [105, 300, 0.5],
+];
+
+// AMBIGUOUS-band fixture (Sebs's arrow repro shape): gap 18px on a ~304px
+// diagonal lands in [tight=8, loose≈24.3) → 'treated-as-closed'.
+const arrowBand = (() => {
+  const band = [];
+  const arrowPts = [[200, 300], [400, 300], [400, 260], [480, 320], [400, 380], [400, 340], [200, 340], [202, 318]];
+  for (let s = 0; s + 1 < arrowPts.length; s++) {
+    const [ax, ay] = arrowPts[s];
+    const [bx, by] = arrowPts[s + 1];
+    for (let t = 0; t <= 19; t++) band.push([ax + ((bx - ax) * t) / 20, ay + ((by - ay) * t) / 20, 0.5]);
+  }
+  band.push([202, 318, 0.5]);
+  return band;
+})();
+
+// Spiky polyline with MIXED interior angles for the joint-sensitivity option.
+// The FS walk fires where the INTERIOR angle clears the threshold (deviation
+// = π − angle(a,b) = the interior angle at the vertex), so the 20–70° slider
+// discriminates near-hairpin spikes. Interior angles at the 4 interior
+// vertices: [60°, ~170°, 30°, ~160°] → joints@20=4 > @40=3 > @70=2.
+const zigzag = [
+  [100, 300, 0.5],
+  [200, 300, 0.5], // spike A — interior 60°
+  [155, 378, 0.5], // gentle ~170° (fires at every threshold — constant)
+  [121, 472, 0.5], // spike B — interior 30°
+  [205, 401, 0.5], // gentle ~160° (constant)
+  [299, 367, 0.5],
 ];
 
 // ── 1. RDP reduces a dense sine ─────────────────────────────────────────────
@@ -366,19 +397,159 @@ check('closureStateOf: 3 states (closed / treated-as-closed / open), boolean unc
   // Sine endpoints are far apart → 'open'.
   assert(closureStateOf(sine) === 'open', `sine → ${closureStateOf(sine)}`);
   // Arrow-band fixture: gap 18px on a ~304px-diag shape ∈ [8, 24.3) → TAC.
-  const band = [];
-  const arrowPts = [[200, 300], [400, 300], [400, 260], [480, 320], [400, 380], [400, 340], [200, 340], [202, 318]];
-  for (let s = 0; s + 1 < arrowPts.length; s++) {
-    const [ax, ay] = arrowPts[s];
-    const [bx, by] = arrowPts[s + 1];
-    for (let t = 0; t <= 19; t++) band.push([ax + ((bx - ax) * t) / 20, ay + ((by - ay) * t) / 20, 0.5]);
-  }
-  band.push([202, 318, 0.5]);
-  assert(closureStateOf(band) === 'treated-as-closed', `arrow band → ${closureStateOf(band)}`);
-  // Back-compat law: solid family ≡ the old boolean for every fixture.
-  for (const pts of [loop, sine, band, collinear]) {
+  assert(closureStateOf(arrowBand) === 'treated-as-closed', `arrow band → ${closureStateOf(arrowBand)}`);
+  // LOOSE-boolean law: isClosedStroke ≡ (state !== 'open') for every fixture
+  // (the explicit-mode + raster reading — independent of the arrow rule).
+  for (const pts of [loop, sine, arrowBand, collinear]) {
     assert(isClosedStroke(pts) === (closureStateOf(pts) !== 'open'), 'boolean drifted from 3-state');
   }
+});
+
+// ── 6e. ROCK X — arrow rule + engine options ────────────────────────────────
+
+check('ARROW RULE: isSolidFamilyClosure truth table — both defaults, override wins', () => {
+  // Unambiguous states ignore default AND override.
+  for (const dflt of ['rod', 'solid']) {
+    assert(isSolidFamilyClosure('closed', undefined, dflt) === true, `closed under ${dflt}`);
+    assert(isSolidFamilyClosure('open', undefined, dflt) === false, `open under ${dflt}`);
+    assert(isSolidFamilyClosure('closed', false, dflt) === true, 'closed never flips');
+    assert(isSolidFamilyClosure('open', true, dflt) === false, 'open never flips');
+  }
+  // Ambiguous band: default decides…
+  assert(isSolidFamilyClosure('treated-as-closed', undefined, 'rod') === false, 'rod default');
+  assert(isSolidFamilyClosure('treated-as-closed', undefined, 'solid') === true, 'solid default');
+  // …and the per-object chip override beats the default (one-line flip law).
+  assert(isSolidFamilyClosure('treated-as-closed', true, 'rod') === true, 'override → closed');
+  assert(isSolidFamilyClosure('treated-as-closed', false, 'solid') === false, 'override → open');
+  console.log(`   TREATED_AS_CLOSED_DEFAULT = '${TREATED_AS_CLOSED_DEFAULT}' (pending Sebs ruling)`);
+});
+
+check('ARROW RULE: auto pick — arrow band → rod under rod default; chip override → extrude', () => {
+  assert(TREATED_AS_CLOSED_DEFAULT === 'rod', 'this battery snapshot assumes the rod default');
+  assert(pickGeometryMode(arrowBand) === 'rod', `arrow band picked ${pickGeometryMode(arrowBand)}`);
+  assert(pickGeometryMode(arrowBand, { treatAsClosed: true }) === 'extrude', 'override should weld');
+  assert(resolveGeometryMode('auto', arrowBand, { treatAsClosed: true }) === 'extrude', 'resolve passthrough');
+  // Truly closed/open are untouched by the rule.
+  assert(pickGeometryMode(loop) === 'extrude' && pickGeometryMode(sine) === 'rod', 'unambiguous drifted');
+  // Auto-resolved ambiguous rod renders OPEN (the gap is the honest read).
+  const rod = buildStrokeGeometry(arrowBand, { mode: 'auto' });
+  assert(rod.kind === 'rod', `arrow auto build → ${rod.kind}`);
+  assert(rod.capPositions.length === 2, 'ambiguous rod should keep open-end caps (not a welded ring)');
+});
+
+check('ENGINE OPTION: jointAngleThresholdDeg — joints@20 > joints@40 > joints@70 on spiky polyline', () => {
+  const world = normalizeStrokePoints(zigzag, DEFAULT_VIEWBOX);
+  const j20 = buildRodGeometry(world, { jointAngleThresholdDeg: 20 }).jointPositions.length;
+  const j40 = buildRodGeometry(world).jointPositions.length; // default 40
+  const j70 = buildRodGeometry(world, { jointAngleThresholdDeg: 70 }).jointPositions.length;
+  assert(j20 > j40, `sensitivity inert at low end: ${j20} ≤ ${j40}`);
+  assert(j40 > j70, `sensitivity inert at high end: ${j40} ≤ ${j70}`);
+  console.log(`   joints: 20°→${j20} · 40°→${j40} · 70°→${j70}`);
+});
+
+check('ROD RESULT: endPositions/endDirections — 2 outward ends open, none closed', () => {
+  const world = normalizeStrokePoints(rdpPoints(sine), DEFAULT_VIEWBOX);
+  const open = buildRodGeometry(world);
+  assert(open.endPositions.length === 2 && open.endDirections.length === 2, 'open rod ends missing');
+  for (const d of open.endDirections) {
+    assert(Math.abs(d.length() - 1) < 1e-6, 'end direction not unit length');
+  }
+  // Outward: start direction points AWAY from the second point.
+  const toSecond = world[1].clone().sub(world[0]).normalize();
+  assert(open.endDirections[0].dot(toSecond) < 0, 'start direction should point outward');
+  const closed = buildRodGeometry(normalizeStrokePoints(rdpPoints(loop), DEFAULT_VIEWBOX), { closed: true });
+  assert(closed.endPositions.length === 0 && closed.endDirections.length === 0, 'closed rod should have no ends');
+});
+
+check('TIER-2 EXTRUDE: bevel profiles distinct (sharp < soft < rounded verts); default = rounded byte-identical', () => {
+  const world = normalizeStrokePoints(rdpPoints(loop), DEFAULT_VIEWBOX);
+  const sharp = buildExtrudeGeometry(world, { bevelProfile: 'sharp' });
+  const soft = buildExtrudeGeometry(world, { bevelProfile: 'soft' });
+  const rounded = buildExtrudeGeometry(world, { bevelProfile: 'rounded' });
+  const dflt = buildExtrudeGeometry(world);
+  assert(sharp.kind === 'extrude' && soft.kind === 'extrude' && rounded.kind === 'extrude', 'profile broke extrude');
+  const v = (g) => g.geometry.getAttribute('position').count;
+  assert(v(sharp) < v(soft) && v(soft) < v(rounded), `verts not ordered: ${v(sharp)} / ${v(soft)} / ${v(rounded)}`);
+  const p1 = rounded.geometry.getAttribute('position').array;
+  const p2 = dflt.geometry.getAttribute('position').array;
+  assert(p1.length === p2.length, 'default ≠ rounded (length)');
+  for (let i = 0; i < p1.length; i++) assert(p1[i] === p2[i], `default ≠ rounded at ${i}`);
+  console.log(`   bevel verts: sharp ${v(sharp)} · soft ${v(soft)} · rounded ${v(rounded)}`);
+});
+
+check('TIER-2 EXTRUDE: drafted side wall tapers the back face, front face keeps the silhouette', () => {
+  const world = normalizeStrokePoints(rdpPoints(loop), DEFAULT_VIEWBOX);
+  const straight = buildExtrudeGeometry(world, { bevelProfile: 'sharp' });
+  const drafted = buildExtrudeGeometry(world, { bevelProfile: 'sharp', sideWall: 'drafted' });
+  assert(drafted.kind === 'extrude', 'draft broke extrude');
+  const spanAtZ = (g, pick) => {
+    const pos = g.geometry.getAttribute('position');
+    g.geometry.computeBoundingBox();
+    const bb = g.geometry.boundingBox;
+    const zTarget = pick === 'front' ? bb.max.z : bb.min.z;
+    let minX = Infinity, maxX = -Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      if (Math.abs(pos.array[i * 3 + 2] - zTarget) > 1e-4) continue;
+      minX = Math.min(minX, pos.array[i * 3]);
+      maxX = Math.max(maxX, pos.array[i * 3]);
+    }
+    return maxX - minX;
+  };
+  const frontS = spanAtZ(straight, 'front');
+  const backS = spanAtZ(straight, 'back');
+  const frontD = spanAtZ(drafted, 'front');
+  const backD = spanAtZ(drafted, 'back');
+  assert(approx(frontS, backS, 1e-6), 'straight walls should match front/back');
+  assert(approx(frontD, frontS, 1e-6), 'drafted front face must keep the drawn silhouette');
+  assert(backD < frontD * 0.9, `back face should taper: ${backD.toFixed(3)} vs front ${frontD.toFixed(3)}`);
+  console.log(`   draft: front ${frontD.toFixed(3)} → back ${backD.toFixed(3)} (straight ${frontS.toFixed(3)}/${backS.toFixed(3)})`);
+});
+
+check('ENGINE OPTION: solid holes:false fills the annulus (donut → disc), holes:true keeps it', () => {
+  const arcA = [];
+  const arcB = [];
+  for (let i = 0; i <= 80; i++) {
+    const t1 = -0.2 + (i / 80) * (Math.PI + 0.4);
+    arcA.push([400 + 150 * Math.cos(t1), 300 + 150 * Math.sin(t1), 0.5]);
+    const t2 = Math.PI - 0.2 + (i / 80) * (Math.PI + 0.4);
+    arcB.push([400 + 150 * Math.cos(t2), 300 + 150 * Math.sin(t2), 0.5]);
+  }
+  const withHoles = buildPoolSolidGeometry([arcA, arcB]); // default ON
+  const filled = buildPoolSolidGeometry([arcA, arcB], { holes: false });
+  assert(withHoles.kind === 'solid' && withHoles.holes === 1, `default should keep 1 hole, got ${withHoles.holes}`);
+  assert(filled.kind === 'solid' && filled.holes === 0, `holes:false should fill, got ${filled.holes}`);
+  assert(filled.outerContours === 1, 'filled silhouette should keep 1 outer');
+  console.log(`   solid holes: ON → ${withHoles.holes} hole · OFF → ${filled.holes}`);
+});
+
+check("TIER-2 SOLID: edge 'crisp' drops the bevel band (fewer verts than 'eased')", () => {
+  const crisp = buildPoolSolidGeometry([loop], { edge: 'crisp' });
+  const eased = buildPoolSolidGeometry([loop]); // default eased
+  assert(crisp.kind === 'solid' && eased.kind === 'solid', 'edge family broke solid');
+  const v = (g) => g.geometry.getAttribute('position').count;
+  assert(v(crisp) < v(eased), `crisp ${v(crisp)} should have fewer verts than eased ${v(eased)}`);
+});
+
+check('TIER-2 INFLATE: profileExp shapes the taper (bead narrower than balloon off-center)', () => {
+  const world = normalizeStrokePoints(rdpPoints(sine), DEFAULT_VIEWBOX);
+  const balloon = buildInflateGeometry(world, { profileExp: 0.8 });
+  const bead = buildInflateGeometry(world, { profileExp: 1.7 });
+  assert(balloon.kind === 'inflate' && bead.kind === 'inflate', 'profile family broke inflate');
+  const q = Math.floor(balloon.rings / 4); // quarter-length ring
+  const m = Math.floor(balloon.rings / 2);
+  const ratioBalloon = balloon.ringRadii[q] / balloon.ringRadii[m];
+  const ratioBead = bead.ringRadii[q] / bead.ringRadii[m];
+  assert(ratioBead < ratioBalloon, `bead should taper harder: ${ratioBead.toFixed(3)} vs ${ratioBalloon.toFixed(3)}`);
+  console.log(`   inflate quarter/mid ratio: balloon ${ratioBalloon.toFixed(3)} · bead ${ratioBead.toFixed(3)}`);
+});
+
+check('strokeSignature: stable, edit-sensitive, agrees with strokesKey', () => {
+  const sig1 = strokeSignature(sine);
+  const sig2 = strokeSignature(sine);
+  assert(sig1 === sig2, 'signature not stable');
+  const edited = [...sine.slice(0, -1), [700, 500, 0.5]];
+  assert(strokeSignature(edited) !== sig1, 'signature not edit-sensitive');
+  assert(strokesKey([sine, loop]) === `${strokeSignature(sine)}|${strokeSignature(loop)}`, 'key/signature drifted');
 });
 
 check('containmentDepths: 3 nested squares → [0, 1, 2]', () => {
@@ -468,6 +639,34 @@ check('convertStrokePool: determinism — two runs produce identical unit summar
     );
   assert(s(convertStrokePool(strokes, { mode: 'auto' })) === s(convertStrokePool(strokes, { mode: 'auto' })), 'auto not deterministic');
   assert(s(convertStrokePool(strokes, { mode: 'solid' })) === s(convertStrokePool(strokes, { mode: 'solid' })), 'solid not deterministic');
+});
+
+check('convertStrokePool ARROW RULE: arrow → rod+chip under default; treatAsClosed override → slab+chip', () => {
+  const dflt = convertStrokePool([arrowBand], { mode: 'auto' });
+  assert(dflt.units.length === 1, `units ${dflt.units.length} ≠ 1`);
+  const u = dflt.units[0];
+  assert(u.treatment === 'line-rod' && u.build?.kind === 'rod', `default → ${u.treatment}/${u.build?.kind}`);
+  assert(u.ambiguousClosure === true && u.treatedAsClosed === false, 'chip flags wrong (rod variant)');
+  assert(dflt.receipts[0].firedRules.includes('CLOSURE_ambiguous_default_rod_chip'), 'rod-default rule missing');
+  const welded = convertStrokePool([arrowBand], { mode: 'auto', treatAsClosed: { 0: true } });
+  const w = welded.units[0];
+  assert(w.treatment === 'solid' && w.build?.kind === 'extrude', `override → ${w.treatment}/${w.build?.kind}`);
+  assert(w.ambiguousClosure === true && w.treatedAsClosed === true, 'chip flags wrong (solid variant)');
+  assert(welded.receipts[0].firedRules.includes('CLOSURE_ambiguous_user_closed_chip'), 'override rule missing');
+  // Heart law: a truly closed loop stays a SILENT slab in both worlds.
+  const heart = convertStrokePool([loop], { mode: 'auto' });
+  assert(heart.units[0].treatment === 'solid' && heart.units[0].ambiguousClosure === false, 'closed loop drifted');
+});
+
+check('UNIFIED RECEIPTS: every receipt carries entryType/renderSurface; corrections type exists', () => {
+  const res = convertStrokePool([arrowBand, sine], { mode: 'auto', renderSurface: 'audit' });
+  for (const r of res.receipts) {
+    assert(r.entryType === 'conversion', `entryType ${r.entryType}`);
+    assert(r.renderSurface === 'audit', `renderSurface ${r.renderSurface}`);
+    assert(typeof r.ambiguousClosure === 'boolean', 'ambiguousClosure missing');
+  }
+  const bare = convertStrokePool([sine], { mode: 'auto' });
+  assert(bare.receipts[0].renderSurface === null, 'unwired host should log null, never guess');
 });
 
 check('convertStrokePool explicit modes: dropdown stays sacred (rod/solid render everything)', () => {

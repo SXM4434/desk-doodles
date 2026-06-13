@@ -33,7 +33,7 @@ const golden = JSON.parse(readFileSync(join(HERE, 'markintent-golden.json'), 'ut
 // ─── Golden matcher evaluation ───────────────────────────────────────────────
 
 function unitMatches(unit, m) {
-  for (const k of ['treatment', 'intent', 'geometry', 'closure', 'treatedAsClosed', 'ambiguous']) {
+  for (const k of ['treatment', 'intent', 'geometry', 'closure', 'treatedAsClosed', 'ambiguousClosure', 'ambiguous']) {
     if (m[k] !== undefined && unit[k] !== m[k]) return false;
   }
   if (m.bandEquals !== undefined && unit.band !== m.bandEquals) return false;
@@ -108,7 +108,12 @@ for (let i = 0; i < names.length; i++) {
     pass,
   });
   const unitsStr = out.units
-    .map((u) => `${u.treatment}/${u.geometry}${u.treatedAsClosed ? '·CHIP' : ''}${u.band !== null ? `·b${u.band}` : ''}`)
+    .map(
+      (u) =>
+        `${u.treatment}/${u.geometry}` +
+        (u.ambiguousClosure ? (u.treatedAsClosed ? '·CHIP(closed)' : '·CHIP(open?)') : '') +
+        (u.band !== null ? `·b${u.band}` : ''),
+    )
     .join(' + ');
   console.log(
     `[${i}] ${out.name}: ${pass ? 'PASS' : 'FAIL'} — ${out.units.length} units (${unitsStr}) · ${out.receipts.length} receipts` +
@@ -131,7 +136,14 @@ const lines = [
 for (const r of records) {
   const unitsStr = r.units.map((u) => `${u.treatment}/${u.geometry}`).join('<br>');
   const chips = r.units
-    .map((u) => [u.treatedAsClosed ? 'treated-as-closed' : null, u.ambiguous ? 'marks-3way' : null].filter(Boolean).join('+'))
+    .map((u) =>
+      [
+        u.ambiguousClosure ? (u.treatedAsClosed ? 'treated-as-closed' : 'treat-as-closed?') : null,
+        u.ambiguous ? 'marks-3way' : null,
+      ]
+        .filter(Boolean)
+        .join('+'),
+    )
     .filter(Boolean)
     .join('<br>') || '—';
   const bands = r.units.map((u) => u.band).filter((b) => b !== null).join(', ') || '—';

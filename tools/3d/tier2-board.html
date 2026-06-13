@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Tier-2 style-family render boards — repo-side tool only (NOT in the Make
+     drag-drop set). Served at http://localhost:5182/tools/3d/tier2-board.html
+     and driven headless by tools/3d/tier2-board.mjs via window.__tier2.
+     One contact sheet PER GEOMETRY MODE: the same fixture rendered through the
+     REAL product build path (Stroke3DScene buildStrokeWithParams +
+     rodAdornmentSpecs) at each Tier-2 family value — Sebs eyeballs these
+     before the family lists lock (3d-mode-controls-spec three-tier
+     amendment). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tier-2 family render boards</title>
+    <style>
+      body { margin: 0; padding: 16px; font: 12px/1.4 monospace; background: #fdfcf9; color: #3b362e; }
+      section { margin-bottom: 28px; }
+      h2 {
+        margin: 0 0 4px; font-size: 14px; text-transform: uppercase;
+        letter-spacing: 0.08em; border-bottom: 2px solid #3b362e; padding-bottom: 4px;
+      }
+      p.note { margin: 2px 0 10px; font-size: 11px; color: #6f6a60; }
+      .grid { display: flex; flex-wrap: wrap; gap: 10px; }
+      figure { margin: 0; width: 300px; }
+      figure img { display: block; width: 300px; height: 300px; border: 1px solid #d8d2c6; box-sizing: border-box; }
+      figcaption { padding: 4px 2px; font-size: 11px; font-weight: 700; }
+      figcaption small { display: block; font-weight: 400; color: #6f6a60; }
+    </style>
+  </head>
+  <body>
+    <h1 style="font-size:15px;margin:0 0 14px">
+      TIER-2 STYLE FAMILIES — same fixture × each family value (product build path)
+    </h1>
+    <section id="board-rod"><h2>Rod</h2><p class="note">Fixture: spiky open stroke · board radius 0.096 (slider value — families must read at sheet size) · cap + joint families + the joint-sensitivity ENGINE proof (20° vs 70°)</p><div class="grid"></div></section>
+    <section id="board-extrude"><h2>Extrude</h2><p class="note">Fixture: closed squircle loop · board width 1.0 / depth ×4.0 (real slider values — rim + walls must read) · oblique view · bevel-profile + side-wall families</p><div class="grid"></div></section>
+    <section id="board-inflate"><h2>Inflate</h2><p class="note">Fixture: short open arc · base 0.22 / tip 0.035 / puff 0.5 · oblique view · profile family (presets OVER the Puff curve)</p><div class="grid"></div></section>
+    <section id="board-solid"><h2>Solid</h2><p class="note">Fixture: donut ring (two fused open arcs — closed circles scanline-fill by design) · ink 0.08 / depth 0.48 · edge family + the Holes ON/OFF ENGINE proof</p><div class="grid"></div></section>
+    <script type="module" src="/tools/3d/tier2-board-harness.ts"></script>
+  </body>
+</html>

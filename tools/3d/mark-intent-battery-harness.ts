@@ -82,6 +82,7 @@ interface UnitSummary {
   geometry: string;
   closure: string | null;
   band: number | null;
+  ambiguousClosure: boolean;
   treatedAsClosed: boolean;
   ambiguous: boolean;
   holesCut: number;
@@ -96,6 +97,7 @@ function summarize(u: ConversionUnit): UnitSummary {
     geometry: u.build ? u.build.kind : 'none',
     closure: u.closure,
     band: u.band,
+    ambiguousClosure: u.ambiguousClosure,
     treatedAsClosed: u.treatedAsClosed,
     ambiguous: u.ambiguous,
     holesCut: u.holesCut,
