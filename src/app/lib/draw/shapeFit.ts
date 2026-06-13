@@ -55,8 +55,13 @@ import {
 // ─── Calibration constants (provisional — SA-H, mirror of MI-F) ──────────────
 
 /** Accept a snap only if the best candidate's normalized error (RMS deviation
- *  ÷ bbox diagonal) is at or below this. Provisional 3.5% per the spec. */
-export const SNAP_MAX_NORM_ERR = 0.035;
+ *  ÷ bbox diagonal) is at or below this. Was 3.5% (provisional) — far too tight:
+ *  hand-drawn shapes routinely run 5–10% deviation, so Snap refused on real
+ *  doodles and "kept points open / impossible to get a closed shape" (Sebs
+ *  2026-06-13). 10% accepts genuine hand-drawn squares/circles/triangles into a
+ *  clean CLOSED form while still rejecting scribbles; the chip still lists every
+ *  candidate + 'original' so an over-eager snap is one tap to undo. */
+export const SNAP_MAX_NORM_ERR = 0.10;
 /** Chip carries every candidate within this multiple of the accept threshold,
  *  ranked. 'original' is always appended last regardless. */
 export const CHIP_CANDIDATE_ERR_MULT = 2;

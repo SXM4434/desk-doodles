@@ -563,12 +563,14 @@ function decimateLoop(pts: [number, number][]): [number, number][] {
  *      PAST the centerline so the tone always sits flush under the ink, no
  *      inset, regardless of gap.
  *  Clamped ≥ 0 (never a negative dilation = never pulled further inward). */
-// Full-fill reaches EXACTLY the ink centerline (bias 0) — the fill edge then
-// sits UNDER the ink line (ink covers centerline→outer), so the interior is
-// completely toned with NO paper gap AND no gray spilling PAST the outline edge
-// (the +2px bias previously pushed the fill past the ink's outer edge → the
-// "bleed past the edge / dirty" bug Sebs flagged 2026-06-13).
-const FULL_FILL_EDGE_BIAS = 0;
+// Full-fill bias toward the ink's OUTER edge. Pen footprint is ~4px (half-width
+// ~2). bias 0 stops at the centerline → thin white SLIVERS where the wobbly ink
+// bows inward ("nope", Sebs). bias +2 reached the outer edge but BLED on the
+// thinner/tapered stretches. +1 is the compromise: covers most inward wobble
+// (fill tucks under the ink, which is drawn ON TOP) without spilling past on the
+// thin stretches. Eyeball-tune with Sebs — variable-width ink means no single
+// value is pixel-perfect; the ink-over-tone z-order hides the seam.
+const FULL_FILL_EDGE_BIAS = 1;
 function fillDilatePx(gapMult: number, full = false): number {
   const toCenterline = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE;
   if (full) return toCenterline + FULL_FILL_EDGE_BIAS;
