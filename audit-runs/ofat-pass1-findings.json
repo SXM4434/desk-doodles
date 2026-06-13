@@ -1,0 +1,2279 @@
+{
+  "pass": 1,
+  "objectsChecked": 387,
+  "divergenceCount": 284,
+  "findings": [
+    {
+      "object": "boxedGameCartridge",
+      "variant": "charcoal",
+      "divergence": "blob",
+      "note": "Clean is a white box with a black border and readable 'SUPER MARIO' label. Charcoal floods the ENTIRE enclosed box body with dense texture, collapsing it into a near-solid dark mass; the white interior and the label text are completely lost. On most other objects charcoal correctly preserves white interiors, so the fully-enclosed dark-bordered rectangle is being mis-classified as a fillable region instead of paper-white.",
+      "researchedFix": "Drive charcoal/stipple texture DENSITY from per-region source luminance with a highlight threshold: pixels/regions above a luminance threshold are left as paper (no marks), and only sub-threshold regions accumulate marks (dots closer together = darker, fewer dots = lighter, paper showing through for highlights). Do not fill an enclosed white region just because it has a dark border — classify it by its own fill luminance, not by its outline.",
+      "citation": "https://finearttutorials.com/guide/stippling/"
+    },
+    {
+      "object": "boxedGameCartridge",
+      "variant": "stipple",
+      "divergence": "blob",
+      "note": "Same as charcoal: Clean's white box + 'SUPER MARIO' label becomes a dense, featureless dark stipple mass. The white field and text knockout are destroyed. Risograph and newsprint on this same object keep the label readable, proving the box is meant to stay light — charcoal/stipple over-fill it.",
+      "researchedFix": "Map stipple dot density to source darkness with a white/highlight cutoff so light regions stay as bare paper (the canonical stipple rule: dot spacing proportional to local darkness, paper left visible for highlights). Apply the texture only to regions whose own luminance is below threshold, never to an enclosed white panel.",
+      "citation": "https://finearttutorials.com/guide/stippling/"
+    },
+    {
+      "object": "ampCombo",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean shows a white amp body with a dark top bar and a white interior panel containing thin horizontal divider lines. Risograph floods the whole silhouette with a flat mid/dark gray: the white interior panel is shaded gray and the divider lines are nearly swallowed. Charcoal, stipple, newsprint, outline-only and wireframe all keep the interior white in this same row, so risograph is the outlier.",
+      "researchedFix": "Render risograph as a flat SPOT-COLOR ink layer over a white substrate with halftone dots and alpha-blend compositing, not as a solid silhouette flood. Tone should be carried by halftone dot size so paper-white knockout regions stay white; separate the artwork into ink layers (dark bar = ink, interior panel = paper) instead of filling the whole shape.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "bandPatch",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white card with a dotted border and a dark asterisk on a white field. Risograph fills the card body mid-gray, shading the white field (asterisk survives but the paper-white is gone). Other styles keep the card white.",
+      "researchedFix": "Use risograph spot-ink-over-paper compositing with halftone screening so the card body remains paper-white; only the asterisk and border become ink. Tonal areas should be expressed via halftone dot coverage, preserving substrate white in knockout regions.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "bandTshirt",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a light shirt with readable 'PUNK' text. Risograph floods the shirt dark gray and the PUNK text loses contrast/legibility. Charcoal, stipple, newsprint, outline-only, wireframe keep the shirt light and PUNK readable.",
+      "researchedFix": "Composite risograph as translucent ink over a white substrate with halftone dots; keep the shirt body in a light ink/paper tone and render PUNK as a knockout (paper showing through) or separate ink layer so it stays legible rather than flooding the silhouette solid.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "boardingPassTW",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a boarding pass with a white main body, a light-gray stub on the right separated by a perforation line, and 'BOG -> JFK' text. Risograph floods the entire pass dark gray: the white-body-vs-gray-stub distinction collapses and the text is barely legible. Charcoal and stipple preserve the body, perforation, and text.",
+      "researchedFix": "Separate tones into spot-ink layers over white paper and apply halftone screening so the white body stays paper-white, the stub becomes a lighter halftone tint (not a solid flood), and the perforation/text remain as crisp ink. Preserve substrate white in the body region rather than filling the whole silhouette.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "boosterPack",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a light foil pack with horizontal seam lines and a dark 'P-SMN' label box. Risograph floods the whole pack dark gray, shading the white body and seams and reducing the label to barely visible. Charcoal and stipple keep the pack body light with a readable label.",
+      "researchedFix": "Render risograph via halftone spot-ink over white substrate so the pack body stays light (paper or a light halftone tint), seams stay as ink lines, and the label box remains a distinct ink region — instead of a uniform silhouette fill that erases the white body.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "cardBinder",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white binder holding a 3x4 grid of white card pockets (knockouts) with gray grid lines. Risograph floods the binder mid-gray and the nine white pockets become shaded gray, losing their knockout separation. bold-ink, outline-only and wireframe keep the pockets white.",
+      "researchedFix": "Fill regions respecting holes/knockouts using the even-odd fill rule so the pocket interiors are left unfilled (paper), and render risograph as halftone spot-ink over white rather than a solid silhouette flood. Provide the pocket shapes as inner sub-polygons so even-odd leaves them as substrate white.",
+      "citation": "https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/fill-rule"
+    },
+    {
+      "object": "cardBinderClosed",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white binder page with a dark left spine binding and readable 'PKMN COLLECTION' text. Risograph floods the body mid-gray so the white page is shaded and the dark spine no longer reads as darker than the body (tonal separation collapses). Charcoal and stipple keep the white body, dark spine, and text distinct.",
+      "researchedFix": "Separate the artwork into spot-ink layers over white paper (spine = solid ink, page body = paper/light halftone tint, text = knockout) and use halftone screening for tone. This keeps the dark-spine-vs-light-body contrast and legible text instead of averaging the whole shape to one gray.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "cardSleeve",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white card sleeve with a thin outline and a small dark mark centered. Risograph fills the sleeve body mid/dark gray, shading the white card field. Other styles keep the sleeve white with just the outline and mark.",
+      "researchedFix": "Render risograph as halftone spot-ink over white so the sleeve body stays paper-white and only the outline and center mark become ink; carry any tone via halftone dots rather than a flat body flood.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "bottleOpener",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean shows a light bottle opener body with a white knockout hole at the handle end. Risograph floods the body dark gray, shading the white body (the hole survives as a faint lighter disc but the body white is lost). Stipple and newsprint keep the body light with the hole clearly open.",
+      "researchedFix": "Use halftone spot-ink over white substrate for risograph and apply the even-odd fill rule for the handle hole so it stays unfilled; keep the body as a light ink/paper tone rather than a solid flood so the knockout reads clearly.",
+      "citation": "https://github.com/pshihn/hachure-fill"
+    },
+    {
+      "object": "colombianFlagFolded",
+      "variant": "charcoal",
+      "divergence": "blob",
+      "note": "Clean (sheet-024 row 8) is a folded-flag triangle with a 4-tier tonal gradient: black apex, dark-grey, mid-grey, then a LIGHT-grey base band. The charcoal variant collapses the whole triangle into a near-solid black scribbled mass; the light base tier reads dark (white-shaded) and all intermediate tonal steps merge, so the defining stepped tonal/stripe structure of the folded flag is lost. Confirmed via 4x zoom (/tmp/aud/r08-clean.png vs /tmp/aud/r08-charcoal.png). The stipple variant in the same row preserved the gradient via dot density, proving the source tone data exists and only the charcoal path discards it.",
+      "researchedFix": "Replace the binarize-to-solid-ink fill with ordered-dithering / threshold-map quantization (Bayer threshold map, designed specifically to minimize the perceptual difference between a grayscale image and its quantization), or cel-shading-style tonal quantization that maps each region's source luminance to a discrete shade band. Sample source luminance per fill region and modulate charcoal stroke density/spacing to that luminance instead of flooding every fill at one ink value, so the relative lightness ordering (apex dark -> base light) survives.",
+      "citation": "https://en.wikipedia.org/wiki/Ordered_dithering"
+    },
+    {
+      "object": "colombianFlagFolded",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Same row 8 (sheet-024). Risograph flattens the 4-tier tonal gradient into a single dark grey-to-black mass; the light base band is darkened (white-shaded) and the mid-tone steps blob together, erasing the folded-flag stripe identity. Confirmed via 4x zoom (/tmp/aud/r08-risograph.png) against /tmp/aud/r08-clean.png. Risograph's 2-tone posterization is correct behaviour for other rows where it preserved interior detail, but here it posterizes a graded form to one tone and loses the object's defining structure.",
+      "researchedFix": "Use posterization with MORE than one ink level (quantize to the same number of discrete tone bands present in the source, i.e. cel-shading quantization to N shades) rather than a single dark fill, and/or apply a halftone screen whose dot size tracks source luminance per region (digital halftoning) so the graded bands map to distinct dot densities and remain separable.",
+      "citation": "https://en.wikipedia.org/wiki/Halftone"
+    },
+    {
+      "object": "dominoTiles",
+      "variant": "rough-handdrawn",
+      "divergence": "garbled",
+      "note": "Clean (sheet-036 row 2) is THREE separate domino tiles stacked vertically, each split with pip dots. The rough-handdrawn variant collapses the three tiles into a single illegible dark scribbled blob - the three-instance stack and the pips are destroyed. Confirmed via 4x zoom (/tmp/aud/r2dom-clean.png vs /tmp/aud/r2dom-rough.png). The right-half styles (risograph, newsprint, outline-only, wireframe) rendered all three tiles correctly, so the source group has three children and only the hand-drawn render path drops/merges them.",
+      "researchedFix": "Traverse the SVG DOM and sketch EACH element/subpath separately instead of treating the merged group as one path (the svg2roughjs approach: preprocess + flatten the SVG tree and render every child element with Rough.js individually; Rough.js returns one <g> node per shape). Iterate the group's children / each moveto-delimited subpath and emit an independent hand-drawn stroke set per instance so all three tiles and their pips survive.",
+      "citation": "https://github.com/fskpf/svg2roughjs"
+    },
+    {
+      "object": "dominoTiles",
+      "variant": "sketchy",
+      "divergence": "detail-lost",
+      "note": "Sheet-036 row 2. Sketchy renders only ONE domino tile; the other two of the three-tile stack are dropped. Confirmed via 4x zoom (/tmp/aud/r2dom-sketchy.png) vs Clean's three tiles. Same group-collapse failure as rough-handdrawn but resolves to a single legible tile rather than a blob.",
+      "researchedFix": "Same fix: iterate over the group's child elements / subpaths and render each domino instance separately via Rough.js (svg2roughjs traverses and sketches each element), rather than rendering only the first/merged shape.",
+      "citation": "https://github.com/fskpf/svg2roughjs"
+    },
+    {
+      "object": "dominoTiles",
+      "variant": "bold-ink",
+      "divergence": "detail-lost",
+      "note": "Sheet-036 row 2. Bold-ink renders only ONE domino tile instead of the three in Clean. Confirmed via 4x zoom (/tmp/aud/r2dom-boldink.png). Two of three group instances dropped.",
+      "researchedFix": "Render each group child / subpath as its own stroked path so all three tiles draw (svg2roughjs-style per-element traversal); do not collapse the multi-instance group to a single render call.",
+      "citation": "https://github.com/fskpf/svg2roughjs"
+    },
+    {
+      "object": "dominoTiles",
+      "variant": "wet-ink",
+      "divergence": "detail-lost",
+      "note": "Sheet-036 row 2. Wet-ink renders only ONE domino tile; the three-tile vertical stack is reduced to one. Confirmed via 4x zoom (/tmp/aud/r2dom-wetink.png).",
+      "researchedFix": "Iterate the group's children / subpaths and apply the wet-ink stroke treatment per instance instead of once on a merged shape (svg2roughjs per-element rendering).",
+      "citation": "https://github.com/fskpf/svg2roughjs"
+    },
+    {
+      "object": "dominoTiles",
+      "variant": "charcoal",
+      "divergence": "detail-lost",
+      "note": "Sheet-036 row 2. Charcoal renders only ONE domino tile rather than the three in Clean. Confirmed via 4x zoom (/tmp/aud/r2dom-charcoal.png). Consistent with the whole hand-drawn family collapsing this 3-instance group, while risograph/newsprint/outline/wireframe kept all three.",
+      "researchedFix": "Apply per-element/per-subpath rendering so each of the three tiles is drawn independently (svg2roughjs traverses and sketches each child element), instead of rendering a single merged fill region.",
+      "citation": "https://github.com/fskpf/svg2roughjs"
+    },
+    {
+      "object": "flagPanel (048 row7)",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean US flag has a SOLID-BLACK canton plus solid-black stripe bands. Sketchy renders the canton and dark stripes as outline-only scribbles on white — the solid-dark fill regions are dropped, so the flag loses all its filled mass and reads as an empty grid. Same failure in rough-handdrawn (canton hollow) and partially bold-ink (canton an empty ruled box, not filled).",
+      "researchedFix": "Use Tonal Art Maps / Real-Time Hatching (Praun, Hoppe, Webb, Finkelstein 2001): map the source region's darkness to hatch-stroke DENSITY so a solid-black region becomes dense hatching (darker tones generated by adding strokes onto lighter tones), never bare outline. The sketchy/rough generators must fill filled regions with tonal hatching clipped to the region boundary instead of discarding interior fill.",
+      "citation": "https://gfx.cs.princeton.edu/proj/hatching/hatching.pdf"
+    },
+    {
+      "object": "framedSketch (060 row4)",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean has a SOLID-BLACK picture window (whole interior filled black) with a small light figure knocked out. Sketchy renders the interior as plain white with only scribbled frame outlines — the entire black fill is dropped. Rough-handdrawn drops it identically; bold-ink also shows a white interior (large black fill lost, only a header bar drawn).",
+      "researchedFix": "Tonal Art Maps / Real-Time Hatching (Praun et al.): treat the dark interior as a high-tone region and fill it with progressively-nested hatching strokes whose density tracks the source luminance, clipped to the window boundary, preserving the knocked-out light figure as the un-hatched area. Solid fills should map to maximum hatch density, not be discarded.",
+      "citation": "https://gfx.cs.princeton.edu/proj/hatching/hatching.pdf"
+    },
+    {
+      "object": "framedFlyer (060 row0)",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean has a THICK solid-black outer frame band and a small solid-black thumbnail block inside. Sketchy renders the thick frame as a thin scribbled outline and the thumbnail as an empty outlined box — both solid-dark fills are lost. Bold-ink also leaves the thumbnail an empty box (its solid fill dropped).",
+      "researchedFix": "Tonal Art Maps / Real-Time Hatching (Praun et al.): represent the frame band and thumbnail as tone-filled regions via density-graded hatching mapped to source darkness, clipped to each region, so heavy solid fills survive the sketchy transform as dense strokes rather than collapsing to outline.",
+      "citation": "https://gfx.cs.princeton.edu/proj/hatching/hatching.pdf"
+    },
+    {
+      "object": "framedRacePhoto (060 row3)",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean has a SOLID-DARK portrait frame border around a light photo area. Sketchy reduces the dark border to a thin double-line outline, dropping the filled frame band. Bold-ink likewise draws a hollow ruled rectangle rather than the filled dark border.",
+      "researchedFix": "Tonal Art Maps / Real-Time Hatching (Praun et al.): map the dark frame band's tone to hatch density (add strokes for darker tone) and clip the strokes to the border region, keeping the light photo area un-hatched — preserving the dark/light contrast instead of flattening the border to outline.",
+      "citation": "https://gfx.cs.princeton.edu/proj/hatching/hatching.pdf"
+    },
+    {
+      "object": "ray/tray (048 row0)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean tray has a WHITE interior panel with small icons. Risograph floods the entire silhouette with a flat mid-gray ink, shading the white interior panel gray and lowering interior icon contrast — it ignores the white knockout/fill and tints the whole shape.",
+      "researchedFix": "Knockout-aware duotone with halftone screening: per CSS-Tricks SVG duotone, drive feComponentTransfer with an alpha table (e.g. feFuncA tableValues '0 1') so highlight/white regions map to the LIGHT ink (substrate) instead of the dark ink, and render mid-tones as halftone dots whose coverage encodes tone — never a flat solid flood. Respect the source white fill as unprinted paper.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "filmReel 35mm (048 row3)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white disc with a legible '35mm' label. Risograph fills the disc with a medium-dark gray, dropping the '35mm' text to low-contrast dark-on-dark and nearly swallowing it. The white interior is flooded rather than knocked out.",
+      "researchedFix": "Knockout-aware duotone + halftone (SVG feComponentTransfer alpha table to keep highlights light; halftone dot-density for tone). Keep the disc face as light substrate so the dark label text stays legible; only the rim/shadow gets ink. Use halftone screening for tone, not a flat gray fill.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "filmReel holes disc (048 row4)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white disc with a ring of WHITE dot-holes and a center hub. Risograph floods the disc dark gray, swallowing the white holes (knockouts) so the perforation pattern disappears into the mass.",
+      "researchedFix": "Knockout-aware duotone: preserve the source white holes as un-inked substrate (alpha-mapped highlights via feFuncA), and represent the disc tone with halftone dots rather than a solid flood so the white perforations remain visible. Halftone screening converts tone to dot coverage while leaving true whites unprinted.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "filmStrip (048 row5)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white film strip with white sprocket holes and frame divisions. Risograph fills the body dark gray, dropping the white sprocket holes' contrast and compressing the frame divisions into the dark mass.",
+      "researchedFix": "Knockout-aware duotone + halftone: keep sprocket holes and frame gaps as un-inked substrate via alpha-preserving feComponentTransfer; encode the strip body as halftone dots so internal divisions stay readable rather than flooding flat gray.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "foamRoller (048 row9)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a light cylinder with faint surface texture. Risograph fills it near-solid dark gray, losing the surface texture into the mass and shading the light body.",
+      "researchedFix": "Knockout-aware duotone with halftone screening: map the cylinder's light body to the light ink and render its shading as graduated halftone dots so surface texture survives; do not flood the silhouette with flat dark gray.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "framedSketchPage (060 row5)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a thin frame with a LIGHT/white page interior and a dotted inner border. Risograph floods the interior with a solid dark-gray block, turning the white page into a dark mass and nearly hiding the dotted border.",
+      "researchedFix": "Knockout-aware duotone: use feComponentTransfer alpha table so the white page maps to light ink (substrate) and stays light; reserve dark ink for actual dark source pixels (the border dots), and use halftone for any mid-tone rather than a flat fill of the whole interior.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "glassBottleTopo (060 row10)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white/clear bottle with a small label band. Risograph fills the bottle near-solid dark gray, shading the clear glass body and reducing the label band to a faint patch — the white body knockout is ignored.",
+      "researchedFix": "Knockout-aware duotone + halftone: keep the clear glass body as light substrate (alpha-preserving highlight mapping) and represent volume/shading as halftone dot gradients; only the label and edges take ink. Avoid a flat dark flood of the whole silhouette.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "glassWithBubbles (060 row11)",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a white glass with small WHITE bubble circles inside. Risograph fills the glass dark gray, making the white bubble knockouts invisible against the dark fill.",
+      "researchedFix": "Knockout-aware duotone: preserve the white bubbles as un-inked substrate via alpha-mapped highlights (feFuncA), and use halftone screening for the glass tone so the bubbles remain visible as light dots rather than being flooded over.",
+      "citation": "https://css-tricks.com/using-svg-to-create-a-duotone-image-effect/"
+    },
+    {
+      "object": "gpsWatch",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Sheet-072 row0. Clean shows a watch body with a white inner screen panel carrying faint text. The risograph variant fills the whole body as one flat mid-grey mass; the inner screen knockout and its text are gone. White inner panel is shaded over and reads as featureless.",
+      "researchedFix": "Emulate risograph as separate spot-color layers with KNOCKOUT: cut overlapping/interior shapes out of the lower layer so inner panels print as paper-white, then screen each layer with a halftone (Grain Touch dither or Screen-Covered dots) instead of a flat fill. Drive tone with screen frequency/dot size, never a solid fill, so interior knockouts survive.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "guitarPedal",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Sheet-072 row1. Clean shows two round knobs over a dark footswitch band. Risograph flattens the body to a solid grey block; the two knobs and the dark band merge into the mass and stop reading as separate features.",
+      "researchedFix": "Apply the riso fill per sub-shape with knockout separation (knobs and band as their own spot layers cut from the body), then halftone-screen each so knobs stay legible against the body tone rather than dissolving into one flat plate.",
+      "citation": "https://reprographix.ink/risograph-printing/guide/"
+    },
+    {
+      "object": "homeProjector",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-072 row4. Clean shows a camera/projector body with two reels on top and a side lens. Risograph turns the body into a solid dark block and the two reels collapse into it; the light body fill and reel circles are lost.",
+      "researchedFix": "Risograph layer must preserve the reel circles as interior knockouts (paper-white holes via even-odd) on the body layer, then screen the body tone with a halftone so the reels read as cut-outs rather than being painted over.",
+      "citation": "https://campus.collegeforcreativestudies.edu/imaging-center/tag/risograph-printing/"
+    },
+    {
+      "object": "inktoberCard",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Sheet-072 row5. Clean is a WHITE card with a center shield/badge and small caption text. Risograph fills the card panel solid grey, shading the white paper and muddying the inner shield and caption.",
+      "researchedFix": "Set the card paper as the unprinted base (no ink layer) and only screen the badge/text as a separate spot layer; in riso the substrate stays paper-white unless an ink layer explicitly covers it. Use knockout so the shield/text print over an unscreened card, not over a flat grey plate.",
+      "citation": "https://libguides.reed.edu/c.php?g=1339150&p=9870131"
+    },
+    {
+      "object": "instaxCamera",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Sheet-072 row6. Clean shows a body with a large concentric-ring lens and a viewfinder/flash on top. Risograph flattens to a solid dark mass; the concentric lens rings and top details vanish.",
+      "researchedFix": "Render the concentric lens as nested knockout rings (even-odd compound path) on the riso body layer and screen the body with halftone dots; the ring contrast must come from layered screens, not a single flat fill that buries the rings.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "joyConSingle",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-072 row7. Clean shows a controller body with a joystick circle and button dots. Risograph fills the body solid dark and the stick and dots are absorbed into the mass.",
+      "researchedFix": "Keep the stick/buttons as interior knockouts on the body spot layer and halftone-screen the body tone so the small features stay as legible cut-outs instead of being over-inked by a flat fill.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "lacroixCan",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-072 row12. Clean shows a can with a readable LACROIX wordmark up top, a light upper body, and a speckled lower flavor band. Risograph fills the can one solid grey; the wordmark and the upper/lower division disappear.",
+      "researchedFix": "Separate the wordmark and the speckle band as their own spot/halftone layers and knockout the wordmark from the body tone so text prints paper-white; screen the lower band as halftone so the flavor texture survives instead of being flattened.",
+      "citation": "https://reprographix.ink/risograph-printing/guide/"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "rough-handdrawn",
+      "divergence": "blob",
+      "note": "Sheet-084 row0. Clean is a pyramid of ~10 distinct cans. rough-handdrawn collapses the entire stack into a single tiny dark vertical blob; the individual cans are gone. Only outline-only/wireframe (and partly newsprint) preserve the pyramid, which points to a fill/compound-path bug where the disjoint can group is treated as one filled region.",
+      "researchedFix": "Apply the sketchy fill PER sub-shape, not to the merged group bounds: run the rough.js scan-line hachure on each can outline separately, or set the compound path so disjoint cans are filled by even-odd parity (parity resets per scanline span) rather than collapsing to one bbox. The scan-line polygon fill with odd/even parity handles multiple disjoint regions and holes correctly.",
+      "citation": "https://www.cs.rit.edu/~icss571/filling/how_to.html"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "sketchy",
+      "divergence": "detail-lost",
+      "note": "Sheet-084 row0. The 10-can pyramid collapses to a tiny stack of 2-3 dark rectangles; most cans are lost. Same disjoint-group fill collapse as the rough-handdrawn variant.",
+      "researchedFix": "Iterate the sketchy renderer over each can path individually so each gets its own outline+hachure, instead of feeding the union/bbox of all cans. Use even-odd fill-rule on the compound path so separate cans render as separate regions.",
+      "citation": "https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "bold-ink",
+      "divergence": "blob",
+      "note": "Sheet-084 row0. The can pyramid renders as a single small dark block; individual cans are not distinguishable.",
+      "researchedFix": "Stroke/fill each can sub-path independently; ensure the geometry passed in is the multi-subpath set, not a flattened bbox. Compound path should use even-odd so interior gaps between cans stay open.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "wet-ink",
+      "divergence": "blob",
+      "note": "Sheet-084 row0. Pyramid collapses to a solid dark blob with ink bleed; no separate cans survive.",
+      "researchedFix": "Process per sub-shape and apply the ink-bleed pass per can outline; do not merge the disjoint cans into one filled silhouette. Even-odd parity scan-line fill preserves the gaps between cans.",
+      "citation": "https://www.cs.rit.edu/~icss571/filling/how_to.html"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "charcoal",
+      "divergence": "blob",
+      "note": "Sheet-084 row0. Pyramid collapses into one small dark textured block; the ~10 cans are lost.",
+      "researchedFix": "Run the charcoal texture fill on each can region separately via the scan-line fill that supports disjoint regions/holes, rather than texturing one merged silhouette.",
+      "citation": "https://www.cs.rit.edu/~icss571/filling/how_to.html"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "stipple",
+      "divergence": "detail-lost",
+      "note": "Sheet-084 row0. The pyramid reduces to a small dark stippled block; individual cans cannot be read.",
+      "researchedFix": "Generate stipple points per can region (one fill pass per sub-path) so each can gets its own dot field; even-odd parity keeps the inter-can gaps unstippled.",
+      "citation": "https://app.studyraid.com/en/read/14997/518229/implementing-hachure-fill-patterns"
+    },
+    {
+      "object": "lacroixRack",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Sheet-084 row0. Pyramid collapses to a small dark grey block; cans merged and lost. Combines the disjoint-group fill bug with the riso flat-fill bug.",
+      "researchedFix": "Treat each can as its own spot/halftone region (per sub-path) with knockout between cans, then screen each; do not merge the stack into one flat plate. Per-region scan-line fill plus even-odd compound handling preserves the cans.",
+      "citation": "https://campus.collegeforcreativestudies.edu/imaging-center/tag/risograph-printing/"
+    },
+    {
+      "object": "letterboxdCard",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Sheet-084 row2. Clean is a white card framing a 3x3 grid of dark poster cells with white gutters. Risograph fills the whole panel solid grey: the white frame and gutters are shaded over and the 3x3 grid is lost into the mass.",
+      "researchedFix": "Keep the card/gutters as unprinted paper (knockout the white gutters and frame from the ink layer) and screen the 9 poster cells as separate halftone fills; in riso the white must be substrate, not a covered region.",
+      "citation": "https://libguides.reed.edu/c.php?g=1339150&p=9870131"
+    },
+    {
+      "object": "looseCartridge",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-084 row3. Clean shows a cartridge with a ZELDA label and bottom contact ridges. Risograph fills it solid dark; the label text and ridge lines disappear.",
+      "researchedFix": "Knockout the label text and ridge lines from the body spot layer (paper-white) and halftone-screen the body tone so the label and contacts stay legible over an unscreened cut-out instead of a flat fill.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "loveLetter",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Sheet-084 row4. Clean is a WHITE sheet with text lines and a dark heart. Risograph fills the sheet solid grey, shading the white paper and burying most of the text lines; the heart barely reads.",
+      "researchedFix": "Leave the paper unprinted (no ink layer over the sheet) and screen only the text lines and heart as a spot layer; substrate stays paper-white in riso unless explicitly inked.",
+      "citation": "https://libguides.reed.edu/c.php?g=1339150&p=9870131"
+    },
+    {
+      "object": "luchaMask",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Sheet-084 row5. Clean shows a mask with white eye-hole knockouts and a mouth. Risograph fills the face one solid dark oval; the eye holes are shaded over and the mouth/contours are lost.",
+      "researchedFix": "Render eye/mouth holes as even-odd interior knockouts on the face spot layer so they stay paper-white, then halftone-screen the face tone; the holes must be cut-outs, not over-inked.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "luggageTag",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-084 row6. Clean is a light tag with horizontal text lines and a loop. Risograph fills it solid grey; the text lines are absorbed into the fill.",
+      "researchedFix": "Knockout the text lines from the tag spot layer and screen the tag tone with halftone so the lines read as paper-white cut-outs rather than vanishing under a flat fill.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "luggageTagWorn",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-084 row7. Clean shows a worn tag with a '303' number. Risograph fills it solid grey and the 303 is lost into the mass.",
+      "researchedFix": "Knockout the numerals from the tag spot layer (paper-white) and halftone-screen the body so the number stays legible instead of being over-inked.",
+      "citation": "https://reprographix.ink/risograph-printing/guide/"
+    },
+    {
+      "object": "macbook",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-084 row8. Clean is a light closed-laptop top with a small center logo dot. Risograph fills the body solid dark and the logo dot is lost.",
+      "researchedFix": "Keep the logo as an interior knockout (even-odd hole) on the body layer and screen the body tone; the small mark must survive as a paper-white cut-out, not be painted over.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "marioHat",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Sheet-084 row11. Clean shows a cap dome with a circular 'M' emblem. Risograph fills the dome solid grey; the emblem circle and its white knockout are lost.",
+      "researchedFix": "Render the emblem as a separate spot layer with knockout (the M and emblem ring cut from the dome tone), then halftone-screen the dome so the emblem reads as a layered mark rather than dissolving into a flat fill.",
+      "citation": "https://campus.collegeforcreativestudies.edu/imaging-center/tag/risograph-printing/"
+    },
+    {
+      "object": "mechKeyboard",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Sheet-084 row12. Clean shows a keyboard with rows of individual keys. Risograph flattens it to a solid dark grey mass; the entire key grid is lost. Other fill styles keep the keys discernible, so this is specific to the riso flat fill.",
+      "researchedFix": "Knockout the inter-key gutters from the body spot layer (paper-white grid lines via even-odd compound) and halftone-screen the keytops so the grid survives; alternatively overlay the key edge line-work on top of the screened tone, since halftone with preserved edge line-work keeps the grid legible.",
+      "citation": "https://www.playbook.com/blog/how-to-use-halftone-overlay-2/"
+    },
+    {
+      "object": "medal",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Clean medallion = concentric rings with a WHITE inner center disc + small detail; ribbon is light/outlined. Risograph fills the entire silhouette with flat opaque mid-grey ink: the rings, the white center disc, and the ribbon collapse into one featureless mass. Every other style (sketchy/bold/charcoal/stipple/outline/wireframe) keeps the ring structure and white center. Riso ignores the interior knockout.",
+      "researchedFix": "Don't paint the riso flat fill opaque over the whole silhouette: (a) build the fill as a compound path that respects holes via fill-rule='evenodd' so the white inner disc stays unfilled, and (b) render interior detail strokes ON TOP of the fill using SVG paint-order (paint the stroke after the fill). Practically, riso workflow says use a Multiply ink + Tone-Lift on midtones so detail doesn't 'collapse into one heavy ink mass'.",
+      "citation": "https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/paint-order"
+    },
+    {
+      "object": "megaphone",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean cone has parallel ridge lines with WHITE gaps between them and a separate handle. Risograph fills the cone and handle as one flat dark mass; the inter-rib white gaps are shaded over and the ridge lines vanish. charcoal/stipple/outline/wireframe all keep the ribs.",
+      "researchedFix": "Apply the riso ink as a translucent Multiply layer (not opaque) and keep the ridge-line strokes as a separate detail layer painted above the fill (NPR layered stroke ordering / SVG paint-order='stroke'); the white inter-rib gaps must remain paper-reserve, which riso guides achieve by keeping detail as knockout rather than overprinting solid.",
+      "citation": "https://www.oreilly.com/content/elegant-outlines-with-svg-paint-order/"
+    },
+    {
+      "object": "mic",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Clean mic head is a rounded grille with horizontal WHITE gap lines. Risograph renders the head as a flat dark-grey solid dome; the grille lines are filled over and lost. bold-ink keeps the grille as darker bands; all lighter styles keep it clearly.",
+      "researchedFix": "Preserve the grille as a detail-stroke layer drawn over the riso fill (SVG paint-order), and use a Multiply ink so the head reads as tone rather than an opaque mass; riso tonal guidance: keep midtones lifted so the grille doesn't collapse into solid ink.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "miniDisc",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Clean = square body (light) with an inner WHITE square panel + central hub circle + center dot. Risograph fills the whole square flat dark grey; inner panel, hub circle and dot all crush into a near-featureless mass. bold-ink/charcoal/outline/wireframe keep panel+circle.",
+      "researchedFix": "Use evenodd compound-path fill so the inner white panel is a true hole (unfilled), and paint hub/dot detail strokes above the fill via paint-order; treat riso ink as Multiply not opaque so structure survives.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "mochilaWayuu",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Clean = woven bag with horizontal patterned bands (zigzag/diamond motifs over WHITE ground). Risograph fills the bag flat dark grey; the woven pattern bands and white grounds are entirely lost into one solid mass. Every other style preserves the weave pattern.",
+      "researchedFix": "Keep the pattern motifs as a knockout detail layer over a translucent Multiply base fill (riso multiply-layer practice), so the white ground between motifs stays paper-reserve; alternatively render the pattern strokes above the fill with SVG paint-order.",
+      "citation": "https://jacquelinecolley.co.uk/blogs/advice/how-to-design-for-risograph-in-5-steps"
+    },
+    {
+      "object": "mokaPotGreca",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Clean octagonal moka pot has a chamber-division waist line separating top/bottom chambers. Risograph fills the body flat dark grey and the chamber-division line is lost into the mass. All other styles keep the waist line.",
+      "researchedFix": "Render the chamber-division line as a detail stroke painted on top of the fill (SVG paint-order), and use Multiply ink so the body reads as flat color with the seam still legible rather than an opaque blob.",
+      "citation": "https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/paint-order"
+    },
+    {
+      "object": "mondoPrintTube",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = vertical tube with a WHITE body and a central label band of small dots/buttons. Risograph fills the tube a dark solid bar; the white body is shaded over and the label-band detail survives only as faint marks. charcoal/stipple/outline/wireframe keep the label band on a light body.",
+      "researchedFix": "Keep the tube body as paper-reserve under a Multiply ink (don't fill opaque), and place the label-band detail as a stroke/knockout layer above the fill via SVG paint-order; riso guidance: avoid heavy solid fills over detail.",
+      "citation": "https://www.liznugentdraws.com/blog/3221"
+    },
+    {
+      "object": "monitor",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean monitor: bezel (mid tone) with a distinctly lighter SCREEN panel inside + stand. Risograph fills bezel, screen and base all the same flat dark grey; the bezel-vs-screen distinction is destroyed (screen knockout shaded to bezel tone). Every other style keeps the screen panel lighter than the bezel.",
+      "researchedFix": "Treat the screen as a separate lighter region (compound path with evenodd, or its own tone) so it isn't filled to the same value as the bezel; use Multiply layering / tone-lift to retain the two distinct tonal planes instead of one opaque mass.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "mxMouse",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Clean = light-grey mouse top with a visible scroll-wheel / button-split line. Risograph fills the mouse a flat dark-grey solid oval; the wheel/button-split detail is lost into the fill (only a faint mark). charcoal/stipple/newsprint keep a light body with the wheel readable.",
+      "researchedFix": "Paint the scroll-wheel/button-split as a detail stroke layer above the riso fill (SVG paint-order) and keep the body as Multiply tone not opaque ink so the split line stays legible.",
+      "citation": "https://www.oreilly.com/content/elegant-outlines-with-svg-paint-order/"
+    },
+    {
+      "object": "n64Controller",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Clean = 3-prong controller (white body) with central button cluster (A/B, d-pad, analog). Risograph fuses all 3 prongs into a flat dark-grey mass; prong divisions and most button detail are lost (only the center stick barely survives). outline/wireframe/charcoal keep prong seams + buttons.",
+      "researchedFix": "Render the prong-seam and button strokes above the riso fill via SVG paint-order, and use evenodd holes for any knockout button rings; keep ink Multiply so the body is tone, not an opaque blob (riso: don't let detail collapse into one ink mass).",
+      "citation": "https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/paint-order"
+    },
+    {
+      "object": "nalgeneBottle",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean bottle has a WHITE body with label markings (squares/lines) and a darker cap. Risograph fills the whole body flat dark grey; label markings are lost into the fill and the white body is shaded over. Every other style keeps the label marks on a light body.",
+      "researchedFix": "Keep bottle body as paper-reserve / Multiply tone and render label markings as a knockout/stroke detail layer above the fill (SVG paint-order); riso practice avoids heavy solid fills over fine label detail.",
+      "citation": "https://jacquelinecolley.co.uk/blogs/advice/how-to-design-for-risograph-in-5-steps"
+    },
+    {
+      "object": "nesCartridge",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = cartridge with a WHITE label panel (text) and ridge lines below. Risograph fills the cartridge flat dark grey; the white label panel is shaded (text barely survives) and the ridge lines are lost. bold/charcoal/outline/wireframe keep the white label + ridges.",
+      "researchedFix": "Make the label panel a true hole via fill-rule='evenodd' compound path so it stays white, and paint ridge-line + text strokes over the fill with SVG paint-order; use Multiply ink for the body tone.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "nesController",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = rectangular controller, WHITE face, with d-pad (+), select/start (--) and A/B buttons. Risograph fills the body flat dark grey crushing the white face contrast; controls survive only faintly. Every other style keeps the light face with crisp controls.",
+      "researchedFix": "Keep the face as paper-reserve under Multiply ink and render the d-pad/buttons as a detail-stroke layer above the fill (SVG paint-order); tone-lift midtones so controls stay legible per riso guidance.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "nintendoPlush",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Clean = round cat face (WHITE face) with ears, two eyes and a smile. Risograph fills the face a flat dark-grey solid circle; the white face is shaded and the smile/eyes are crushed into the mass (eyes only faintly darker). Every other style keeps a light face with clear eyes + smile. Classic 'face vanishes into form' failure.",
+      "researchedFix": "Render face features (eyes, smile) as a detail-stroke layer painted on TOP of the riso fill (SVG paint-order), and use a Multiply ink with lifted midtones so the face reads as tone, not solid — riso tonal guidance explicitly says higher midtone values 'preserve facial detail instead of letting shadows collapse into one heavy ink mass'.",
+      "citation": "https://www.liznugentdraws.com/blog/3221"
+    },
+    {
+      "object": "nintendoPowerMag",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = magazine cover: dark masthead band over a WHITE cover field with a central white-bordered circle. Risograph fills the whole cover flat dark grey; the white field and the central light circle are crushed to near-black, masthead lost. Every other style keeps the white field + circle.",
+      "researchedFix": "Use evenodd compound paths so the cover field and central circle stay as white holes, and place the masthead as its own darker region; render type/circle detail above the fill via paint-order and use Multiply ink rather than one opaque mass.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "overEarHeadphones",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Clean = headband + two earcups drawn as rings with concentric inner detail. Risograph fills the earcups as flat dark-grey solid discs; the concentric ring detail is lost. clean/charcoal/wireframe keep the rings.",
+      "researchedFix": "Keep the inner cup ring as a knockout (evenodd hole) and/or render concentric detail strokes over the fill via SVG paint-order; use Multiply tone so the cups aren't opaque solid discs.",
+      "citation": "https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/paint-order"
+    },
+    {
+      "object": "packingCubes",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = stacked pouches with WHITE faces and zipper/seam lines. Risograph fills the stack flat dark grey; face divisions and zipper lines are lost and the white faces shaded over. Other styles keep seams + light faces.",
+      "researchedFix": "Keep pouch faces as paper-reserve / Multiply tone and render zipper/seam strokes above the fill (SVG paint-order); riso practice: avoid heavy solid fills over fine seam detail.",
+      "citation": "https://www.oreilly.com/content/elegant-outlines-with-svg-paint-order/"
+    },
+    {
+      "object": "pairedMug",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = two mugs with WHITE bodies and open handles. Risograph fills both mugs flat dark-grey solid; the white bodies are shaded over (handle openings survive only as outline notches). Every other style keeps light bodies.",
+      "researchedFix": "Keep mug bodies as paper-reserve under Multiply ink (don't opaque-fill) and ensure the handle opening is a true evenodd hole; this matches riso 'discard white knockout / preserve overprint' practice so whites stay unprinted.",
+      "citation": "https://www.duplikat.co.uk/riso-print-guide"
+    },
+    {
+      "object": "pairedPhotoStrip",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Clean = vertical photo strip with 4 WHITE photo-frame windows. Risograph fills the strip a dark-grey solid bar; the 4 white windows are crushed (only faint internal lines). outline/wireframe keep all 4 frames open.",
+      "researchedFix": "Model the 4 frame windows as evenodd holes so they remain white, and paint frame borders above the fill via SVG paint-order; use Multiply tone for the strip body rather than an opaque bar.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "passport",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean = passport booklet (light cover) with a WHITE emblem circle + 'PASSPORT' text. Risograph fills the booklet flat dark grey; the emblem and text are crushed and the light cover is shaded over. Every other style keeps the emblem + text on a light cover.",
+      "researchedFix": "Keep the cover as paper-reserve / Multiply tone, model the emblem ring as an evenodd knockout, and render emblem + type as a detail layer above the fill (SVG paint-order).",
+      "citation": "https://www.oreilly.com/content/elegant-outlines-with-svg-paint-order/"
+    },
+    {
+      "object": "passportDocument",
+      "variant": "newsprint",
+      "divergence": "blob",
+      "note": "Clean cover is ALREADY dark with light/white knockout text rows + a white emblem ring, plus a lighter back page. Newsprint converts the dark cover into a uniform dense black halftone-dot field: the knockout text and emblem ring are lost under the dots and the back page nearly disappears. (Risograph on this row was acceptable — it lightened the cover to grey and kept layout — so this is a newsprint-specific failure, not riso.)",
+      "researchedFix": "Cap the halftone dot density / use a threshold so knockout whites survive: in halftone workflows enable 'Ignore White' and a ~50% threshold so light (text/emblem) pixels become paper-white and only true darks become dots; render the knockout text/emblem as a white detail layer above the halftone so it isn't filled in.",
+      "citation": "https://creativepro.com/how-to-make-amazing-halftone-effects-with-photoshop/"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean is a SOLID BLACK slide cover with white knockout 'DD' logo + text/underline. rough-handdrawn renders an EMPTY white box with only a sketchy outline: the entire dark fill AND the white knockout content vanish. Verified at 2x zoom (/tmp/pitch_clean.png vs /tmp/pitch_rough.png). Same emptying occurs in sketchy and bold-ink for this object.",
+      "researchedFix": "rough.js (the hand-drawn/sketchy engine) renders NO fill unless an explicit fill color is passed alongside fillStyle ('Without specifying a fill color, no fill renders regardless of fillStyle choice'). Carry the source SVG's fill attribute (#000) into rough.js options as fill:'#000', fillStyle:'solid' (use 'hachure'/'cross-hatch' only for tonal grays). The SVG->rough conversion is currently passing stroke but dropping fill, so solid-black regions collapse to outline.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean SOLID BLACK cover with white knockout text becomes a clean EMPTY outlined rectangle in bold-ink, no fill and no text. Verified at 2x (/tmp/pitch_bold.png).",
+      "researchedFix": "Same root cause: bold-ink path passes stroke but not fill to rough.js. Set fill:'#000' + fillStyle:'solid' for shapes whose source fill is dark; render white knockout text as overprinted paper-colored glyphs on top of the solid fill.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Same as rough/bold: the black cover + knockout text render as an empty sketchy box, dark fill dropped.",
+      "researchedFix": "Propagate source fill color into rough.js fill option with fillStyle:'solid'; sketchy roughness applies to the fill hatching/edges, not to whether the fill exists.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "perrierPoster",
+      "variant": "risograph",
+      "divergence": "white-shaded",
+      "note": "Clean is a thick BLACK frame, PURE-WHITE interior panel, PURE-BLACK bottle silhouette, black PERRIER text on white. Risograph floods the white interior panel to light gray and drops the black bottle to mid-gray, so figure and ground collapse to nearly one tone. Verified at 2x (/tmp/perrier_clean.png vs /tmp/perrier_risograph.png). Note: pinnedFigurePhoto/risograph does NOT fail because its Clean interior was already gray.",
+      "researchedFix": "Authentic risograph is a duotone/spot-color separation that PRESERVES luminosity: map darkest tones -> ink, lightest tones -> paper-white, only colors change. Replace the uniform mid-gray flood with a gradient-map/threshold (white point stays paper, black figure stays ink) so the white knockout panel renders as paper and the bottle stays a distinct dark spot color, keeping figure-ground contrast.",
+      "citation": "https://helpx.adobe.com/photoshop/using/duotones.html"
+    },
+    {
+      "object": "powerGlove",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean has a SOLID BLACK display panel on the glove body. bold-ink renders that panel as an EMPTY white box with a small button-grid outline; the solid dark fill is gone. Verified at 2x (/tmp/pglove_clean.png vs /tmp/pglove_bold.png). Sketchy/rough show the same light-grid treatment of the dark panel.",
+      "researchedFix": "Carry the panel's source fill (#000) into rough.js as fill + fillStyle:'solid'. The conversion currently sends only the panel's stroke outline, so the knockout dark panel renders empty.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "ppvPoster",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean is a SOLID BLACK poster with white knockout text 'WRESTLE MANIA / XL'. rough-handdrawn renders an EMPTY outlined rectangle: dark fill and text both gone. (sketchy and bold-ink identical.) tone styles wet-ink/charcoal/stipple/risograph correctly keep dark+text.",
+      "researchedFix": "Same rough.js fill-dropping bug. Pass fill:'#000', fillStyle:'solid'; render knockout text by overprinting paper-colored glyphs over the filled rect.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "ppvPoster",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Solid black poster + knockout text render as an empty sketchy outline box.",
+      "researchedFix": "Propagate fill color into rough.js fill with fillStyle:'solid'; sketchy roughness should affect fill edges only, not fill presence.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "ppvPoster",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Solid black poster + knockout text render as a clean empty outlined rectangle.",
+      "researchedFix": "Set fill:'#000' + fillStyle:'solid' from the source SVG fill; overprint knockout text on top.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "ps1JewelCase",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean is a CD case with a LARGE BLACK label holding white knockout 'FINAL FANTASY' text. bold-ink renders the whole label area WHITE/EMPTY (only header strip + bottom teeth survive as outlines); dark fill and all knockout text gone. Verified at 2x (/tmp/jewel_clean.png vs /tmp/jewel_bold.png). rough-handdrawn and sketchy empty it the same way.",
+      "researchedFix": "Carry the label's source fill into rough.js (fill:'#000', fillStyle:'solid'); the per-shape fill is being dropped during SVG->rough conversion so only stroked sub-shapes (header, teeth) survive.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "ps1JewelCase",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Large black label + knockout text render as an empty sketchy box; only header/teeth outlines remain.",
+      "researchedFix": "Propagate fill color into rough.js fill option with fillStyle:'solid'.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "ps1JewelCase",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Black label area dropped to white outline; knockout text lost.",
+      "researchedFix": "Set fill from source SVG (#000) + fillStyle:'solid'; sketchy randomness applies to fill, not its existence.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "ps1MemoryCard",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean has a SOLID BLACK label strip on the card body. bold-ink renders that strip as an EMPTY white box (outline only). Verified at 2x (/tmp/memcard_clean.png vs /tmp/memcard_bold.png). rough-handdrawn and sketchy drop it likewise.",
+      "researchedFix": "Pass the strip's source fill into rough.js as fill + fillStyle:'solid'; conversion currently omits fill for this sub-shape.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "psPoster",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean is a SOLID BLACK poster with white knockout 'PS / DREAMS' text. rough-handdrawn renders an EMPTY outlined rectangle; dark fill + text gone. (sketchy and bold-ink identical.) tone styles keep dark+text.",
+      "researchedFix": "Same rough.js fill-dropping bug; set fill:'#000', fillStyle:'solid' and overprint knockout text.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "psPoster",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Solid black poster + knockout text render as an empty sketchy outline.",
+      "researchedFix": "Propagate fill color to rough.js fill with fillStyle:'solid'.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "psPoster",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Solid black poster + knockout text render as a clean empty outlined box.",
+      "researchedFix": "Set fill:'#000' + fillStyle:'solid' from source SVG fill; overprint knockout text.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "psaSlab",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean has a dark header label strip (grade '10') above the white card window. rough-handdrawn renders that dark header as a light outline (fill dropped); the card window/star detail survives. Milder instance of the same bug (smaller dark region). sketchy shows the same header drop.",
+      "researchedFix": "Carry the header strip's source fill into rough.js (fill + fillStyle:'solid'); same per-shape fill-propagation fix as the posters/labels.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "sealedBoosterBox",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Sheet 144 row7. In Clean the top header is a SOLID DARK rectangle with white knockout 'BOOSTER BOX' text. In bold-ink it renders as an EMPTY OUTLINE rectangle — the dark fill and its knockout text are dropped entirely. Same drop also seen in this row's sketchy and rough-handdrawn tiles; wet-ink/charcoal/risograph correctly keep the band dark. Worst in bold-ink, which should be the heaviest ink yet shows the lightest header. Root cause: the sketch-style transform passes only the path outline to the Rough.js-style renderer and discards the source element's fill paint, so filled regions collapse to outlines.",
+      "researchedFix": "In Rough.js (the engine these sketch styles use), a shape only gets a filled interior if you explicitly pass fill + fillStyle. Carry the source element's non-transparent fill paint through the style transform and emit it as fill:<originalColor> with fillStyle:'solid' (use 'cross-hatch'/'hachure' with hachureGap/fillWeight for the textured styles) so dark-filled regions stay filled and white knockout text is preserved as negative space — rather than stroking the outline only.",
+      "citation": "https://github.com/rough-stuff/rough"
+    },
+    {
+      "object": "souvenirMagnet",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Sheet 156 row10. In Clean the top header is a SOLID DARK band with white knockout 'CARTAGENA' text (plus a dark base strip and dark mountain silhouette). In bold-ink the header band renders as an EMPTY OUTLINE rectangle — dark fill and knockout text dropped. Same drop in this row's rough-handdrawn and sketchy tiles; wet-ink and charcoal correctly preserve the dark header with legible knockout text. Identical root cause to sealedBoosterBox: the style transform strokes the outline but discards the element's fill paint, so the solid-dark knockout region becomes a hollow outline.",
+      "researchedFix": "Same Rough.js fill-preservation technique: thread the original fill color into the sketch renderer and call with fill:<color> + fillStyle:'solid' so filled regions render filled and the knockout text reads as negative space. SVG fill is painted before stroke (W3C SVG painting model), so a region that has a fill in Clean must be given an explicit fill in the transformed output instead of outline-only.",
+      "citation": "https://github.com/rough-stuff/rough"
+    },
+    {
+      "object": "trinitronTv",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean has a SOLID BLACK screen filling the bezel. The bold-ink variant renders the screen as an empty white box with only a bold outline rectangle inside - the dark screen region is gone. bold-ink should keep solid fills as solid black; instead it stripped the fill. (Texture-fill siblings wet-ink/charcoal/stipple/newsprint and risograph all correctly represent the dark screen.)",
+      "researchedFix": "In Rough.js (the canonical hand-drawn/sketch SVG renderer) a filled region is preserved via the `fillStyle` option rather than dropped. For an emphatic-ink look, set `fill` to the source color and `fillStyle:'solid'` so the dark screen renders as a true filled black region; never emit stroke-only when the source path has a non-empty fill. Map source fill darkness -> fillStyle (solid for near-black) so bold-ink keeps solid knockout regions black.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "trinitronTv",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean's solid black screen renders as an empty white outline-only trapezoid in the sketchy variant - the dark region is dropped to white. A hand-sketch style should still indicate the dark screen with scribble/hatch fill (as wet-ink and charcoal do), not leave it blank.",
+      "researchedFix": "Use Rough.js hachure/cross-hatch fill to convey tone instead of dropping the fill: keep the source `fill` and set `fillStyle:'hachure'` (or `'cross-hatch'` for darker tone), tuning `hachureGap`/`fillWeight` so darker source fills get denser lines. This is the tonal-art-map / pen-and-ink approach where stroke density encodes tone, preserving the dark screen as dense sketchy hatching.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/"
+    },
+    {
+      "object": "trinitronTv",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean's solid black screen renders as an empty white outline in the rough-handdrawn variant - the dark interior region is lost to white, leaving only a wobbly bezel and inner outline.",
+      "researchedFix": "Same outline-family root cause: convert the source solid fill to a hand-drawn hatch fill rather than discarding it. Per Rough.js, retain `fill` and apply `fillStyle:'hachure'`/`'cross-hatch'` with `fillWeight`/`hachureGap` mapped from source darkness so the dark screen reads as dense rough hatching, not empty white.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "vhsClamshell",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean has a DARK (black) lower panel under the white VHS label. The bold-ink variant renders that lower panel as an empty white box with only an outline - the solid dark panel is dropped. wet-ink correctly fills the same panel with texture.",
+      "researchedFix": "bold-ink must preserve solid knockout regions: keep the source `fill` and render with Rough.js `fillStyle:'solid'` so the lower panel stays a filled black region. The renderer should branch on whether the source path has a non-empty fill and never reduce a filled region to stroke-only.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "vhsClamshell",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean's dark lower panel becomes an empty white box (outline only) in the sketchy variant. The dark region is dropped to white instead of being hatch-filled.",
+      "researchedFix": "Convert the panel's solid fill to sketchy hatching: retain source `fill` and use Rough.js `fillStyle:'hachure'` (or `'cross-hatch'` for the dark tone) with density (hachureGap/fillWeight) driven by source darkness. Tonal-art-map / pen-and-ink theory: encode dark tone as dense line fill, not omission.",
+      "citation": "https://link.springer.com/article/10.1007/s00371-016-1222-3"
+    },
+    {
+      "object": "vhsClamshell",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean's dark lower panel renders as an empty white box in the rough-handdrawn variant - solid dark region lost, only wobbly outlines remain.",
+      "researchedFix": "Same fix as the other outline-family styles: keep the source `fill` and apply a Rough.js hand-drawn fill (`fillStyle:'hachure'`/`'cross-hatch'`) scaled by source darkness instead of discarding the fill, so the dark panel reads as rough hatching.",
+      "citation": "https://roughjs.com/posts/release-4.0/"
+    },
+    {
+      "object": "vinylLpSleeve",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Clean has a SOLID BLACK sleeve background (with a white PUNK/SIDE A label box) and a dark record disc peeking out. The bold-ink variant drops the black sleeve background to white and renders the disc as a hollow circle - both dark regions lost, only bold outlines remain.",
+      "researchedFix": "Preserve filled regions in bold-ink via Rough.js `fillStyle:'solid'` keeping the source `fill`, so the sleeve background stays solid black and the disc stays a filled dark circle. Do not strip fills on paths whose source fill is non-empty.",
+      "citation": "https://github.com/rough-stuff/rough/wiki"
+    },
+    {
+      "object": "vinylLpSleeve",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean's solid black sleeve background renders as plain white with only outlines + PUNK text in the sketchy variant - the dominant dark region of the object is gone.",
+      "researchedFix": "Map the sleeve's solid fill to sketchy hatch fill: retain source `fill`, use Rough.js `fillStyle:'hachure'`/`'cross-hatch'` with line density set from source darkness (hachureGap/fillWeight) so the black sleeve reads as dense hand-drawn hatching, following the tonal-art-map tone-by-density principle.",
+      "citation": "https://shihn.ca/posts/2020/roughjs-algorithms/"
+    },
+    {
+      "object": "vinylLpSleeve",
+      "variant": "rough-handdrawn",
+      "divergence": "dark-dropped",
+      "note": "Clean's solid black sleeve background renders as white outlines only in the rough-handdrawn variant; the dark sleeve and dark disc are both dropped.",
+      "researchedFix": "Same outline-family root cause and fix: keep source `fill` and convert solid dark regions to Rough.js hand-drawn hatch/cross-hatch fill (density from source darkness) rather than emitting stroke-only, so the sleeve and disc retain their dark tone.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "wrestlingCard",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean shows a DARK upper panel with a WHITE knockout figure icon, over a white OLYMPIC label strip. In sketchy the dark upper panel renders WHITE/empty (outline only), so the figure no longer reads as a knockout and the panel's solid value is lost. wet-ink, charcoal, stipple, newsprint all keep the panel dark here, so this is sketchy-specific, not the intended outline mode.",
+      "researchedFix": "sketchy should fill the closed dark region as a region fill (rough.js fillStyle other than a pure outline) using the source path's compound geometry; the figure stays a knockout via SVG fill-rule='evenodd' on the compound path so the inner icon punches a hole in the filled panel rather than being lost. Apply hachure/cross-hatch fill to the dark region instead of stroking only its border.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "wrestlingCard",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "bold-ink is a heavy-ink style yet the DARK upper panel renders as white/empty with the figure drawn dark-on-white (value inverted). The solid dark panel of Clean is dropped, unlike wet-ink/charcoal which keep it filled.",
+      "researchedFix": "bold-ink must treat Clean's filled (dark) regions as fills, not as strokes: detect filled subpaths from the source and emit a solid/dense fill for them, preserving the white figure via fill-rule='evenodd' compound-path holes so the knockout is retained instead of inverted.",
+      "citation": "https://oreillymedia.github.io/Using_SVG/extras/ch06-fill-rule.html"
+    },
+    {
+      "object": "wrestlingFigure",
+      "variant": "sketchy",
+      "divergence": "dark-dropped",
+      "note": "Clean has a DARK header band (white tick marks inside it) above the figure. In sketchy the header band renders WHITE/empty (outline only) and the figure torso also loses its dark fill. wet-ink, charcoal, stipple, newsprint keep the header dark, confirming this is a sketchy fill failure, not outline mode.",
+      "researchedFix": "Same root fix: region-fill closed dark regions (the header band) with a hachure/cross-hatch fill keyed off the source fill attribute rather than outlining them; keep interior white tick marks as evenodd holes in the filled band.",
+      "citation": "https://roughjs.com/"
+    },
+    {
+      "object": "wrestlingFigure",
+      "variant": "bold-ink",
+      "divergence": "dark-dropped",
+      "note": "Dark header band renders white/outlined in bold-ink while wet-ink/charcoal/stipple keep it filled. The band's solid value and the white tick-mark knockouts both fail to read.",
+      "researchedFix": "bold-ink should ink filled source regions as solid/dense fills (its namesake heaviness) and preserve interior knockouts via evenodd compound paths, instead of converting the filled band to an empty outline.",
+      "citation": "https://www.sitepoint.com/understanding-svg-fill-rule-property/"
+    },
+    {
+      "object": "wrestlingBoot",
+      "variant": "risograph",
+      "divergence": "blob",
+      "note": "Clean boot is a light/white body with diagonal lace hachure marks and a thin outline. risograph fills the ENTIRE boot as a uniform medium-gray solid mass; the diagonal lace marks and the light body are swallowed into a featureless fill. All other variants (incl. stipple/newsprint/charcoal) keep the body light and the lace marks legible.",
+      "researchedFix": "risograph should be a duotone/halftone screen, not a flat fill: convert tone to a halftone dot screen at a chosen LPI and lift the mid-tones (Tone Lift) so light body areas stay paper-reserve and dark interior marks keep contrast, rather than collapsing shape into one heavy ink mass.",
+      "citation": "https://campus.collegeforcreativestudies.edu/imaging-center/2021/06/22/risograph-image-options/"
+    },
+    {
+      "object": "zeldaMap",
+      "variant": "risograph",
+      "divergence": "detail-lost",
+      "note": "Clean map is a LIGHT-gray rectangle with dark, legible interior content: compass 'N', three curved path lines, and an 'X'. risograph fills the rectangle with a uniform DARKER gray that crushes contrast so the curves, N and X nearly merge into the fill. outline-only/wireframe/stipple/charcoal keep the interior content clearly legible.",
+      "researchedFix": "Render risograph fill as a screened halftone (dots/lines) at the source tone value with mid-tone lift so a region that is LIGHT in Clean stays light enough for the dark line work to read; reserve solid ink only for genuinely dark source regions.",
+      "citation": "https://www.shutterstock.com/blog/photoshop-tutorial-mimic-risograph-effect"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "rod",
+      "divergence": "dark-dropped",
+      "note": "Clean source is a dark (dk 0.95) filled rectangle. rod-q35/q315 render a WHITE box with only a thin outline and faint detail line; auto/extrude/solid render it dark. The rod mesh ignores the source's dark surface value and renders bare/white.",
+      "researchedFix": "Apply the source SVG as a texture/material on the generated rod mesh: build explicit UVs on the procedural geometry and map the source artwork (or its tone) onto the front face so the dark fill carries through, instead of leaving the mesh on a default white material.",
+      "citation": "https://discoverthreejs.com/book/first-steps/textures-intro/"
+    },
+    {
+      "object": "pitchDeckCover",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "inflate-q35/q315 produce a puffy outlined form whose interior is WHITE/empty; the dark source surface is dropped (only the silhouette outline and a faint mark survive). auto/extrude/solid keep it dark.",
+      "researchedFix": "After Monster-Mash-style single-view inflation, texture the inflated mesh with the source artwork via UVs (front-facing projection) so the dark fill and interior marks ride the surface; the inflation should carry the source image as a texture, not just produce a bare balloon mesh.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/monster_mash"
+    },
+    {
+      "object": "externalSsdArchive",
+      "variant": "rod",
+      "divergence": "dark-dropped",
+      "note": "Dark (dk 0.97) source; rod-q35/q315 render a white box with faint inner rectangle + small circle outline, surface white. auto/extrude/solid render dark. Same rod white-surface failure.",
+      "researchedFix": "Texture the rod mesh's front face with the source artwork via explicit UVs so the dark surface value renders, rather than defaulting to white.",
+      "citation": "https://threejs.org/docs/pages/Texture.html"
+    },
+    {
+      "object": "externalSsdArchive",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "inflate-q35/q315 give a puffy white-interior form; dark source surface dropped, only faint rectangle remains.",
+      "researchedFix": "Project the source image as a texture onto the inflated mesh (UV-mapped front projection) so surface tone is preserved post-inflation.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/monster_mash"
+    },
+    {
+      "object": "framedFlyer",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean flyer has clear interior content: a header box, a zigzag scribble, and several text lines (visible in rod/inflate which keep them). extrude-q35/q315 render a solid dark slab where this interior content is swallowed into the fill (only faint scratches survive). auto and solid lose it the same way.",
+      "researchedFix": "Drive the extruded front face with a displacement/relief map derived from the source artwork (bas-relief from the drawing): use per-pixel extrusion / displacement so interior lines become surface micro-relief that catches light, or texture-map the source onto the front face, instead of a flat dark extrusion that flattens detail.",
+      "citation": "https://academic.oup.com/jcde/article/7/1/30/5809440"
+    },
+    {
+      "object": "framedFlyer",
+      "variant": "solid",
+      "divergence": "detail-lost",
+      "note": "solid-q35/q315 also bury the header box, zigzag and text lines in a uniform dark mass; the content that rod/inflate preserve is lost.",
+      "researchedFix": "Apply a depth-compressed bas-relief displacement from the source (Laplacian-coordinate detail preservation / arctangent gradient compression) to the solid front face so fine interior features survive as relief instead of collapsing into the fill.",
+      "citation": "https://orca.cardiff.ac.uk/id/eprint/58823/1/basrelief_11_16.pdf"
+    },
+    {
+      "object": "setlistHandwritten",
+      "variant": "rod",
+      "divergence": "dark-dropped",
+      "note": "Dark (dk 0.98) source; rod-q35/q315 render a white-surfaced outlined form with faint top detail line. Surface tone dropped vs dark auto/extrude/solid.",
+      "researchedFix": "UV-map the source artwork onto the rod mesh front face so its dark surface renders rather than a default white material.",
+      "citation": "https://discoverthreejs.com/book/first-steps/textures-intro/"
+    },
+    {
+      "object": "setlistHandwritten",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "inflate-q35/q315 produce a white-interior puffy form with the handwritten setlist detail dropped.",
+      "researchedFix": "Texture the inflated mesh with the source image (front projection UVs) so surface tone and handwritten marks are preserved after inflation.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/monster_mash"
+    },
+    {
+      "object": "nintendoPowerMag",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean has a prominent circle (disc/logo) plus panel lines, clearly visible in rod/inflate. extrude-q35/q315 (and auto) render a dark slab where the circle is swallowed to a barely-visible faint ring. Cover content lost in the extrusion.",
+      "researchedFix": "Use the source artwork as a displacement/bas-relief map on the extruded front face so the circle and panel lines become surface relief that catches light; per-pixel extrusion mapping stores the shape pattern in a texture and keeps it visible on the extruded box.",
+      "citation": "https://www.researchgate.net/publication/239921728_Per-Pixel_Extrusion_Mapping"
+    },
+    {
+      "object": "nintendoPowerMag",
+      "variant": "rod",
+      "divergence": "dark-dropped",
+      "note": "rod-q35/q315 render the magazine as a white box (surface tone dropped). The circle/panel detail is preserved as outline, but the dark source surface value is lost vs the dark auto/extrude/solid renders.",
+      "researchedFix": "UV-texture the rod front face with the source artwork so the dark cover surface renders while keeping the circle/panel detail.",
+      "citation": "https://threejs.org/docs/pages/Texture.html"
+    },
+    {
+      "object": "playstationMag",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean cover has rich layout: a circle (disc), a square panel, and lines, all legible in rod/inflate. extrude-q35/q315 and auto render a dark slab that swallows the circle, square and lines into the fill. solid partially embosses the circle but most layout is lost.",
+      "researchedFix": "Bas-relief / displacement-map the front face from the source artwork (depth-compressed with detail preservation) so the disc, panel and lines survive as surface relief; alternatively UV-map the source as an albedo/relief texture onto the extruded front face.",
+      "citation": "https://orca.cardiff.ac.uk/id/eprint/58823/1/basrelief_11_16.pdf"
+    },
+    {
+      "object": "playstationMag",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "inflate-q35/q315 render a puffy white-interior form; the dark cover surface is dropped (circle/square preserved as distorted outline only).",
+      "researchedFix": "Texture the inflated mesh with the source image via front-projection UVs so surface tone is preserved post-inflation; constrain inflation distortion (ARAP-L rigidity) so the layout marks stay recognizable.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/monster_mash"
+    },
+    {
+      "object": "foldedMap (row 00, c014)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black square (closed map). inflate renders a puffy form as an OUTLINE only with a WHITE interior, with fold-grid lines floating in the empty white. The solid dark body of Clean is gone; the inflated surface is treated as a transparent/wireframe shell rather than a filled opaque solid. rod is correctly an outline (wireframe mode), but inflate is supposed to be a filled shaded solid like auto/extrude/solid, all of which stay dark.",
+      "researchedFix": "Inflate should close and fill the silhouette into a watertight rotund solid (Teddy/Igarashi sketch inflation: triangulate the interior of the closed silhouette, inflate the region so wide areas are fat and narrow thin, then shade the front faces opaque) — not leave the front face transparent showing the back. The closed sketch must drive a BASE/solid sweep, not a thin-feature shell.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "flagPanel (row 64, c014)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black rectangle (dk 0.94). inflate is an outlined puffy panel with a WHITE interior, horizontal bars showing through the empty fill. Same hollow-shell problem: the opaque dark fill of Clean becomes transparent. auto/extrude/solid all correctly stay dark.",
+      "researchedFix": "Triangulate and fill the inflated silhouette interior as an opaque solid (Teddy skin/inflation), shading the camera-facing surface dark so the back is occluded. The inner detail bars should become surface displacement, not transparency.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "pokemonPlush (row 60, c014)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "CLEAN shows a round plush with ears and a visible FACE (two eye dots + smile). extrude (q35/q315) renders a solid dark sphere with ears but the face — eyes and smile — is completely swallowed into the featureless dark form. rod and inflate both retain the eyes/smile; only the flat-shaded extrude (and auto) drop them.",
+      "researchedFix": "Carry the interior face strokes onto the extruded/inflated surface as a bas-relief displacement (signed displacement map along surface normals from the 2D detail layer), so eyes/smile emboss into the dark form instead of being flattened away. Decompose into smooth base + detail layer and re-apply the detail layer post-extrusion.",
+      "citation": "https://mewangcl.github.io/pubs/TVCGBasRelief.pdf"
+    },
+    {
+      "object": "pokemonPlush (row 60, c014)",
+      "variant": "auto",
+      "divergence": "detail-lost",
+      "note": "auto (q35/q315) produces the same featureless dark sphere with ears as extrude — the face (eyes + smile) present in CLEAN is lost into the solid form.",
+      "researchedFix": "Same bas-relief detail-layer re-application: separate base geometry from the face detail layer and emboss the detail as normal-direction displacement so interior marks survive solid shading.",
+      "citation": "https://mewangcl.github.io/pubs/TVCGBasRelief.pdf"
+    },
+    {
+      "object": "boteroFigurine (row 68, c014)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "CLEAN shows a small figurine with tiny eye dots on the head. extrude renders a solid dark figure with the face/eyes lost into the dark form. rod and inflate keep the eye dots visible; the flat-shaded dark modes drop them.",
+      "researchedFix": "Re-apply the facial detail layer as displacement/bas-relief on the extruded body (base+detail decomposition, signed displacement along normals) so the eyes emboss rather than vanish.",
+      "citation": "https://mewangcl.github.io/pubs/TVCGBasRelief.pdf"
+    },
+    {
+      "object": "replicaBelt (row 72, c014)",
+      "variant": "extrude",
+      "divergence": "blob",
+      "note": "CLEAN is a belt buckle whose ring/loop has an OPEN center. extrude (and auto/solid) fills the buckle into a featureless solid dark mass — the open ring hole is gone. rod and inflate correctly preserve the open loop/holes.",
+      "researchedFix": "Treat the buckle outline as a polygon WITH HOLES: triangulate using bridge edges (or even-odd fill rule) so the inner loop stays open, then extrude both the outer and inner boundaries to a genus-1 solid. Do not flood-fill the whole silhouette.",
+      "citation": "https://en.wikipedia.org/wiki/Polygon_with_holes"
+    },
+    {
+      "object": "wrestlingCard (row 76, c014)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black card (dk 0.94). inflate renders the card as a puffy OUTLINE with a WHITE interior panel and a portrait figure floating in the empty fill. Clean's opaque dark body is replaced by transparency. auto/extrude/solid stay correctly dark.",
+      "researchedFix": "Fill the inflated card silhouette as an opaque solid (Teddy inflation closes and fills the region), and treat the portrait/panel as surface displacement on the dark front face rather than a white knockout.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "foldedMap (row 80, c014)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black square (dk 0.95). inflate is an outlined puffy form with a WHITE interior and fold-grid lines in the empty fill — opaque dark body dropped to a transparent shell. auto/extrude/solid stay dark.",
+      "researchedFix": "Close+fill the inflated silhouette to an opaque watertight solid (Teddy skin algorithm), with fold lines as surface displacement, not transparency.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "lacroixCan (row 88, c014)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black can shape. inflate renders a puffy can OUTLINE with a WHITE interior and bubble dots floating in the empty fill. Opaque dark body of Clean lost to a hollow shell. auto/extrude/solid stay dark.",
+      "researchedFix": "Inflate the closed silhouette into an opaque filled solid (Teddy), shading front faces dark to occlude the back; bubbles become surface detail/displacement, not white knockouts.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "perrierPoster (row 92, c014)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black rectangle (poster, dk 0.92). inflate renders a puffy poster OUTLINE with WHITE interior and a bottle illustration in the empty fill. Opaque dark body replaced by transparency. auto/extrude/solid stay dark.",
+      "researchedFix": "Triangulate+fill the inflated silhouette as an opaque solid (Teddy inflation), with the bottle as displacement detail on the dark front face.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "eraserBlock (row 100, c014)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a small solid-black bar. inflate renders a puffy wedge OUTLINE with a WHITE interior and slanted lines in the empty fill. Opaque dark body of Clean dropped. auto/extrude/solid stay dark.",
+      "researchedFix": "Close and fill the inflated silhouette interior as an opaque solid (Teddy), shading the front surface dark; interior lines as displacement.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "overEarHeadphones (row 108, c014)",
+      "variant": "extrude",
+      "divergence": "blob",
+      "note": "CLEAN shows a headband ARC plus two separated earcups with concentric-ring detail. extrude (q35/q315) collapses everything into a single featureless dark lumpy MASS — the open headband arc and the gap between band and earcups are gone, earcup rings lost. rod, inflate, and solid all preserve the arc + ringed earcups; extrude is the failure.",
+      "researchedFix": "Preserve thin/branching features and concavities before extruding: detect them via medial-axis significance so the open arc and the band-to-cup gap are not flooded, and treat the silhouette as a multi-region polygon with holes (concentric earcup rings = holes). Extrude per-region with the open arc kept hollow rather than filling the convex hull.",
+      "citation": "https://arxiv.org/pdf/2210.13676"
+    },
+    {
+      "object": "guitarPick (row 116, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a tiny solid-dark teardrop pick (dk 0.89). inflate renders an empty RING/outline with a WHITE interior — the solid pick body is gone, leaving only a rim. auto/extrude/solid all stay correctly dark and filled.",
+      "researchedFix": "Inflate must fill the closed teardrop silhouette into an opaque rounded solid (Teddy: wide region = fat, opaque front shading), not produce a hollow tube/rim.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "nesCartridge (row 120, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black rectangle (dk 0.94). inflate renders a puffy cartridge OUTLINE with a WHITE interior and label lines in the empty fill. Opaque dark body dropped to transparent shell. auto/extrude/solid stay dark.",
+      "researchedFix": "Close+fill the inflated silhouette as an opaque solid (Teddy), label as surface displacement on the dark face.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "dvdSpine (row 128, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a fully-black thin vertical bar (dk 1.00 — maximum darkness). inflate renders a hollow loop/OUTLINE with a WHITE interior. Most extreme case: a 100%-black object becomes an empty ring. auto/extrude/solid stay solid dark.",
+      "researchedFix": "Fill the inflated closed silhouette into an opaque solid (Teddy inflation); a dk 1.00 source must map to a fully opaque dark surface, never a transparent shell.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "clapperboard (row 132, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black bar (dk 0.94). inflate renders a puffy clapperboard OUTLINE with a WHITE slate interior and clapper stripes in the empty fill. Opaque dark body dropped. auto/extrude/solid stay dark.",
+      "researchedFix": "Triangulate+fill the inflated silhouette as an opaque solid (Teddy); slate lines/stripes as displacement on the dark front face.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "boosterPack (row 140, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a fully-black rectangle (dk 1.00). inflate renders a puffy pack OUTLINE with a WHITE interior and bands in the empty fill — another dk 1.00 source rendering as a transparent shell. auto/extrude/solid stay solid dark.",
+      "researchedFix": "Close+fill the inflated silhouette to an opaque solid (Teddy); dk 1.00 must shade fully opaque dark, bands as displacement.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "vita (row 144, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black horizontal handheld bar. inflate renders a puffy OUTLINE with a WHITE screen and buttons floating in the empty fill. Opaque dark body dropped. auto/extrude/solid stay dark.",
+      "researchedFix": "Fill the inflated silhouette interior opaque (Teddy); screen/buttons as surface displacement, not white knockout.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "miniDisc (row 148, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black square. inflate renders a puffy OUTLINE with a WHITE interior and center hub in the empty fill. Opaque dark body dropped to a transparent shell. auto/extrude/solid stay dark.",
+      "researchedFix": "Close+fill the inflated silhouette as an opaque solid (Teddy); hub as displacement detail on the dark face.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "megaphone (row 156, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a small solid-dark megaphone (dk 0.94). inflate renders a puffy megaphone OUTLINE with a WHITE interior and lines in the empty fill. Opaque dark body dropped. auto/extrude/solid stay dark.",
+      "researchedFix": "Fill the inflated silhouette opaque (Teddy inflation); interior lines as displacement on the dark surface.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "rollerSuitcase (row 160, c028)",
+      "variant": "inflate",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a solid-black rectangle (dk 0.97). inflate renders a puffy suitcase OUTLINE with a WHITE interior, handle and wheels in the empty fill. Opaque dark body dropped to a transparent shell. auto/extrude/solid stay dark.",
+      "researchedFix": "Close+fill the inflated silhouette as an opaque solid (Teddy); handle/wheels/seams as surface displacement on the dark front face.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "ring (row 164, c028)",
+      "variant": "extrude",
+      "divergence": "white-shaded",
+      "note": "CLEAN is a ring = round BAND with an open center hole + a triangular gem on top. extrude (and auto/solid) fills the band's open center into a solid dark DISC — the defining hole is gone, turning the ring into a lollipop/disc. rod and inflate correctly preserve the open hole (true torus). Inverse failure: a region that should be open/white is shaded solid.",
+      "researchedFix": "Treat the ring outline as a polygon WITH A HOLE: triangulate with bridge edges (or even-odd fill rule) so the band's center stays open, then extrude both boundaries into a genus-1 torus solid. Do not fill the silhouette convex region.",
+      "citation": "https://en.wikipedia.org/wiki/Polygon_with_holes"
+    },
+    {
+      "object": "ring (row 164, c028)",
+      "variant": "auto",
+      "divergence": "white-shaded",
+      "note": "auto (q35/q315) makes the same mistake as extrude: the ring's open center is filled into a solid dark disc, losing the hole that defines a ring. inflate/rod keep the hole.",
+      "researchedFix": "Same hole-preserving triangulation (polygon-with-holes via bridge edges or even-odd rule) before generating geometry, so the auto path produces a torus rather than a filled disc.",
+      "citation": "https://en.wikipedia.org/wiki/Polygon_with_holes"
+    },
+    {
+      "object": "instaxCamera (idx 168)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean (and rod/inflate) show the lens ring + viewfinder rectangle + small dot on the camera face. extrude-q35/q315 render a featureless dark body (blackFrac 0.798/0.558 vs rod 0.013), and auto-q35/q315 are identical to extrude (same stats) — the lens/viewfinder face marks vanish into the slab. solid retains them only faintly.",
+      "researchedFix": "Deboss/engrave the interior face strokes onto the extruded front face via a displacement (height-map) pass on a subdivided face cap, instead of leaving ExtrudeGeometry's flat filled cap. ExtrudeGeometry alone fills the outer contour and discards interior lines; a lithophane-style Displace pass (image/line-art -> grayscale heightmap -> offset subdivided cap) re-imprints the lens/viewfinder as relief — which is exactly why the inflate/rod modes keep them.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/ExtrudeGeometry"
+    },
+    {
+      "object": "flagPin (idx 176)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod/inflate show a disc with 3 horizontal grille bars + center hub. extrude-q35/q315 (and auto, identical stats) render a plain dark disc (blackFrac 0.801/0.549 vs rod 0.024) — the grille bars and hub disappear into the solid disc.",
+      "researchedFix": "Engrave the grille bars + hub as a displacement/normal-map relief on the disc's flat face rather than capping the extrusion solid; differential-coordinate / high-relief detail preservation keeps interior feature lines as depth discontinuities on the extruded cap.",
+      "citation": "https://ivrlwww.epfl.ch/arpa/high-relief"
+    },
+    {
+      "object": "coladorTela (idx 180)",
+      "variant": "extrude",
+      "divergence": "dark-dropped",
+      "note": "Clean/rod/auto show a cone strainer + a thin hanging STRING and a small bottom knot. extrude-q35/q315 render the cone as a solid dark mass (blackFrac 0.895/0.698, bboxFill 0.59 vs auto 0.17) and the thin hanging string element is dropped entirely — only the cone survives, fattened.",
+      "researchedFix": "Classify the thin string as an OPEN stroke and sweep it into a thin tube (open path -> surface/tube) instead of letting the extruder fold it into the cone's filled region. Open vs closed contour detection: closed regions inflate/extrude to solids, open curves become swept tubes/connectors.",
+      "citation": "https://research.google/blog/monster-mash-a-sketch-based-tool-for-casual-3d-modeling-and-animation/"
+    },
+    {
+      "object": "monkeyNoodle (idx 188)",
+      "variant": "extrude",
+      "divergence": "white-shaded",
+      "note": "Clean blackish=0.00 — it is a thin OPEN squiggle stroke with an empty (white) interior; auto and rod faithfully keep it as a thin line (blackFrac 0.007). extrude-q35/q315 flood-fill the squiggle into a solid black ribbon/blob (blackFrac 0.807/0.506) — an open stroke wrongly treated as a closed fillable region. solid is also overweight (0.582) though still legible.",
+      "researchedFix": "Detect the path is OPEN (no closepath / endpoints not coincident) and sweep it into a constant-radius tube along the polyline rather than filling it as a polygon. Sweeping an open profile yields a surface/tube; only closed contours should be filled to solids.",
+      "citation": "https://discourse.threejs.org/t/svg-extrude-without-filling-the-path/48032"
+    },
+    {
+      "object": "bottleOpener (idx 196)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows an emblem (triangle/heart) and a hole inside the opener's round head. extrude-q35/q315 (and auto, identical stats, blackFrac 0.859/0.501 vs rod 0.005) render the head as a featureless dark paddle — the head emblem/hole drops out. inflate/solid retain the emblem.",
+      "researchedFix": "Engrave the head emblem/hole as a displacement relief (or boolean cut for the through-hole) on the extruded head cap; height-map deboss on a subdivided face preserves the interior emblem instead of a flat filled cap.",
+      "citation": "https://triverse.ai/blog/convert-images-to-stl-3d-relief"
+    },
+    {
+      "object": "processPrint (idx 1)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows a regular GRID (contact-sheet cells). extrude-q35/q315 (and auto, blackFrac 0.797/0.562 vs rod 0.008) render a flat dark slab; the grid lines vanish. inflate keeps the grid embossed.",
+      "researchedFix": "Deboss the grid as a relief/displacement pass on the panel's extruded face (line-art -> grayscale heightmap -> Displace on a subdivided cap), the lithophane-style engraving the inflate mode already applies.",
+      "citation": "https://community.microcenter.com/discussion/14068/creating-stunning-lithophanes-in-blender-a-step-by-step-guide-for-beginners"
+    },
+    {
+      "object": "stickeredLaptopLid (idx 9)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows the lid covered in distinct STICKERS (rounded rects, circles). extrude-q35/q315 (and auto, blackFrac 0.798/0.555 vs rod 0.013) render a blank dark slab — every sticker disappears, erasing the object's defining feature. inflate/solid keep stickers as embossed shapes.",
+      "researchedFix": "Engrave the sticker shapes onto the extruded face via displacement/normal-map relief instead of a flat filled cap; high-relief detail-preservation keeps the interior sticker contours as depth discontinuities.",
+      "citation": "https://ivrlwww.epfl.ch/arpa/high-relief"
+    },
+    {
+      "object": "framedDribbble (idx 13)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows the framed shot's interior UI panels/cards. extrude-q35/q315 (and auto, blackFrac 0.792/0.564 vs rod 0.011) collapse it to a dark slab; the framed artwork is gone. inflate/solid retain embossed panels.",
+      "researchedFix": "Deboss the framed interior art as a displacement-map relief on the front face (line-art heightmap -> Displace on subdivided cap), preserving panel lines as relief rather than a flat fill.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "framedMarioPoster (idx 21)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows a framed poster with a central emblem (arched dome/sun motif). extrude-q35/q315 (and auto, blackFrac 0.786/0.578 vs rod 0.043) render a dark slab; the poster emblem vanishes. inflate/solid keep it embossed.",
+      "researchedFix": "Engrave the poster emblem as relief via image-to-heightmap displacement on the extruded face cap rather than filling the cap solid.",
+      "citation": "https://triverse.ai/blog/convert-images-to-stl-3d-relief"
+    },
+    {
+      "object": "amiiboFigure (idx 25)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows a character FACE (two eyes + smile) on the round head atop an oval base. extrude-q35/q315 (and auto, blackFrac 0.730/0.491 vs rod 0.035) render the head as a featureless dark ball — the face is lost. inflate/solid retain eyes/smile.",
+      "researchedFix": "Treat the face as interior feature lines and deboss them onto the head surface via displacement/normal relief (bas-relief from line art), the technique the inflate mode already uses; do not cap the extrusion as a flat fill.",
+      "citation": "https://ivrlwww.epfl.ch/arpa/high-relief"
+    },
+    {
+      "object": "nintendoPlush (idx 29)",
+      "variant": "extrude",
+      "divergence": "blob",
+      "note": "rod shows a plush face (eyes + smile + cheeks) with ears. extrude-q35/q315 (and auto, blackFrac 0.756/0.481 vs rod 0.045) become a solid dark head-blob — the face merges away. inflate/solid keep the face as relief.",
+      "researchedFix": "Bas-relief / displacement engraving of the face onto the inflated head surface (grayscale line-art heightmap -> Displace), preserving eyes/smile as depth instead of a featureless cap.",
+      "citation": "https://community.microcenter.com/discussion/14068/creating-stunning-lithophanes-in-blender-a-step-by-step-guide-for-beginners"
+    },
+    {
+      "object": "loveLetter (idx 37)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows text LINES + a HEART at the bottom of the letter. extrude-q35/q315 (and auto, blackFrac 0.786/0.577 vs rod 0.025) render a flat dark slab; text and heart vanish. solid/inflate retain them embossed.",
+      "researchedFix": "Deboss the text lines + heart onto the extruded page face via lithophane-style displacement (line-art -> heightmap -> Displace on subdivided cap) instead of a flat filled cap.",
+      "citation": "https://3dp.rocks/lithophane/"
+    },
+    {
+      "object": "vhsClamshell (idx 45)",
+      "variant": "extrude",
+      "divergence": "white-shaded",
+      "note": "rod shows an inset (WHITE knockout) label panel on the cover. extrude-q35/q315 (and auto, blackFrac 0.787/0.577 vs rod 0.039) fill the whole cover dark — the inset label panel that is white/recessed in Clean is shaded over. solid/inflate keep the panel.",
+      "researchedFix": "Respect the knockout/inset region: cut/recess it as an inner relief step (negative displacement or boolean inset) so the white panel reads as a recessed face, rather than flooding the entire cover cap solid. ExtrudeGeometry hole/inner-contour handling preserves inner regions.",
+      "citation": "https://threejs.org/docs/#api/en/geometries/ExtrudeGeometry"
+    },
+    {
+      "object": "controllerShadowBox (idx 49)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows a controller silhouette (figure-8 body + two button circles) inside the shadow box. extrude-q35/q315 (and auto, blackFrac 0.792/0.566 vs rod 0.018) render a blank dark slab; the controller is gone. solid/inflate retain it embossed.",
+      "researchedFix": "Engrave the controller silhouette as relief on the box's front face via displacement (line-art heightmap -> Displace on subdivided cap), keeping interior feature lines as depth.",
+      "citation": "https://ivrlwww.epfl.ch/arpa/high-relief"
+    },
+    {
+      "object": "trinitronTv (idx 53)",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "rod shows the TV's SCREEN filled with horizontal scanlines (its defining feature). extrude-q35/q315 (and auto, blackFrac 0.814/0.555 vs rod 0.006) render a dark slab; screen + scanlines vanish. solid/inflate retain the scanline screen.",
+      "researchedFix": "Recess the screen as an inset face and deboss the scanlines via displacement relief on it (inset inner contour + line-art heightmap Displace) instead of a flat solid cap.",
+      "citation": "https://3dp.rocks/lithophane/"
+    },
+    {
+      "object": "Sketchbook (idx 93)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate variants in the same row clearly carry the interior line-art (spiral binding rings down the left edge + a wave doodle on the cover). extrude-q35 collapses the whole face into a featureless dark slab (measured blackFrac 0.784) - binding rings and doodle are gone. This is the single clearest instance of the dominant systematic failure. auto-q35 is byte-identical to extrude-q35 (auto just routes to extrude), and solid-q35 shows the same blob; only inflate and the lighter q315 angle keep the marks.",
+      "researchedFix": "Do not let extrusion present a flat unlit cap. Project the source line-art onto the extruded front face as real surface relief: emboss/deboss/scribe the strokes (SolidWorks 'Wrap' style), or apply a bas-relief displacement map / subdivision-surface engraving driven by the 2D drawing's pixel values, so interior strokes survive as ridges/grooves instead of being flattened. For pure visual fidelity a decal/texture projection of the clean strokes onto the cap is the lightweight equivalent.",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d ; https://patents.justia.com/patent/10108752"
+    },
+    {
+      "object": "Pinned figure photo (idx 57)",
+      "variant": "extrude-q35",
+      "divergence": "blob",
+      "note": "Same family. rod/inflate show a framed photo: a white frame border (knockout) around a figure silhouette. extrude-q35 (blackFrac 0.784, also auto-q35 and solid-q35) renders one solid black box - both the white frame border and the interior figure are absorbed into the mass. The white frame knockout being filled is also a white-shaded component.",
+      "researchedFix": "Triangulate the extrusion profile with the even-odd fill rule so the inner frame contour stays a hole through the depth (keeps the white knockout), AND emboss/displacement-map the interior figure onto the cap face per the bas-relief technique above so the silhouette is not flattened.",
+      "citation": "https://en.wikipedia.org/wiki/Polygon_with_holes ; https://www.meshy.ai/blog/sketch-to-3d"
+    },
+    {
+      "object": "Amp combo (idx 117)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate show the speaker grille (horizontal slats) and the top row of control knobs. extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.795) flatten to a dark slab; grille slats and knobs vanish.",
+      "researchedFix": "Emboss/deboss the grille slats and knob circles onto the extruded face as displacement relief (bas-relief / Wrap), rather than producing a blank cap.",
+      "citation": "https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d ; https://www.sciencedirect.com/science/article/abs/pii/S0010448520301214"
+    },
+    {
+      "object": "Folding chair (idx 153)",
+      "variant": "extrude-q35",
+      "divergence": "blob",
+      "note": "Worst blob of the set (blackFrac 0.895). rod shows slatted seat/back + leg frame; extrude-q35 / auto-q35 are a near-pure black mass, all slats and the leg structure lost. solid-q35 (0.710) partially recovers; inflate keeps the slats.",
+      "researchedFix": "Same bas-relief/emboss treatment for the slat lines; additionally because the chair has open gaps between slats and legs, triangulate the profile with even-odd fill so those gaps stay as holes instead of being filled solid.",
+      "citation": "https://en.wikipedia.org/wiki/Polygon_with_holes ; https://www.meshy.ai/blog/sketch-to-3d"
+    },
+    {
+      "object": "PSP (idx 149)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod shows the screen rectangle + d-pad + face buttons. extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.831) flatten to a dark slab; screen and controls gone. q315 angle and inflate keep them.",
+      "researchedFix": "Deboss the screen recess and emboss the control marks onto the extruded cap via displacement/Wrap relief; the recessed screen specifically wants an extruded-cut, not a flat fill.",
+      "citation": "https://bobcad.com/components/webhelp/BobCADCAMV33/en/Content/Merge/CAD/Solid_and_Surface_Creation/Solids/Extrude_Cut.htm ; https://www.meshy.ai/blog/sketch-to-3d"
+    },
+    {
+      "object": "DualShock (idx 145)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod shows D-pad (+), analog/button cluster, action buttons. extrude-q35 / auto-q35 (blackFrac 0.827) flatten to a dark gamepad blob; buttons lost. inflate and solid-q35 keep them.",
+      "researchedFix": "Emboss the button/d-pad marks onto the cap as relief (bas-relief displacement / Wrap); convex buttons should be positive displacement, recessed d-pad negative.",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d"
+    },
+    {
+      "object": "Popcorn bucket (idx 129)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate show popcorn kernels heaped at the top and the vertical box stripes. extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.743) flatten to a dark bucket mass; kernels and stripes lost.",
+      "researchedFix": "Emboss the stripe lines and inflate the kernel cluster as positive relief on the extruded form (per-part inflation / displacement), instead of a flat cap.",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.sciencedirect.com/science/article/abs/pii/S0010448520301214"
+    },
+    {
+      "object": "Pokemon figure (idx 137)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "Clean is a head+body+ears silhouette; rod/inflate render two eyes on the face. extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.746) absorb the face into the dark form - the eyes (the only interior marks) vanish. This is the 'face's eyes vanish into the form' case named in the brief.",
+      "researchedFix": "Inflate the silhouette to a rounded (semi-elliptical) profile and deboss the eyes as concave marks via displacement/bas-relief, the way drawing-to-relief reconstruction inflates each semantic part and stamps interior features.",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.sciencedirect.com/science/article/abs/pii/S0010448520301214"
+    },
+    {
+      "object": "Playmat (idx 141)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod shows the printed card-zone layout (two rectangles + a circle). extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.809) flatten to a black rectangle; zone graphics lost.",
+      "researchedFix": "The zone lines are a flat print, not geometry - project them as a decal/texture onto the extruded top face (decal route is the correct one for purely visual surface graphics), or lightly scribe them with Wrap.",
+      "citation": "https://mechanitec.ca/how-sketch-curved-surface-solidworks/ ; https://www.meshy.ai/blog/sketch-to-3d"
+    },
+    {
+      "object": "Souvenir magnet (idx 81)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod shows a top band + a mountain-range illustration. extrude-q35 / auto-q35 (blackFrac 0.794) flatten to a black tile; illustration and band lost. inflate keeps them.",
+      "researchedFix": "Decal/texture-project the mountain illustration onto the extruded face (flat printed art = decal), and emboss the band seam.",
+      "citation": "https://mechanitec.ca/how-sketch-curved-surface-solidworks/ ; https://www.meshy.ai/blog/sketch-to-3d"
+    },
+    {
+      "object": "Booster box (idx 61)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate show the vertical pack ridges (white striping). extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.792) flatten to a black box; ridges lost.",
+      "researchedFix": "Emboss the vertical ridges as repeating relief grooves on the extruded face (Wrap / displacement).",
+      "citation": "https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d ; https://www.meshy.ai/blog/sketch-to-3d"
+    },
+    {
+      "object": "Dual passport (idx 69)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate show the passport cover emblem + seal marks. extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.792) flatten to a black book; emblem lost.",
+      "researchedFix": "Emboss the cover emblem/seal onto the extruded cap as gold-foil-style relief (positive displacement / Wrap).",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d"
+    },
+    {
+      "object": "Wrestler figure (idx 73)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate show the figure-in-package: blister card with the wrestler silhouette. extrude-q35 / auto-q35 (blackFrac 0.787) flatten to a black slab; figure and card frame lost.",
+      "researchedFix": "Inflate the blister bubble as a raised dome and deboss the card frame; emboss the figure silhouette via bas-relief displacement.",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.sciencedirect.com/science/article/abs/pii/S0010448520301214"
+    },
+    {
+      "object": "Joy-Con (idx 125)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate/solid show the stick + button details; extrude-q35 / auto-q35 (blackFrac 0.797) flatten to a dark bar, controls lost.",
+      "researchedFix": "Emboss the analog-stick recess and buttons onto the extruded face via displacement/Wrap.",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d"
+    },
+    {
+      "object": "Passport (idx 157)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod shows the cover emblem circle; extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.785) flatten to a black book, emblem lost.",
+      "researchedFix": "Emboss the emblem onto the extruded cover as relief (Wrap / displacement).",
+      "citation": "https://www.meshy.ai/blog/sketch-to-3d ; https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d"
+    },
+    {
+      "object": "Travel camera (idx 161)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod shows the lens circle + viewfinder; extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.774) flatten to a black body, lens lost. inflate keeps the lens.",
+      "researchedFix": "Extrude-cut the lens recess (it is a recessed cylinder, not a flat mark) and emboss the viewfinder, per extruded-cut + Wrap.",
+      "citation": "https://bobcad.com/components/webhelp/BobCADCAMV33/en/Content/Merge/CAD/Solid_and_Surface_Creation/Solids/Extrude_Cut.htm ; https://www.meshy.ai/blog/sketch-to-3d"
+    },
+    {
+      "object": "USB-C cable (idx 109)",
+      "variant": "extrude-q35",
+      "divergence": "blob",
+      "note": "Clean is a coiled cable (concentric loops + connector). rod/inflate render the spiral coil; extrude-q35 / auto-q35 / solid-q35 (blackFrac 0.773) collapse it to a featureless solid disc - the coil pattern is gone.",
+      "researchedFix": "A coil is a swept tube, not a fillable disc: model it as a sweep along the spiral path (swept profile), or at minimum triangulate with even-odd fill so the gaps between coil rings remain holes instead of one solid disc.",
+      "citation": "https://mechanitec.ca/how-sketch-curved-surface-solidworks/ ; https://en.wikipedia.org/wiki/Polygon_with_holes"
+    },
+    {
+      "object": "Cap pen (idx 97)",
+      "variant": "extrude-q35",
+      "divergence": "detail-lost",
+      "note": "rod/inflate show the cap seam line dividing cap from barrel; extrude-q35 / auto-q35 (blackFrac 0.796) render a uniform dark pen, seam lost. Minor (single interior line) but real.",
+      "researchedFix": "Scribe the cap seam as a debossed groove (Wrap) across the extruded barrel.",
+      "citation": "https://www.autodesk.com/learn/ondemand/tutorial/extrude-a-2d-sketch-to-model-it-in-3d ; https://mechanitec.ca/how-sketch-curved-surface-solidworks/"
+    },
+    {
+      "object": "Pinned figure photo (idx 57)",
+      "variant": "rod-q35",
+      "divergence": "dark-dropped",
+      "note": "Representative of the whole rod-q35 column (every object): the rod mode renders only a thin hollow outline / wireframe shell (objFrac ~0.02-0.09, blackFrac ~0.01-0.06) where Clean is a solidly inked object. The filled silhouette is dropped to an empty frame - the form reads as not-there at the steep angle. q315 rod is slightly darker but still mostly hollow.",
+      "researchedFix": "Cap the extrusion (add front/back end faces) and ensure correct face winding + back-face culling so the solid silhouette is rendered rather than a see-through wireframe; a filled extruded solid should never present as outline-only.",
+      "citation": "https://en.wikipedia.org/wiki/Back-face_culling ; https://en.wikipedia.org/wiki/Polygon_with_holes"
+    },
+    {
+      "object": "Keychain (idx 165)",
+      "variant": "extrude-q35",
+      "divergence": "white-shaded",
+      "note": "Clean shows a key fob with an open ring/loop (white hole). extrude-q35 / auto-q35 / solid-q35 fill the loop into a solid dark disc (blackFrac 0.69-0.74) - the white knockout of the ring is shaded over. inflate/rod keep the loop open.",
+      "researchedFix": "Triangulate the extrusion profile with the even-odd fill rule so the ring's inner contour is preserved as a through-hole instead of being filled; this is the standard polygon-with-holes capping that keeps interior knockouts.",
+      "citation": "https://en.wikipedia.org/wiki/Polygon_with_holes ; https://doc.cgal.org/latest/Polygon_repair/index.html"
+    },
+    {
+      "object": "173 foamRoller",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark filled pill/cylinder (dk 0.93). Rod renders an outline-only white cylinder with a few longitudinal lines; the dark body fill is dropped entirely, so the form reads empty/light instead of dark.",
+      "researchedFix": "Rod/skeleton modes must carry the source SVG's solid fill onto the generated 3D surface rather than re-deriving as feature-line outlines. The Monster Mash pipeline inflates the 2D region and 'uses the template image as a texture of the final 3D model', so filled regions stay filled; apply the Clean SVG (with its dark fill) as a front-face/projected texture on the rod's swept surface instead of stroking only the silhouette.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "173 foamRoller",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean dark fill becomes a puffy outline form with a white/empty interior; only the rim and a few hachure lines are inked. The body that is solid dark in Clean reads light.",
+      "researchedFix": "Inflate the closed region (boundary-to-medial half-circle profile per Monster Mash / mesh-inflation stroke method) AND texture the inflated front face with the original drawing so the dark fill is preserved; do not render the inflated mesh as an unfilled contour. Monster Mash explicitly supports tracing over a template image and reusing it as the model texture.",
+      "citation": "https://research.google/blog/monster-mash-a-sketch-based-tool-for-casual-3d-modeling-and-animation/"
+    },
+    {
+      "object": "177 arepaPan",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark disc + handle (dk 0.90). Rod renders the disc as an empty white ring/outline; the filled pan face is dropped to outline-only.",
+      "researchedFix": "Region fill must survive the skeleton/rod conversion: extract the filled region, then project the source fill as a texture onto the swept rod surface (Monster Mash template-as-texture). The disc region should remain a filled cap, not a wireframe ring.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "177 arepaPan",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated disc becomes a puffy white ring with concentric outline; dark fill of the pan face dropped to empty interior.",
+      "researchedFix": "Use stroke-extraction + mesh inflation that joins boundary point pairs with half-circles to build the cap, then bake the Clean drawing onto the inflated front face so the dark region stays dark.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "181 carriel",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark bag silhouette with handle + flap + clasp (dk 0.93). Rod renders the whole bag as a white outline drawing; the dark body fill is gone.",
+      "researchedFix": "Carry the filled silhouette through the rod conversion as a textured surface rather than feature-line outline; project the source SVG fill onto the generated geometry (Monster Mash template-texture approach).",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "181 carriel",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated bag is a puffy outline with white interior; only the clasp and edges are inked. Dark body fill dropped.",
+      "researchedFix": "Inflate the closed bag region and texture the inflated front face with the Clean drawing so the dark fill is retained; clasp/flap should be a displacement/relief detail on a filled surface, not the only inked element.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "185 begleri",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is two solid dark beads joined by a cord (dk 0.86). Rod renders the beads as empty white rings/outlines; bead fill dropped.",
+      "researchedFix": "Preserve per-region fill when sweeping rods through the bead centers: project the source fill onto each bead's swept surface (template-as-texture) so beads read solid dark, not as rings.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "185 begleri",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated beads become puffy concentric-spiral outlines with white interior; dark bead fill dropped.",
+      "researchedFix": "Inflate each bead region and bake the Clean image onto the inflated front faces; the concentric spiral artifact suggests hachure being re-stroked over the inflation instead of using the original fill as texture.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "189 tangleToy",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a faint sparse ring of dots (dk 0.28). Rod renders a hard white outline ring. The auto/extrude/solid variants over-darken this light object into a solid dark disc (white-shaded direction), but the flagged divergence here is rod dropping it to outline-only.",
+      "researchedFix": "For low-darkness sources keep coverage proportional: the rod/skeleton should reproduce the sparse mark density, not a continuous outline; tie generated geometry's fill/coverage to the source darkness so a 0.28 object does not become either a hard ring (rod) or a solid black disc (auto/solid).",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "189 tangleToy",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "white-shaded",
+      "note": "Clean is a very light sparse-dot ring (dk 0.28) but auto/extrude/solid fill it as a fully solid dark disc, over-darkening a region that is mostly white in Clean.",
+      "researchedFix": "Drive 3D fill darkness from the source darkness signal: a 0.28-darkness object should yield a sparse/translucent surface, not a fully opaque black disc. Map source tone to surface coverage/opacity per the darkness-to-coverage relationship used in tone-fill shading.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "189 tangleToy",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated ring is a puffy white outline loop; sparse-dot interior dropped to empty.",
+      "researchedFix": "Inflate the loop and texture it with the source so the original sparse marks survive; do not output an empty contour loop.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "193 seltzerCan",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark can (dk 0.93) with pull-tab, fill line, base dots. Rod renders the can as a white outline with only the tab/line/dots inked; the dark body fill is dropped.",
+      "researchedFix": "Preserve the filled body as a textured surface on the rod sweep; tab/fill-line/dots become surface detail (displacement/relief) on a filled can, not the only inked elements on an empty outline.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "193 seltzerCan",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated can is a puffy white form; only edges + tab + dots inked, body fill dropped.",
+      "researchedFix": "Inflate the can region and bake the Clean drawing onto the inflated front face so the dark fill is retained; keep tab/dots as relief detail on the filled surface.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "30 raceMedal",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a small solid dark ellipse/medal (dk 0.92). Rod renders concentric ellipse outlines with empty white interior; medal fill dropped.",
+      "researchedFix": "Project the filled disc onto the rod-swept ellipse surface (template-as-texture) so the medal reads solid; concentric rings indicate outline re-stroking instead of fill preservation.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "30 raceMedal",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated medal becomes puffy concentric outline rings with white interior; dark fill dropped.",
+      "researchedFix": "Inflate the ellipse region and bake the source fill onto the inflated front face so the medal stays dark.",
+      "citation": "https://research.google/blog/monster-mash-a-sketch-based-tool-for-casual-3d-modeling-and-animation/"
+    },
+    {
+      "object": "6 inktoberCard",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark card (dk 0.97) carrying a drawn face (eye + mark). Rod renders an empty white card outline; the dark card fill is dropped (the face outline survives but the panel is hollow).",
+      "researchedFix": "Carry the filled card body through as a textured surface; the face should sit ON a filled dark panel, not on a hollow outline. Project the source SVG (fill + face) as the surface texture.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "6 inktoberCard",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean carries a distinct drawn face (eye + smile mark) on the card. In auto/extrude/solid the dark slab swallows the face entirely; interior marks vanish into the form (solid retains only a faint ghost).",
+      "researchedFix": "Project the original drawing onto the extruded/solid front face as a texture or displacement so interior strokes survive on the 3D surface. DrawingSpinUp applies the input drawing as a front-surface texture on the inflated/extruded geometry specifically so interior detail is not lost; equivalently, bake the Clean image as a front-face texture/normal-displacement onto the slab.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "6 inktoberCard",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated card is a puffy white outline with the face on an empty interior; dark card body dropped.",
+      "researchedFix": "Inflate the card region and texture the inflated front face with the full Clean drawing (fill + face) so body stays dark and the face stays legible.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "10 conferenceLanyard",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark badge on a cord (dk 0.94). Rod renders the badge as an empty white outline; badge fill dropped.",
+      "researchedFix": "Project the source fill onto the badge surface so it stays solid dark; cord handled as rod, badge as a filled textured panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "10 conferenceLanyard",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated badge is a puffy white outline with empty interior; dark fill dropped.",
+      "researchedFix": "Inflate the badge region and bake the Clean drawing onto its front face to retain the dark fill.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "14 awwwardsStatue",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark trophy silhouette (cup + handles + stem/base, dk 0.88). Rod renders the trophy as a white outline; the dark fill is dropped.",
+      "researchedFix": "Carry the filled trophy silhouette through as a textured surface; project source fill onto the swept geometry so the trophy reads solid.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "14 awwwardsStatue",
+      "variant": "extrude (q35 + q315)",
+      "divergence": "blob",
+      "note": "Clean shows clear negative space between the cup and its two handles and a defined stem. The extruded solid fuses cup+handles into a featureless dark mass; the handle openings (holes in Clean) close up and the silhouette detail is lost.",
+      "researchedFix": "Extrusion must respect interior holes via even-odd/non-zero hole handling on the closed profile before extrude (close profiles, remove the handle-opening regions as holes), so negative space survives as actual gaps rather than filling into a blob. Standard 2D-to-3D extrusion guidance: resolve open/overlapping profiles and treat enclosed counter-regions as holes prior to extrusion.",
+      "citation": "https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/2D_to_3D_Extrusion"
+    },
+    {
+      "object": "14 awwwardsStatue",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated trophy is a puffy white outline with empty interior; dark fill dropped.",
+      "researchedFix": "Inflate the trophy region (respecting handle holes) and texture the inflated front face with the source so the body stays dark.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "18 vinylLpSleeve",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a sleeve with the vinyl record's concentric-circle detail. In auto/extrude the dark slab swallows the concentric vinyl detail entirely (solid keeps only a faint ghost).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the concentric vinyl grooves survive on the 3D surface (front-face drawing-as-texture, per DrawingSpinUp; or bake displacement map).",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "18 vinylLpSleeve",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark sleeve (dk 0.96). Rod renders an empty white sleeve outline (the vinyl detail outline survives but the body fill is dropped).",
+      "researchedFix": "Carry the filled sleeve body through as a textured surface so it stays dark; vinyl detail rides on the filled panel rather than on a hollow outline.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "18 vinylLpSleeve",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated sleeve is a puffy white outline with vinyl detail on an empty interior; dark body dropped.",
+      "researchedFix": "Inflate the sleeve and bake the full Clean drawing onto the front face so body stays dark and the vinyl detail is preserved.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "22 zeldaMap",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows curved terrain/path lines on the map. In auto/extrude the dark slab swallows the curved-line detail (solid keeps only a faint ghost).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the curved map lines survive on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "22 zeldaMap",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark map (dk 0.95). Rod renders an empty white outline with the curved lines; body fill dropped.",
+      "researchedFix": "Carry the filled map body through as a textured surface so it stays dark; map lines ride on the filled panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "22 zeldaMap",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated map is a puffy white outline with lines on empty interior; dark body dropped.",
+      "researchedFix": "Inflate the map region and bake the Clean drawing onto the front face so body stays dark and lines are preserved.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "26 looseCartridge",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a game cartridge with a ridged connector edge and label slot. In auto/extrude the ridge/label detail vanishes into the dark slab (solid keeps only faint ridges).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the connector ridges and label slot survive on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "26 looseCartridge",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark cartridge (dk 0.94). Rod renders an empty white outline showing ridges/label; body fill dropped.",
+      "researchedFix": "Carry the filled cartridge body through as a textured surface so it stays dark; ridges/label as surface relief.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "26 looseCartridge",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated cartridge is a puffy white outline with detail on empty interior; dark body dropped.",
+      "researchedFix": "Inflate the cartridge and bake the Clean drawing onto the front face so body stays dark and ridges/label are preserved.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "34 framedRacePhoto",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a frame with an inner figure/runner photo. In auto/extrude the inner figure vanishes into the dark slab (solid keeps only a faint ghost).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the framed figure survives on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "34 framedRacePhoto",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark frame (dk 0.95). Rod renders an empty white frame outline with the inner figure; body fill dropped.",
+      "researchedFix": "Carry the filled frame body through as a textured surface so it stays dark; the figure rides on the filled panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "34 framedRacePhoto",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated frame is a puffy white outline with figure on empty interior; dark body dropped.",
+      "researchedFix": "Inflate the frame region and bake the Clean drawing onto the front face so body stays dark and the figure is preserved.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "38 pairedPhotoStrip",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a photo-booth strip divided into ~4 cells. In auto/extrude the cell divisions vanish into the dark bar (solid keeps only faint divisions).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the cell divisions survive on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "38 pairedPhotoStrip",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark strip (dk 0.90). Rod renders an empty white outline showing the 4 cells; body fill dropped.",
+      "researchedFix": "Carry the filled strip body through as a textured surface so it stays dark; cells ride on the filled panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "38 pairedPhotoStrip",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated strip is a puffy white outline with cells on empty interior; dark body dropped.",
+      "researchedFix": "Inflate the strip and bake the Clean drawing onto the front face so body stays dark and cells are preserved.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "42 premiereTicket",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a wide ticket with a perforation/stub division line. In auto/extrude the stub line vanishes into the dark bar (solid keeps only a faint line).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the stub perforation survives on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "42 premiereTicket",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark ticket (dk 0.93). Rod renders an empty white outline with the stub line; body fill dropped.",
+      "researchedFix": "Carry the filled ticket body through as a textured surface so it stays dark; stub line rides on the filled panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "42 premiereTicket",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated ticket is a puffy white outline with stub on empty interior; dark body dropped.",
+      "researchedFix": "Inflate the ticket and bake the Clean drawing onto the front face so body stays dark and the stub line is preserved.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "46 letterboxdCard",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a card with a grid of small panels (poster/film grid). In auto/extrude the grid vanishes into the dark slab (solid keeps only a faint grid).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the panel grid survives on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "46 letterboxdCard",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark card (dk 0.95). Rod renders an empty white outline showing the grid; body fill dropped.",
+      "researchedFix": "Carry the filled card body through as a textured surface so it stays dark; grid rides on the filled panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "46 letterboxdCard",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated card is a puffy white outline with grid on empty interior; dark body dropped.",
+      "researchedFix": "Inflate the card and bake the Clean drawing onto the front face so body stays dark and the grid is preserved.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "50 ps1JewelCase",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a CD jewel case with spine/hinge teeth detail. In auto/extrude the spine detail vanishes into the dark slab (solid keeps only a faint spine).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the spine/hinge detail survives on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "50 ps1JewelCase",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark case (dk 0.97). Rod renders an empty white outline with spine teeth; body fill dropped.",
+      "researchedFix": "Carry the filled case body through as a textured surface so it stays dark; spine teeth ride on the filled panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "50 ps1JewelCase",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated case is a puffy white outline with empty interior; dark body dropped.",
+      "researchedFix": "Inflate the case and bake the Clean drawing onto the front face so body stays dark and spine detail is preserved.",
+      "citation": "https://www.researchgate.net/publication/220772365_Stroke_Extraction_and_Classification_for_Mesh_Inflation"
+    },
+    {
+      "object": "54 ps1ConsoleDisplay",
+      "variant": "auto / extrude / solid (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a console with a circular disc/logo and small button rows. In auto/extrude the circular logo + buttons vanish into the dark slab (solid keeps only a faint logo).",
+      "researchedFix": "Project the Clean drawing onto the extruded front face as texture/displacement so the circular logo and buttons survive on the 3D surface.",
+      "citation": "https://arxiv.org/html/2409.08615v1"
+    },
+    {
+      "object": "54 ps1ConsoleDisplay",
+      "variant": "rod (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a solid dark console (dk 0.94). Rod renders an empty white outline showing the logo + buttons; body fill dropped.",
+      "researchedFix": "Carry the filled console body through as a textured surface so it stays dark; logo/buttons ride on the filled panel.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/Dvoroznak20-SA.pdf"
+    },
+    {
+      "object": "54 ps1ConsoleDisplay",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "Inflated console is a puffy white outline with logo on empty interior; dark body dropped.",
+      "researchedFix": "Inflate the console and bake the Clean drawing onto the front face so body stays dark and the logo/buttons are preserved.",
+      "citation": "https://monstermash.zone/"
+    },
+    {
+      "object": "82 luggageTagWorn",
+      "variant": "extrude (auto-q35/q315 + extrude-q35/q315)",
+      "divergence": "detail-lost",
+      "note": "Clean shows a rounded tag with a WHITE knockout screen panel + diagonal worn lines. auto and extrude render a featureless dark slab with the interior screen/line detail gone. rod (wireframe), inflate (puff), and solid all preserve the panel + lines, so only the solid-prism extrusion path drops it.",
+      "researchedFix": "Treat interior SVG paths as inner boundary loops: build a polygon-with-holes and triangulate the extruded front face (bridge-edge + ear-clipping) so knockout panels stay as actual cutouts; then carve the line marks as engraved grooves via CSG difference() against the prism face rather than filling a single solid silhouette.",
+      "citation": "https://arxiv.org/pdf/1212.6038"
+    },
+    {
+      "object": "78 stampedPassport",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean is a dark passport with circular stamp marks visible. auto/extrude collapse to a plain dark slab with no stamp circles; rod, inflate, and solid keep the circles. The extrusion only uses the outer silhouette.",
+      "researchedFix": "Generate a bas-relief from the line drawing: convert the interior stamp marks to a grayscale displacement/height field and apply it to the extruded face (displacement mapping displaces actual vertices), or subtract the marks with a CSG boolean groove so they read on the solid form.",
+      "citation": "https://www.educative.io/answers/what-is-displacement-mapping"
+    },
+    {
+      "object": "110 fieldNotes",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean is a notebook with a header box + ruled lines (reads as a face in inflate). auto/extrude render a blank dark slab; rod/inflate/solid preserve the ruled lines + header box.",
+      "researchedFix": "Engrave the ruled-line layer as relief on the extruded front face using line-drawing-to-relief conversion (occluding-contour/suggestive-contour lines as engraved strokes), filtering redundant strokes so the geometry reads cleanly; CSG difference() for the grooves.",
+      "citation": "https://gistnoesis.github.io/StlToRelief/"
+    },
+    {
+      "object": "90 lacroixRack",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "white-shaded",
+      "note": "Clean is a stacked grid of cans/bricks separated by WHITE grout/gap lines. auto/extrude fill the whole grid into one dark mass, erasing the white separations between cells. rod/inflate/solid keep the individual cells.",
+      "researchedFix": "Build the grid as a compound path where each gap is an inner hole, then extrude as polygon-with-holes (make a compound path / multiple closed regions before extrude so cutouts are kept distinct from the outer boundary).",
+      "citation": "https://github.com/freeman-lab/extrude"
+    },
+    {
+      "object": "66 sombreroVueltiao",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "blob",
+      "note": "Clean's hat crown carries woven horizontal band hachure. auto/extrude turn the crown into a featureless dark blob; rod/inflate/solid retain the woven bands.",
+      "researchedFix": "Apply the woven-band hatching as a displacement/height relief on the extruded crown surface (grayscale displacement map drives vertex height) instead of flat-filling the silhouette.",
+      "citation": "https://www.educative.io/answers/what-is-displacement-mapping"
+    },
+    {
+      "object": "142 ps5Controller",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean shows joystick circles + button marks on the controller body. auto/extrude render a smooth dark dumbbell with all joystick/button detail gone; rod/inflate/solid preserve them.",
+      "researchedFix": "Recess the joystick wells via CSG boolean subtraction of cylinder/disc primitives positioned from the interior SVG circles, and engrave button marks as relief grooves on the extruded top face.",
+      "citation": "https://deepwiki.com/raksahb/openscad/4.2-csg-boolean-operations"
+    },
+    {
+      "object": "122 nesController",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean has a D-pad cross + round/square buttons. auto/extrude render a blank dark bar; rod/inflate/solid keep the controls.",
+      "researchedFix": "Engrave the D-pad and buttons as relief from the line drawing onto the extruded face (line-drawing-to-relief), or boolean-subtract the D-pad cross and button discs as grooves; keep them as inner regions of a compound path before extrusion.",
+      "citation": "https://gistnoesis.github.io/StlToRelief/"
+    },
+    {
+      "object": "134 filmStrip",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean has sprocket perforation holes along the strip edges. auto/extrude fill them solid (holes gone); rod/inflate/solid keep the perforations.",
+      "researchedFix": "Extrude as a polygon-with-holes: define each sprocket perforation as an inner loop / compound path so the cutouts survive triangulation and become real through-holes in the prism.",
+      "citation": "https://forum.onshape.com/discussion/2372/how-to-extrude-a-solid-with-holes"
+    },
+    {
+      "object": "146 discman",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean shows concentric CD/lens circles on the lid. auto/extrude render a blank dark square; rod/inflate/solid preserve the concentric circles.",
+      "researchedFix": "Add the concentric-circle lid detail as a bas-relief/displacement on the extruded top face (grayscale height field from the circle marks), or boolean-subtract a shallow circular recess for the disc well.",
+      "citation": "https://www.reliefmaker.com/"
+    },
+    {
+      "object": "150 beltMini",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean has a central buckle ring (open oval) on the strap. auto/extrude render a smooth dark strap blob with the buckle gone; rod/inflate/solid keep the buckle ring.",
+      "researchedFix": "Keep the buckle aperture as an inner hole loop in a compound path and extrude as polygon-with-holes so the ring opening stays a real cutout, not a filled slab.",
+      "citation": "https://github.com/freeman-lab/extrude"
+    },
+    {
+      "object": "158 luggageTag",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean is a tag with interior ruled lines + ring at top. auto/extrude render a blank dark slab; rod/inflate/solid keep the ruled lines.",
+      "researchedFix": "Engrave the ruled lines as relief grooves on the extruded front face (line-drawing-to-relief / CSG difference of thin grooves) rather than flat-filling the silhouette.",
+      "citation": "https://gistnoesis.github.io/StlToRelief/"
+    },
+    {
+      "object": "162 packingCubes",
+      "variant": "extrude (auto + extrude)",
+      "divergence": "detail-lost",
+      "note": "Clean has horizontal ribbing/mesh lines across the stacked form. auto/extrude render a smooth dark slab; rod/inflate/solid keep the ribbing.",
+      "researchedFix": "Apply the ribbing as a displacement/height map on the extruded surface (lighter=raised rib, darker=valley) so the corrugation displaces real vertices instead of being painted-flat.",
+      "citation": "https://www.educative.io/answers/what-is-displacement-mapping"
+    },
+    {
+      "object": "130 filmCanister",
+      "variant": "inflate (inflate-q35/q315)",
+      "divergence": "dark-dropped",
+      "note": "Clean is a SOLID dark filled disc (lid). The inflate path produces a torus with an empty white center hole, dropping the filled interior; auto/extrude/solid correctly render a solid disc. The inflater consumed the ring OUTLINE rather than the filled disc region.",
+      "researchedFix": "Inflate the FILLED interior region, not the stroke ring: solve the inflation (Poisson/Puffball) over the area bounded by the outer silhouette only, ignoring interior ring strokes when the Clean fill is solid, so the disc puffs as a full dome instead of a torus.",
+      "citation": "http://persci.mit.edu/publications/twarog-sap-2012"
+    },
+    {
+      "object": "170 gpsWatch",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK watch body with a small white screen knockout. inflate-q35/q315 render a tangled puffy tube/cage with a WHITE interior — the dark fill is dropped and the silhouette degrades into overlapping wire loops (worst inflate case on the sheet; form barely reads). auto/extrude/solid are faithful filled transforms; rod is wireframe-by-design (not flagged).",
+      "researchedFix": "Use the Teddy silhouette-inflation algorithm (Igarashi et al., SIGGRAPH'99): inflate the region INSIDE the closed silhouette into a single filled pillow mesh (wide areas fat, narrow thin), not a wire cage; then carry the Clean fill/shading onto the inflated front face via planar UV projection of the source silhouette so the puff stays dark instead of hollow. Houdini's Planar Inflate is the production reference — it triangulates and FILLS the interior and interpolates point/vertex attributes across the inflated surface rather than producing a hollow shell.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "178 ruanaCloth",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK trapezoidal cloth. inflate-q35/q315 render a dark outline frame over a WHITE interior crossed by horizontal stripe/fold lines — the solid dark fill is dropped, leaving an open striped frame. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy-style inflate the closed silhouette into a filled pillow, then planar-UV-project the Clean dark fill onto the front face so the inflated cloth keeps its solid value; treat the fold lines as a displacement/bas-relief height field on the filled surface rather than as the only marks on an empty white interior.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sciencedirect.com/science/article/abs/pii/S1524070312000719"
+    },
+    {
+      "object": "182 dominoTiles",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is three SOLID DARK stacked domino bars with tiny white pips. inflate-q35/q315 render light/WHITE-interior puffy tiles with dark outline + pips — solid dark fill dropped. auto/extrude/solid faithful (pips lost into mass = minor detail-lost); rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled-pillow inflation with the Clean fill planar-UV-projected onto each tile's front face to retain the dark value; render pips as a bas-relief/displacement height field engraved into the filled surface, not as marks floating on white.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "186 fidgetCube",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID BLACK square. inflate-q35/q315 render a puffy WHITE cube with dark outline and fidget-button shapes (circles/ovals) inside on white — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean dark fill onto the front face so the puff stays dark; carve the button shapes as displacement/bas-relief into the filled surface.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "190 seltzer",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK tapered can. inflate-q35/q315 render an empty puffy tube CAGE with WHITE interior and a ring detail — dark fill dropped, form reads as a hollow wire cage. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy silhouette inflation into a single filled pillow (avoid the multi-loop wire cage), then planar-UV-project the Clean fill onto the inflated surface to keep the can dark; Planar Inflate's filled-triangulation + attribute interpolation is the reference.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "194 glassBottleTopo",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK bottle. inflate-q35/q315 render a puffy bottle CAGE with WHITE interior and the label/topo marks shown inside on white — dark fill dropped. auto/extrude/solid faithful (solid even preserves the topo squiggle + label); rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill so the bottle stays dark; render the topo/label as bas-relief displacement on the filled surface rather than line marks on an empty interior.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sciencedirect.com/science/article/abs/pii/S1524070312000719"
+    },
+    {
+      "object": "3 singleSketchbookClosed",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID BLACK square. inflate-q35/q315 render a puffy book with WHITE interior, dark frame, and an oval elastic-band detail — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled-pillow inflation with the Clean fill planar-UV-projected onto the cover so the book stays dark; band/cover marks as bas-relief displacement.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "7 screenshotPrint",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK rectangle. inflate-q35/q315 render a puffy browser window (traffic-light dots, scribbled text lines) on a WHITE interior with dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean dark fill onto the front face; the UI lines should be a displacement/bas-relief engraving on the filled dark surface, not the only content on white.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "11 stickerStack",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK rounded square (sticker stack). inflate-q35/q315 render multiple overlapping puffy square outlines with WHITE interiors and dark frames — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation per layer with the Clean fill planar-UV-projected so each sticker stays dark; offset stacking via the existing edge lines as displacement, not as empty wire frames.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "15 gigTicket",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK horizontal ticket with a perforation divider. inflate-q35/q315 render a puffy ticket outline with the divider on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill; perforation as a displacement crease on the filled dark surface.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sciencedirect.com/science/article/abs/pii/S1524070312000719"
+    },
+    {
+      "object": "19 bandTshirt",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID BLACK square (folded shirt). inflate-q35/q315 render a puffy shirt with print-graphic lines on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill so the shirt stays dark; print graphic as bas-relief displacement.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "23 cartShadowBox",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID BLACK square. inflate-q35/q315 render a puffy box with an inner panel inset on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill; inner panel as a recessed displacement on the filled dark face.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "27 strategyGuide",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID BLACK square (book). inflate-q35/q315 render a puffy book with spine perforations + title lines + cover label on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill; spine/title marks as bas-relief displacement on the filled dark cover.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.sciencedirect.com/science/article/abs/pii/S1524070312000719"
+    },
+    {
+      "object": "31 raceBib",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID BLACK square. inflate-q35/q315 render a puffy bib with 4 corner pin-holes on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill so the bib stays dark; pin-holes as small displacement dimples on the filled surface.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "35 agePodiumPlaque",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK trapezoidal plaque with a foot. inflate-q35/q315 render a puffy plaque with an inner border frame on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill; inner border as a raised bas-relief bezel on the filled dark face.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.sciencedirect.com/science/article/abs/pii/S1524070312000719"
+    },
+    {
+      "object": "39 eventTicketPair",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is two SOLID DARK overlapping tickets. inflate-q35/q315 render two puffy ticket outlines with WHITE interiors and dark frames — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation per ticket + planar-UV projection of the Clean fill so both stay dark; overlap depth via z-offset, not via hollow outlines.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "43 framedMoviePoster",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID BLACK rectangle. inflate-q35/q315 render a puffy frame with an inner matte border + oval detail on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill; matte border as a recessed displacement step on the filled dark face.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "47 mondoPrintTube",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a thin SOLID DARK vertical tube. inflate-q35/q315 render a puffy tube outline with ring segments and a WHITE interior, dark frame — dark fill dropped (subtle given the thin form, but interior goes white). auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill so the tube stays dark; ring segments as displacement bands on the filled surface.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "51 walkmanMixtape",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK cassette. inflate-q35/q315 render a puffy cassette with reels + label window on a WHITE interior, dark frame — solid dark fill dropped. auto/extrude/solid faithful (reel/window lost to mass = minor detail-lost); rod wireframe-by-design.",
+      "researchedFix": "Teddy/Planar-Inflate filled inflation + planar-UV projection of the Clean fill so the cassette stays dark; reels/window as bas-relief displacement engraved into the filled dark face.",
+      "citation": "https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html ; https://www.sciencedirect.com/science/article/abs/pii/S1524070312000719"
+    },
+    {
+      "object": "55 sonyKeychain",
+      "variant": "inflate",
+      "divergence": "white-shaded",
+      "note": "Clean is a SOLID DARK fob blob + ring. inflate-q35/q315 render a puffy ring + a puffy fob outline with small holes on a WHITE interior, dark frame — the solid dark fob body is dropped to white. auto/extrude/solid faithful; rod wireframe-by-design.",
+      "researchedFix": "Teddy silhouette inflation of the fob+ring into filled pillows (wide fob fat, thin ring slim) + planar-UV projection of the Clean fill so the fob stays dark; holes as displacement dimples, not the only marks on white.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf ; https://www.sidefx.com/docs/houdini/nodes/sop/planarinflate.html"
+    },
+    {
+      "object": "170 gpsWatch / 51 walkmanMixtape / 182 dominoTiles (extrude+solid)",
+      "variant": "extrude/solid",
+      "divergence": "detail-lost",
+      "note": "Secondary, milder issue: on objects whose Clean fill carries interior marks (watch screen, cassette reels+window, domino pips), the extrude-q35/q315 and solid-q35/q315 faces lose those marks into the uniform dark mass — silhouette is faithful but interior reads as a featureless dark slab. Not present on rod (line-preserving) and acceptable on plain dark squares; flagged only where Clean had real interior structure.",
+      "researchedFix": "Convert the Clean interior marks to a height/displacement (bas-relief) map and apply it to the extruded/solid front face so screen/reels/pips engrave into the solid (height-field compression preserves fine detail in real time); equivalently a sunken-relief line-engraving pass. This keeps the solid value while restoring the interior marks the rod variant already retains.",
+      "citation": "https://www.sciencedirect.com/science/article/abs/pii/S1524070312000719 ; https://link.springer.com/10.1007/s42486-021-00084-0"
+    },
+    {
+      "object": "fidgetCollectionTray",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean shows a tray with multiple round/oval compartments. extrude-q35 and extrude-q315 render a featureless dark prism; all compartment linework that rod/inflate/solid preserve is gone. auto-q35/q315 collapse it the same way. The interior surface marks never reach the extruded front face.",
+      "researchedFix": "Engrave the interior linework onto the extruded front face via a height/displacement (or normal) map baked from the Clean SVG: extrude the silhouette with ExtrudeGeometry, then apply the source drawing as a grayscale displacementMap so the compartment lines become recessed relief rather than being discarded. Bas-relief feature-separation keeps the marks while reducing depth so they don't wash out.",
+      "citation": "https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "sealedKickstarterFidget",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean and rod/inflate/solid show a box with a front panel and a knockout window/button detail. extrude-q35/q315 (and auto-q35/q315) render a plain dark slab with no front-panel detail at all.",
+      "researchedFix": "Use a dual-material extrude (mesh face + projected stroke lines) so the front-panel linework survives extrusion, or bake the panel as a displacement/relief onto the extruded front face. THREE.SVGLoader + ExtrudeGeometry with a separate LineBasicMaterial layer for the strokes is the standard way to keep face strokes visible after extrusion.",
+      "citation": "https://blog.logrocket.com/bringing-svgs-three-js-svgloader/"
+    },
+    {
+      "object": "mochilaWayuu",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean (and rod/inflate) show the woven bag with horizontal banded pattern rows. extrude-q35/q315 and auto-q35/q315 become a solid dark teardrop blob; the woven band pattern is entirely lost.",
+      "researchedFix": "Treat the band pattern as surface relief: bake the woven-line SVG into a displacement/normal map applied to the extruded (or inflated) body so the bands read as raised texture, rather than extruding only the silhouette. Displacement is the recommended technique when engraving/relief detail must survive on the silhouette.",
+      "citation": "https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "signedPhoto",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate show a framed photo containing a portrait figure. extrude-q35/q315 and auto-q35/q315 render a blank dark rectangle; the portrait and frame inset vanish into the slab.",
+      "researchedFix": "Keep the frame inset as a real geometric step (inner profile extruded to a shallower depth) and project the portrait linework onto the recessed face via decal/displacement. SVGLoader supports nested shapes/holes so the frame opening can be modeled as a true inset rather than flattened.",
+      "citation": "https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "luchaMask",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate show the mask's eyes and nose features. extrude-q35/q315 and auto-q35/q315 render a smooth dark oval with no facial features.",
+      "researchedFix": "Inflate the silhouette (Poisson-based rounded cross-section, as Monster Mash does) and carve the eye/nose strokes as recessed relief via displacement, instead of flat-extruding the outline. Monster Mash's region-aware inflation specifically preserves interior stroke relationships when going 2D->3D.",
+      "citation": "https://research.google/blog/monster-mash-a-sketch-based-tool-for-casual-3d-modeling-and-animation/"
+    },
+    {
+      "object": "travelPatch",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate show a shield outline with a mountain/peak emblem inside. extrude-q35/q315 and auto-q35/q315 render a solid dark shield with the emblem completely gone.",
+      "researchedFix": "Bake the emblem as an embroidered-style raised relief onto the extruded shield face using a height/displacement map derived from the Clean SVG; feature-separation bas-relief keeps the emblem legible at low depth.",
+      "citation": "https://mewangcl.github.io/pubs/TVCGBasRelief.pdf"
+    },
+    {
+      "object": "seltzerTshirt",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the shirt outline with collar and fold lines. extrude-q35/q315 and auto-q35/q315 render a plain dark slab with no collar or fold detail.",
+      "researchedFix": "Apply the fold/collar lines as a normal+displacement map on the inflated cloth body so soft seams read as relief; inflation (rounded cross-section) plus displacement is the established cloth-from-sketch approach rather than flat prism extrusion.",
+      "citation": "https://garagefarm.net/blog/how-displacement-maps-work-and-how-to-optimize-them-in-v-ray-part-1"
+    },
+    {
+      "object": "monitor",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the monitor's screen bezel and stand. extrude-q35/q315 and auto-q35/q315 render a dark slab+stub; the inner screen/bezel boundary is lost into the solid.",
+      "researchedFix": "Model the screen as a true inset (inner rectangular hole/step extruded to a recessed depth) using SVGLoader nested-path holes, so the bezel survives as geometry rather than being merged into the extruded face.",
+      "citation": "https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "mechKeyboard",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate show the individual key grid; solid shows the keycap texture. extrude-q35/q315 and auto-q35/q315 render a featureless dark wedge with no keys.",
+      "researchedFix": "Bake the key-grid SVG as a displacement/height map so each keycap is a small raised relief on the extruded body; displacement is specifically recommended where engraved/relief macro detail (like keycaps) must survive on the silhouette.",
+      "citation": "https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "vinyl",
+      "variant": "extrude",
+      "divergence": "blob",
+      "note": "Clean/rod/inflate/solid show concentric record grooves and the center hole. extrude-q35/q315 and auto-q35/q315 render a solid dark disc with no grooves and no center hole.",
+      "researchedFix": "Use even-odd/nonzero fill-rule-aware geometry so the center hole is preserved, and bake the concentric grooves as a circular displacement/height map on the disc face. For radial groove detail a height-map-to-relief pass is the standard approach.",
+      "citation": "https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "cardBinder",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the card-pocket grid (3x3 windows). extrude-q35/q315 and auto-q35/q315 render a plain dark slab with the pocket grid gone.",
+      "researchedFix": "Model the pocket windows as real inset steps via nested SVG shapes/holes (even-odd) extruded to a shallower depth, or bake the grid as a displacement relief; SVGLoader handles outer-shape-with-holes for this.",
+      "citation": "https://github.com/pshihn/hachure-fill"
+    },
+    {
+      "object": "walkman",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the walkman face with speaker grilles and control buttons. extrude-q35/q315 and auto-q35/q315 render a blank dark slab; all face controls vanish.",
+      "researchedFix": "Bake the control-face linework into a displacement/normal map on the extruded front face (buttons as raised relief, grille slots as recessed relief) instead of discarding interior strokes during extrusion.",
+      "citation": "https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "snesController",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the D-pad and face/shoulder buttons. extrude-q35/q315 and auto-q35/q315 render a smooth dark pebble with no controls.",
+      "researchedFix": "Inflate the silhouette to a rounded body (Monster Mash Poisson inflation) and add the buttons/D-pad as raised relief via displacement, rather than flat-extruding the outline and dropping the interior marks.",
+      "citation": "https://research.google/blog/monster-mash-a-sketch-based-tool-for-casual-3d-modeling-and-animation/"
+    },
+    {
+      "object": "vhs",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate show the VHS cassette with its two reel windows. extrude-q35/q315 and auto-q35/q315 render a blank dark slab; the reel windows are lost.",
+      "researchedFix": "Model the two reel windows as real recessed insets (nested SVG holes extruded to a shallower depth) so they remain visible after extrusion, supported by SVGLoader nested-path/hole handling.",
+      "citation": "https://muffinman.io/blog/three-js-extrude-svg-path/"
+    },
+    {
+      "object": "filmReel",
+      "variant": "extrude",
+      "divergence": "blob",
+      "note": "Clean/rod/inflate/solid show the reel's spoke holes around a hub. extrude-q35/q315 and auto-q35/q315 render a solid dark disc; the spoke holes are filled in.",
+      "researchedFix": "Preserve the spoke holes as true through-holes using even-odd fill rule and nested SVG paths before extrusion, so the cutouts survive instead of being filled by nonzero winding.",
+      "citation": "https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/fill"
+    },
+    {
+      "object": "homeProjector",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the projector body with twin film reels and lens. extrude-q35/q315 and auto-q35/q315 collapse it to a dark mass; the reels/lens detail is gone.",
+      "researchedFix": "Decompose into sub-parts (body extruded, reels as separate inflated/extruded disc geometry) rather than one flat silhouette extrude; multi-region modeling (as Monster Mash does with overlapping regions) keeps the reel structure.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/monster_mash"
+    },
+    {
+      "object": "ps1MemoryCard",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the memory card with its connector slot and ridges. extrude-q35/q315 and auto-q35/q315 render a plain dark slab; the slot/ridge detail vanishes.",
+      "researchedFix": "Bake the slot/ridge linework as a displacement relief on the extruded face, or model the connector slot as a real inset step via SVG holes, instead of flattening the interior marks.",
+      "citation": "https://en.wikipedia.org/wiki/Displacement_mapping"
+    },
+    {
+      "object": "carryOnBackpack",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the backpack with a front pocket panel and straps. extrude-q35/q315 and auto-q35/q315 render a featureless dark slab; pocket panel and strap detail are lost.",
+      "researchedFix": "Inflate the body to a rounded soft-goods form (Poisson inflation) and add the pocket/strap seams as displacement-mapped relief; the inflate mode already does this correctly, so route extrude/auto through the same inflation+relief path.",
+      "citation": "https://research.google/blog/monster-mash-a-sketch-based-tool-for-casual-3d-modeling-and-animation/"
+    },
+    {
+      "object": "nalgeneBottle",
+      "variant": "extrude",
+      "divergence": "detail-lost",
+      "note": "Clean/rod/inflate/solid show the bottle with a label window and cap detail. extrude-q35/q315 and auto-q35/q315 render a plain dark bottle silhouette; the label/sticker detail is lost.",
+      "researchedFix": "Bake the label linework as a wrapped decal/displacement on the bottle body (inflated rounded cross-section), rather than flat-extruding the outline and discarding the label marks.",
+      "citation": "https://garagefarm.net/blog/how-displacement-maps-work-and-how-to-optimize-them-in-v-ray-part-1"
+    },
+    {
+      "object": "171 medal",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "white-shaded",
+      "note": "CLEAN medal disc is a SOLID dark circle. Both inflate angles turn the disc into a hollow donut/torus with a white empty center, and the ribbon clip into an open loop. The inflater is puffing the boundary OUTLINE into a tube instead of filling the enclosed disc region, so a solid disc reads as a ring with a knockout hole. auto/extrude/solid all render the solid disc faithfully; only inflate fails.",
+      "researchedFix": "Inflate the FILLED region bounded by the closed silhouette (not the stroke): build an interior distance/height field and raise it into a rounded solid cross-section (Teddy chordal-axis fattening — wide areas fat, narrow areas thin), so a solid disc becomes a puffed lens with no center hole.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    },
+    {
+      "object": "179 mokaPotGreca",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "detail-lost",
+      "note": "CLEAN is a compact SOLID faceted moka-pot silhouette (octagonal body + handle + lid knob). Both inflate angles decompose it into balloon tube-loops: the body becomes two stacked rounded blobs (figure-8) and the handle a large hollow loop, with white interiors. The characteristic moka-pot silhouette is destroyed because each sub-contour is inflated as an independent tube rather than the whole region as one connected solid. auto/extrude/solid keep the silhouette.",
+      "researchedFix": "Treat the closed silhouette as a single region and inflate to a connected SOLID mesh with rounded cross-section by solving a modified Poisson equation over the interior (Monster Mash single-view inflation), so the filled body puffs as one solid form instead of separate hollow tubes.",
+      "citation": "https://dcgi.fel.cvut.cz/home/sykorad/monster_mash"
+    },
+    {
+      "object": "187 worryStone",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "white-shaded",
+      "note": "CLEAN is a SOLID dark ellipse (smooth pebble, no hole). Both inflate angles render a swirled hollow torus with concentric rings and a white/empty center; the surface thumb-dimple becomes a through-hole. The solid pebble should puff to a filled lens. Boundary-tube inflation again hollows the interior. auto/extrude/solid render it as a solid lens with the dimple as surface relief.",
+      "researchedFix": "Inflate the interior region via a distance-transform height field into a solid puffed lens (Teddy / inflation_py silhouette-to-heightfield), keeping the thumb dimple as a shallow surface displacement rather than a through-hole.",
+      "citation": "https://github.com/unclearness/inflation_py"
+    },
+    {
+      "object": "191 sodaStreamCarbonator",
+      "variant": "inflate (q35 + q315)",
+      "divergence": "dark-dropped",
+      "note": "CLEAN is a SOLID dark canister (cylindrical body, cap, tapered base). Both inflate angles render a hollow inflated tube/frame: only the outline is puffed into a rounded border while the interior goes white/empty, so the solid body reads as an empty ring outline. auto/extrude/solid render the canister as a filled solid.",
+      "researchedFix": "Fill-region inflation: raise the enclosed silhouette area into a rounded solid cross-section (Teddy inflation of the region surrounded by the silhouette), producing a puffed solid pillow with no hollow interior, instead of inflating only the boundary stroke.",
+      "citation": "https://www.cs.toronto.edu/~jacobson/seminar/igarashi-et-al-1999.pdf"
+    }
+  ]
+}

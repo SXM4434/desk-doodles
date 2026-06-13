@@ -13,8 +13,17 @@
 
 Everything parked for your call, in one place so nothing's forgotten. Grouped: quick rulings → eyeball boards → strategy → submission-narrative taste. Boards/screenshots are at the listed paths. Nothing here blocks the running fleets; these unblock the *final* polish + submission.
 
+## ✅ RESOLVED (2026-06-13) — Round order = **B**
+Sebs picked B: **R9 = wire 3D into the desk** (the 2D↔3D flip + orbit on a PLACED desk object — the demo climax; 3D is currently only the `/canvas` test route, desk has no 3D path, flip seam scaffolded-not-wired), **R10 = ML + shading-fill.** Right after Checkpoint #2 (which is after Round 8 / P-FINAL).
+
+## Round 8 root-cause status (2026-06-13)
+- [x] RC-1 dark-blob (ace3151) · RC-3 palette (eb99f7c) · RC-4 floors/clamps + 3D framing (eb99f7c) · empty-poster residual (d16c788) — verified
+- [x] **RC-2 solid buries the hand → FIXED (4dba28a):** mass = body, strokes overlaid as raised glossy-ink relief; verified all 197×10 solid states vs Clean (full-res relief across families + 16 sheets read).
+- [x] **RC-5 wet-ink + charcoal DEAD → FIXED (b2bda13):** host gate now admits them; verified all 197×{wet-ink,charcoal} vs Clean (real hachure, distinct media character).
+- [ ] **P-FINAL recheck** — full toggle×LMH × 197 × (2D + 3D) vs Clean re-sweep on the COMBINED fixed tree, read by Claude. RUNNING now. This is the gate before Checkpoint #2 + golden-v3 bless.
+
 ## A. Quick rulings (one-line each)
-- [ ] **Arrow rule** — open-rod+chip (current default) vs welded-solid+chip. Board: `/tmp/dd-arrow-rule/board.png`. If you pick solid, it's a 1-line flip + re-snapshot.
+- [x] **Arrow rule → ROD (resolved 2026-06-13).** Default = open rod + "treat as closed?" chip (already in code: `TREATED_AS_CLOSED_DEFAULT='rod'`). An arrow's a line, not a brick; chip still welds it solid per-object, and solid now renders well (RC-2 fixed) so the chip path is good too.
 - [ ] **Golden v3 re-bless** — Phase-A recalibration + the wash-darkness fix flipped 279/1394 classifier decisions (ALL wash regions, bug-clean) + 1 recal flip. Needs your bless to make v3 the baseline. (Eyeball the /audit darkness first.)
 - [ ] **Band-7 look policy** — how dark the darkest tone band should render across styles.
 - [ ] **SA-2 tone-never-vanishes** — lock that sketchy/clean fall back to a flat grey wash instead of dropping shading? (I recommend yes.)
