@@ -63,3 +63,7 @@ Sebs picked B: **R9 = wire 3D into the desk** (the 2D↔3D flip + orbit on a PLA
 - [ ] **GOLDEN v3 bless = the ML go-live gate:** blessing golden v3 (after the clean wall) is now also what lets the 92.7% learned model wire LIVE (re-validated honestly). One eyeball → ML in production.
 
 _Claude clears B-board prep + C/D options as fleets land; you just rule._
+
+## Rounds — conversion/3D features placement (2026-06-13)
+- **R10 (AI-conversion round):** ML go-live · shading-fill · **image-mode** (image→SVG; vtracer WASM primary [free, no key], Quiver Arrow via Supabase Edge fallback [best quality] — scaffolded in worktree, ports here) · **HARD-3D path** (AI-mesh: fal.ai/TRELLIS + Tripo image→GLB; `hardPath.ts` scaffolded + inert, becomes default-when-it-lands, local modes are the fallback ladder) — **gated on your fal/Tripo credits → Supabase/Edge secrets, never client**.
+- Image-mode: Quiver IS a real API (`api.quiver.ai/v1/svgs/vectorizations`, Bearer key, arrow-1.1, clean paths) — but vtracer recommended primary (no key/bill). Quiver = quality fallback.
