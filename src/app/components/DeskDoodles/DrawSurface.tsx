@@ -552,6 +552,69 @@ function strokeCenterlinesNear(
   return lines;
 }
 
+/** Ink OUTLINE polygons (the EXACT visible perfect-freehand ink boundary,
+ *  viewBox px) of the strokes whose bbox plausibly BORDERS a fill region — the
+ *  clean-edge conform input (2026-06-13 rebuild).
+ *
+ *  Why outlines, not centerlines: the live ink is `getStroke(points,
+ *  STROKE_OPTS)` — a SMOOTH variable-width ribbon that perfect-freehand
+ *  THINS and pulls INWARD at corners/convex bends (thinning + streamline).
+ *  Stamping capsules along the centerline could never track that variable
+ *  width, so the tone-at-centerline poked PAST the thin ink at corners (the
+ *  bleed). Feeding the rasterizer the ACTUAL outline polygons — the same
+ *  `getStroke` call the renderer draws — makes the tone conform to the visible
+ *  ink EXACTLY: a watertight filled ink mask, true corners, true taper. The
+ *  tone then fills up to (and a hair under) that mask's inner edge: no bleed
+ *  past the outline, no sliver under it, sharp corners preserved. */
+function inkOutlinesNear(
+  strokes: Stroke[],
+  regionOutline: [number, number][],
+  gapMult: number,
+): [number, number][][] {
+  if (regionOutline.length < 3) return [];
+  let rMinX = Infinity;
+  let rMinY = Infinity;
+  let rMaxX = -Infinity;
+  let rMaxY = -Infinity;
+  for (const [x, y] of regionOutline) {
+    if (x < rMinX) rMinX = x;
+    if (x > rMaxX) rMaxX = x;
+    if (y < rMinY) rMinY = y;
+    if (y > rMaxY) rMaxY = y;
+  }
+  const margin = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE + 6;
+  const outlines: [number, number][][] = [];
+  for (const s of strokes) {
+    if (s.points.length < 2) continue;
+    let sMinX = Infinity;
+    let sMinY = Infinity;
+    let sMaxX = -Infinity;
+    let sMaxY = -Infinity;
+    for (const [x, y] of s.points) {
+      if (x < sMinX) sMinX = x;
+      if (x > sMaxX) sMaxX = x;
+      if (y < sMinY) sMinY = y;
+      if (y > sMaxY) sMaxY = y;
+    }
+    if (
+      sMaxX < rMinX - margin ||
+      sMinX > rMaxX + margin ||
+      sMaxY < rMinY - margin ||
+      sMinY > rMaxY + margin
+    ) {
+      continue;
+    }
+    // The EXACT visible ink boundary — same getStroke call strokeToPolygonPath
+    // uses for the live ink polygon (STROKE_OPTS: size 4, thinning/smoothing/
+    // streamline 0.5). getStroke returns a closed outline ring (one loop).
+    const outline = getStroke(s.points, STROKE_OPTS);
+    if (outline.length >= 3) {
+      outlines.push(outline.map(([x, y]) => [x, y] as [number, number]));
+    }
+  }
+  return outlines;
+}
+
 /** Innermost PAPER region under a point — max containment depth wins, ties
  *  break to the smaller area (D-RF4: innermost wins; donut hole is a
  *  legitimate target). Returns the region index, or -1 (honest miss). */
@@ -1195,12 +1258,19 @@ export function DrawSurface({
     // the centerline is covered by the ink-on-top (no white sliver) and sits
     // half-a-width inside the outer edge (no bleed), with the drawing's true
     // sharp corners. Independent of Gap (high Gap no longer rounds/insets it).
+    const inkOutlines = inkOutlinesNear(strokes, r.outline, gapMult);
     const inkCenterlines = strokeCenterlinesNear(strokes, r.outline, gapMult);
     rasterizeFillPatch(grid, r.outline, fillChildrenOf(regions, idx), band, 'fill', {
       gapTol: gapMult,
       // Fallback only (no bordering ink): push the tone flush to (and under)
       // the visible ink edge via dilation — no inset gap.
       dilatePx: fillDilatePx(gapMult, !!shadeRef.current?.fullFill),
+      // PRIMARY conform (2026-06-13): the EXACT perfect-freehand ink outlines.
+      // The tone is grown to a hair under the visible ink's inner edge — no
+      // bleed past it, no sliver, true corners. Centerlines kept as the
+      // secondary path (a fill with strokes too short to outline still gets a
+      // capsule wall rather than the blind octagon dilation).
+      inkOutlines: inkOutlines.length > 0 ? inkOutlines : undefined,
       inkCenterlines: inkCenterlines.length > 0 ? inkCenterlines : undefined,
     });
     setToneFills(extractToneFills(grid));

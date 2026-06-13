@@ -225,6 +225,26 @@ function xInSpans(x: number, spans: Array<[number, number]>): boolean {
   return false;
 }
 
+/** Insert collinear sub-points so no segment exceeds `stepPx` (draw-frame px).
+ *  Used by the clean-edge conform to turn a sparse, faceted centerline into a
+ *  dense polyline whose swept capsule tube hugs the curve (no staircase). Pure
+ *  linear interpolation — never moves the input vertices, so sharp corners are
+ *  preserved exactly. */
+function densify(line: [number, number][], stepPx: number): [number, number][] {
+  if (line.length < 2) return line.slice();
+  const out: [number, number][] = [line[0]];
+  for (let i = 1; i < line.length; i++) {
+    const [ax, ay] = line[i - 1];
+    const [bx, by] = line[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / stepPx));
+    for (let s = 1; s <= n; s++) {
+      const t = s / n;
+      out.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+    }
+  }
+  return out;
+}
+
 /** Write stored tone patches into the grid. Ascending band order — darker
  *  wins by painting later; within a band, input order (stable). Provenance
  *  sidecars reload too (Re-draw round-trips src/gapTol). */
@@ -282,35 +302,45 @@ export function rasterizeToneFills(grid: ToneMaskGrid, fills: ToneFill[]): void 
 
 /** Rasterize one fill/lasso patch into the grid.
  *
- *  CLEAN-EDGE (2026-06-13, Sebs "fill must have a CLEAN EDGE — no sliver, no
- *  bleed, clean corners; ink is drawn ON TOP of tone"): when `inkCenterlines`
- *  (the raw gesture polylines of the bordering ink, SAME viewBox px as `points`)
- *  are supplied, the fill is grown up to the ink CENTERLINE instead of blindly
- *  dilated:
- *    1. region mask = the extractor's enclosed-paper loop (sits inkRadius·gap
- *       inside the centerline; sharp corners under crisp extraction);
- *    2. wall        = the centerlines stamped as a WATERTIGHT capsule barrier
- *       (the raw points are dense + connected, so the wall has no gaps and
- *       carries the drawing's true corners);
- *    3. interior    = cells the wall ENCLOSES (flood the window border through
- *       non-wall cells; unreached cells are interior up to the centerline);
- *    4. the patch   = (interior ∪ wall) 8-connected to the region seed.
- *  The tone reaches the ink CENTERLINE — covered by the ink-on-top (NO white
- *  sliver) and half-a-width inside the visible OUTER edge (NO bleed onto bare
- *  paper), with CLEAN corners (the centerline defines them). Independent of the
- *  Gap multiplier, so high Gap no longer rounds/insets the edge. The `dilatePx`
- *  octagon path below is the FALLBACK (Lasso, or a fill with no bordering ink).
+ *  CLEAN-EDGE (2026-06-13 rebuild, Sebs "fill must have a CLEAN EDGE — no
+ *  sliver, no bleed, clean corners; ink is drawn ON TOP of tone"). Three
+ *  conform tiers, by what the caller supplies:
  *
- *  `dilatePx` (fallback only): grows the patch outward so tone tucks under the
- *  visible ink edge via an octagonal structuring element (alternating
- *  8-/4-neighbor passes) — deterministic. */
+ *  1. `inkOutlines` (PRIMARY) — the EXACT perfect-freehand ink OUTLINE polygons
+ *     (the same `getStroke` the renderer draws). The fill conforms to the
+ *     VISIBLE ink:
+ *       · inkMask    = the outline polygons rasterized (nonzero winding) — the
+ *                      exact visible ink area (smooth, true corners, true taper);
+ *       · reachWall  = a 1-cell centerline trace plugging the SUB-CELL gaps the
+ *                      razor-thin (~0.6px) tapered ink leaves in inkMask on a
+ *                      2px grid (without it the fill emptied / slivered there);
+ *       · reach      = inkMask ∪ reachWall = the tone's allowed OUTER extent;
+ *       · floodWall  = a fat (2-cell) centerline capsule, a GAP-BRIDGING flood-
+ *                      stopper ONLY (bridges large gesture gaps in open shapes);
+ *       · outside    = flood from the window border through non-(reach∪floodWall);
+ *       · phantom    = floodWall cells beyond reach reachable from outside (the
+ *                      fat capsule's outer half) — DROPPED;
+ *       · the patch  = enclosed (!outside) minus phantom, region-seeded.
+ *     Tone reaches the ink's OUTER edge (covered by the ink-on-top → NO sliver),
+ *     never past it (clipped to reach → NO bleed), smooth on curves (the outline,
+ *     not a faceted capsule) and corner-true. Holes carve to PAPER conformed to
+ *     the INNER ink the same way. Independent of the Gap multiplier.
+ *  2. `inkCenterlines` (SECONDARY) — the legacy capsule-wall conform, used when
+ *     bordering strokes are too short to outline. Grows to the centerline.
+ *  3. `dilatePx` (FALLBACK) — octagonal dilation (Lasso, or fill with no
+ *     bordering ink). Grows the patch outward to tuck under the visible ink. */
 export function rasterizeFillPatch(
   grid: ToneMaskGrid,
   points: [number, number][],
   holes: [number, number][][],
   band: number,
   src: 'fill' | 'lasso',
-  opts: { gapTol?: number; dilatePx?: number; inkCenterlines?: [number, number][][] } = {},
+  opts: {
+    gapTol?: number;
+    dilatePx?: number;
+    inkCenterlines?: [number, number][][];
+    inkOutlines?: [number, number][][];
+  } = {},
 ): void {
   if (points.length < 3) return;
   const { bands, w, h } = grid;
@@ -318,8 +348,23 @@ export function rasterizeFillPatch(
   const gapQ =
     src === 'fill' && opts.gapTol ? Math.max(0, Math.min(255, Math.round(opts.gapTol * 4))) : 0;
   const dilate = Math.max(0, Math.round((opts.dilatePx ?? 0) / TONE_CELL_PX));
+  // PRIMARY conform = the exact perfect-freehand ink OUTLINE polygons (the
+  // visible ink boundary). Falls back to the CENTERLINE capsule wall when no
+  // outlines are supplied (strokes too short to outline), then to the blind
+  // octagon dilation when there's no bordering ink at all.
+  const inkPolys =
+    opts.inkOutlines && opts.inkOutlines.length > 0 ? opts.inkOutlines : null;
   const inkLines =
-    opts.inkCenterlines && opts.inkCenterlines.length > 0 ? opts.inkCenterlines : null;
+    !inkPolys && opts.inkCenterlines && opts.inkCenterlines.length > 0
+      ? opts.inkCenterlines
+      : null;
+  // Centerlines for the inkPolys branch's gap-bridging floodWall (kept even
+  // when inkPolys is the primary path — the outline alone isn't watertight at a
+  // gesture gap; the fat centerline capsule closes it).
+  const inkCLForWall =
+    inkPolys && opts.inkCenterlines && opts.inkCenterlines.length > 0
+      ? opts.inkCenterlines
+      : null;
 
   // Window bbox (cells) — patch bbox, grown to cover the bordering ink ribbon
   // (conform mode) or the dilation margin (fallback). +2-cell ring so the
@@ -334,6 +379,16 @@ export function rasterizeFillPatch(
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
   }
+  if (inkPolys) {
+    for (const poly of inkPolys) {
+      for (const [x, y] of poly) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
   if (inkLines) {
     for (const line of inkLines) {
       for (const [x, y] of line) {
@@ -344,9 +399,9 @@ export function rasterizeFillPatch(
       }
     }
   }
-  // Conform mode needs only a small ring margin (the centerline is already
-  // inside the grown bbox); the fallback path keeps the dilation margin.
-  const margin = inkLines ? 3 : dilate + 1;
+  // Conform modes need only a small ring margin (the ink is already inside the
+  // grown bbox); the fallback path keeps the dilation margin.
+  const margin = inkPolys || inkLines ? 3 : dilate + 1;
   const c0 = Math.max(Math.floor(minX / TONE_CELL_PX) - margin, 0);
   const c1 = Math.min(Math.ceil(maxX / TONE_CELL_PX) + margin, w - 1);
   const r0 = Math.max(Math.floor(minY / TONE_CELL_PX) - margin, 0);
@@ -377,8 +432,414 @@ export function rasterizeFillPatch(
     }
   }
 
-  if (inkLines) {
+  if (inkPolys) {
+    // 2-conform (PRIMARY, 2026-06-13 rebuild) — conform the fill to the EXACT
+    // perfect-freehand ink OUTLINE polygons (the visible ink boundary).
+    //
+    // The centerline-capsule approach (the inkLines branch below) could never
+    // track perfect-freehand's VARIABLE width: the ink THINS + pulls inward at
+    // corners/convex bends, so the tone-at-centerline poked PAST the thin ink
+    // there (the residual bleed, worst at corners — measured ≤11px overshoot).
+    // Feeding the ACTUAL outline polygons (the same getStroke the renderer
+    // draws) makes the conform exact: watertight ink mask, true corners, true
+    // taper.
+    //
+    // Construction (all watertight, all corner-faithful):
+    //   (a) inkMask  = the ink outline polygons rasterized as a FILLED mask
+    //       (nonzero winding, the same loopSpansAtY machinery). This IS the
+    //       visible ink — the REACH/CLIP for the tone.
+    //   (a2) floodWall = the centerlines stamped as FAT capsules (radius 2
+    //       cells). The ink ribbon outline is a THIN band that a tiny gesture
+    //       gap (an unclosed corner) leaves OPEN — the outside flood would slip
+    //       through it and empty the fill (the "ink-barrier empties the fill"
+    //       failure). The fat centerline capsule BRIDGES that gap so the flood
+    //       barrier is watertight regardless of stroke closure. The inkMask
+    //       (exact shape) sets the REACH; the floodWall (gap-tolerant) sets the
+    //       ENCLOSURE — best of both.
+    //   (b) interior = cells the OUTSIDE flood (through cells that are neither
+    //       inkMask NOR floodWall) cannot reach, minus the ink itself = strictly
+    //       ENCLOSED by the ink. Boundary = the ink's INNER edge exactly.
+    //   (c) tone     = interior GROWN into the ink mask by ~the ink half-width
+    //       but CLIPPED to inkMask. Growing into the mask removes the sliver
+    //       (tone reaches under the ink); clipping to the mask means the tone
+    //       can NEVER exceed the ink's OUTER edge (no bleed). Corners stay sharp:
+    //       the inkMask carries the true corner and the clip stops the grow
+    //       exactly there — no rounding, no notch.
+    //   (d) holes    = carved back out by flooding each hole centroid through
+    //       cells that are neither inkMask nor floodWall (donut mirror).
+    //
+    // (a) rasterize the ink outlines → inkMask (the exact visible ink area).
+    const inkMask = new Uint8Array(bw * bh);
+    for (let row = r0; row <= r1; row++) {
+      const y = (row + 0.5) * TONE_CELL_PX;
+      // union of all ink polygons at this scanline (each nonzero-winding).
+      let any = false;
+      const polySpans: Array<Array<[number, number]>> = [];
+      for (const poly of inkPolys) {
+        const sp = loopSpansAtY(poly, y);
+        if (sp.length) {
+          polySpans.push(sp);
+          any = true;
+        }
+      }
+      if (!any) continue;
+      for (let col = c0; col <= c1; col++) {
+        const x = (col + 0.5) * TONE_CELL_PX;
+        for (const sp of polySpans) {
+          if (xInSpans(x, sp)) {
+            inkMask[(row - r0) * bw + (col - c0)] = 1;
+            break;
+          }
+        }
+      }
+    }
+    // (a2) stamp the bordering CENTERLINES as a fat capsule floodWall (radius 2
+    //      cells) to bridge any gesture gap — the watertight enclosure barrier.
+    //      (When centerlines aren't supplied the inkMask alone is the barrier;
+    //      that's only watertight for a closed ribbon, but DrawSurface always
+    //      hands both.)
+    const floodWall = new Uint8Array(bw * bh);
+    if (inkCLForWall) {
+      const rad = 2 * TONE_CELL_PX;
+      const rad2 = rad * rad;
+      for (const line of inkCLForWall) {
+        for (let i = 0; i + 1 < line.length; i++) {
+          const [ax, ay] = line[i];
+          const [bx2, by2] = line[i + 1];
+          const ddx = bx2 - ax;
+          const ddy = by2 - ay;
+          const lenSq = ddx * ddx + ddy * ddy;
+          const wc0 = Math.max(Math.floor((Math.min(ax, bx2) - rad) / TONE_CELL_PX - 0.5), c0);
+          const wc1 = Math.min(Math.ceil((Math.max(ax, bx2) + rad) / TONE_CELL_PX - 0.5), c1);
+          const wr0 = Math.max(Math.floor((Math.min(ay, by2) - rad) / TONE_CELL_PX - 0.5), r0);
+          const wr1 = Math.min(Math.ceil((Math.max(ay, by2) + rad) / TONE_CELL_PX - 0.5), r1);
+          for (let row = wr0; row <= wr1; row++) {
+            const y = (row + 0.5) * TONE_CELL_PX;
+            for (let col = wc0; col <= wc1; col++) {
+              const x = (col + 0.5) * TONE_CELL_PX;
+              let t = lenSq > 0 ? ((x - ax) * ddx + (y - ay) * ddy) / lenSq : 0;
+              t = t < 0 ? 0 : t > 1 ? 1 : t;
+              const ex = x - (ax + t * ddx);
+              const ey = y - (ay + t * ddy);
+              if (ex * ex + ey * ey <= rad2) floodWall[(row - r0) * bw + (col - c0)] = 1;
+            }
+          }
+        }
+      }
+    }
+    // reachWall = a THIN centerline capsule (radius 1 cell = 2px). The visible
+    // ink is SUB-CELL-THIN on tapered straight edges (~0.6px), so its polygon
+    // contains NO cell-center there → the rasterized inkMask (and closedInk) is
+    // ABSENT on those edges entirely (confirmed by the mask dump: the square's
+    // top edge had zero ink cells). With no ink to stop the phantom-peel, the
+    // tone fell SHORT of the visible ink → big edge sliver. The thin capsule
+    // guarantees a CONTINUOUS reach at the centerline (≈ where the thin ink is),
+    // so the tone always reaches under the visible ink. On a CURVE the ink is
+    // thicker (≥1px half-width) so closedInk already covers it and this capsule
+    // sits inside it (a redundant ~1px that the ink-on-top covers → no bleed).
+    const reachWall = new Uint8Array(bw * bh);
+    if (inkCLForWall) {
+      // Mark exactly the SINGLE cell each densified centerline point lands in (a
+      // 1-cell-wide = 2px trace AT the centerline), NOT a radius capsule. A
+      // radius-1px capsule actually spanned up to TWO rows (±2px) on a horizontal
+      // edge → the tone overshot the razor-thin ink by ~2px → the straight-edge
+      // bleed. The point-cell trace overshoots by ≤1px (half a cell), inside the
+      // ink-on-top's 2px cover (NO visible bleed), and stays continuous because
+      // the centerline is densified to ≤1px sub-segments (every cell along the
+      // path is hit). Adjacent points fill any diagonal step.
+      const markCell = (x: number, y: number) => {
+        const col = Math.round(x / TONE_CELL_PX - 0.5);
+        const row = Math.round(y / TONE_CELL_PX - 0.5);
+        if (col >= c0 && col <= c1 && row >= r0 && row <= r1) {
+          reachWall[(row - r0) * bw + (col - c0)] = 1;
+        }
+      };
+      for (const line of inkCLForWall) {
+        for (let i = 0; i < line.length; i++) {
+          const [ax, ay] = line[i];
+          markCell(ax, ay);
+          // walk to the next point in ≤1px steps so no cell on the path is skipped.
+          if (i + 1 < line.length) {
+            const [bx2, by2] = line[i + 1];
+            const steps = Math.max(1, Math.ceil(Math.hypot(bx2 - ax, by2 - ay)));
+            for (let s = 1; s < steps; s++) {
+              const t = s / steps;
+              markCell(ax + (bx2 - ax) * t, ay + (by2 - ay) * t);
+            }
+          }
+        }
+      }
+    }
+    // reach = the tone's allowed OUTER extent = the EXACT ink mask (smooth +
+    // conforming, where the ink is thick enough to rasterize) UNION the thin
+    // centerline capsule (the continuous fallback where the ink is sub-cell-thin).
+    // Tone fills up to here — under the visible ink (NO sliver), never past it
+    // (NO bleed: the capsule's outer edge is ≤1px past the centerline, inside the
+    // ink-on-top's 2px cover; the exact inkMask never exceeds the visible ink).
+    // We use the RAW inkMask, NOT the morphologically-closed one — closing grew
+    // the silhouette ~1 cell outward, stacking with the capsule into a ~2-3px
+    // overshoot (the residual straight-edge bleed); the thin reachWall already
+    // plugs the sub-cell gaps, so closing is unnecessary. The fat floodWall is a
+    // flood-STOPPER only (bridges large gesture gaps); its outer phantom is
+    // dropped by clipping the tone to reach.
+    const reach = new Uint8Array(bw * bh);
+    for (let i = 0; i < bw * bh; i++) reach[i] = inkMask[i] || reachWall[i] ? 1 : 0;
+    // barrier = reach ∪ floodWall (watertight even with a large gesture gap).
+    const isBarrier = (i: number) => reach[i] === 1 || floodWall[i] === 1;
+    // (b) flood the window border through NON-barrier cells → `outside`. (Window
+    //     has a ≥3-cell empty ring so the flood always seeds.) Cells the flood
+    //     can't reach are the ink + the enclosed interior.
+    const outside = new Uint8Array(bw * bh);
+    {
+      const stack: number[] = [];
+      const pushOut = (i: number) => {
+        if (!outside[i] && !isBarrier(i)) {
+          outside[i] = 1;
+          stack.push(i);
+        }
+      };
+      for (let c = 0; c < bw; c++) {
+        pushOut(c);
+        pushOut((bh - 1) * bw + c);
+      }
+      for (let r = 0; r < bh; r++) {
+        pushOut(r * bw);
+        pushOut(r * bw + bw - 1);
+      }
+      while (stack.length) {
+        const i = stack.pop()!;
+        const r = (i / bw) | 0;
+        const c = i - r * bw;
+        if (r > 0) pushOut(i - bw);
+        if (r < bh - 1) pushOut(i + bw);
+        if (c > 0) pushOut(i - 1);
+        if (c < bw - 1) pushOut(i + 1);
+      }
+    }
+    // (c) tone-eligible set = ENCLOSED cells (the outside flood couldn't reach)
+    //     MINUS the floodWall's OUTER phantom. The phantom = floodWall cells that
+    //     are NOT within reach (closedInk) and are reachable from the exterior by
+    //     crossing only such phantom cells — i.e. the fat capsule's half that
+    //     pokes PAST the ink on the outer side. closedInk (gap-closed, smooth) is
+    //     the stopper, so the phantom-peel recedes exactly to the visible ink's
+    //     outer edge and does NOT eat the floodWall's INNER half (the interior
+    //     ring) — that half is shielded by the watertight closedInk. Result:
+    //     tone's outer boundary = the ink's outer edge (covered by the ink-on-top
+    //     → NO sliver; never past it → NO bleed), smooth on curves (closedInk,
+    //     not a faceted capsule) and corner-true. At a LARGE gesture gap there's
+    //     no ink, so the phantom-peel flows through and the tone stops at the
+    //     floodWall there (honest — there's no visible ink to conform to).
+    const phantom = new Uint8Array(bw * bh);
+    {
+      const stack: number[] = [];
+      const pushPh = (i: number) => {
+        // a phantom cell: enclosed, floodWall, NOT reach (not under the ink).
+        if (!phantom[i] && !outside[i] && floodWall[i] && !reach[i]) {
+          phantom[i] = 1;
+          stack.push(i);
+        }
+      };
+      // seed: enclosed floodWall-non-reach cells that touch the exterior.
+      for (let r = 0; r < bh; r++) {
+        for (let c = 0; c < bw; c++) {
+          const i = r * bw + c;
+          if (outside[i] || !floodWall[i] || reach[i]) continue;
+          const touchesOut =
+            (r > 0 && outside[i - bw]) ||
+            (r < bh - 1 && outside[i + bw]) ||
+            (c > 0 && outside[i - 1]) ||
+            (c < bw - 1 && outside[i + 1]);
+          if (touchesOut) pushPh(i);
+        }
+      }
+      while (stack.length) {
+        const i = stack.pop()!;
+        const r = (i / bw) | 0;
+        const c = i - r * bw;
+        if (r > 0) pushPh(i - bw);
+        if (r < bh - 1) pushPh(i + bw);
+        if (c > 0) pushPh(i - 1);
+        if (c < bw - 1) pushPh(i + 1);
+      }
+    }
+    const eligible = new Uint8Array(bw * bh);
+    for (let i = 0; i < bw * bh; i++) eligible[i] = !outside[i] && !phantom[i] ? 1 : 0;
+    const out = new Uint8Array(bw * bh);
+    const seed: number[] = [];
+    // Seed from the tapped region polygon ∩ eligible interior (not under the ink
+    // mask), then grow 8-connected through all eligible cells so the tone reaches
+    // the ink's outer edge everywhere — only the tapped component fills.
+    for (let i = 0; i < bw * bh; i++) {
+      if (mask[i] && eligible[i] && !reach[i]) {
+        out[i] = 1;
+        seed.push(i);
+      }
+    }
+    if (seed.length === 0) {
+      for (let i = 0; i < bw * bh; i++) {
+        if (eligible[i] && !reach[i]) {
+          out[i] = 1;
+          seed.push(i);
+        }
+      }
+    }
+    {
+      const stack = seed.slice();
+      while (stack.length) {
+        const i = stack.pop()!;
+        const r = (i / bw) | 0;
+        const c = i - r * bw;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const nr = r + dr;
+            const nc = c + dc;
+            if (nr < 0 || nr >= bh || nc < 0 || nc >= bw) continue;
+            const j = nr * bw + nc;
+            if (!out[j] && eligible[j]) {
+              out[j] = 1;
+              stack.push(j);
+            }
+          }
+        }
+      }
+    }
+    // (d) carve the holes back to PAPER, conformed to the inner ink edge: flood
+    //     OUT from each hole's CENTROID through cells that are NOT the watertight
+    //     barrier (inkMask ∪ floodWall) — the barrier stops the carve at the
+    //     inner ink, so the carved paper reaches the inner ink edge. Then shave
+    //     the floodWall PHANTOM on the hole side back to the inkMask (mirror of
+    //     c2), so the gray ring's INNER boundary lands at the inner ink's outer
+    //     edge: the inner ink covers it (no sliver) and the gray never spills
+    //     into the hole past the visible inner ink (no bleed into the hole).
+    if (holes.length) {
+      const carved = new Uint8Array(bw * bh);
+      const carve: number[] = [];
+      // Carve flood: stop at the barrier (gap-tight); the inkMask cells stay tone
+      // for now and get shaved next so the carve reaches the inner ink's outer
+      // edge.
+      const tryCarve = (j: number) => {
+        if (out[j] && !isBarrier(j) && !carved[j]) {
+          out[j] = 0;
+          carved[j] = 1;
+          carve.push(j);
+        }
+      };
+      for (const hl of holes) {
+        let sx = 0;
+        let sy = 0;
+        for (const [x, y] of hl) {
+          sx += x;
+          sy += y;
+        }
+        const cxp = sx / hl.length;
+        const cyp = sy / hl.length;
+        const col = Math.round(cxp / TONE_CELL_PX - 0.5);
+        const row = Math.round(cyp / TONE_CELL_PX - 0.5);
+        if (col >= c0 && col <= c1 && row >= r0 && row <= r1) {
+          tryCarve((row - r0) * bw + (col - c0));
+        }
+      }
+      while (carve.length) {
+        const i = carve.pop()!;
+        const r = (i / bw) | 0;
+        const c = i - r * bw;
+        if (r > 0) tryCarve(i - bw);
+        if (r < bh - 1) tryCarve(i + bw);
+        if (c > 0) tryCarve(i - 1);
+        if (c < bw - 1) tryCarve(i + 1);
+      }
+      // shave the floodWall hole-side phantom (floodWall cells NOT within reach
+      // that touch carved paper) back to the reach band — iterate to
+      // convergence. reach (inkMask + thin capsule) stays tone so the ring
+      // boundary lands at the inner ink; the fat phantom inside the hole is
+      // dropped so the hole paper reaches under the inner ink (no sliver, no
+      // bleed into the hole).
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (let r = 0; r < bh; r++) {
+          for (let c = 0; c < bw; c++) {
+            const i = r * bw + c;
+            if (!out[i] || reach[i] || !floodWall[i]) continue;
+            const touchesCarved =
+              (r > 0 && carved[i - bw]) ||
+              (r < bh - 1 && carved[i + bw]) ||
+              (c > 0 && carved[i - 1]) ||
+              (c < bw - 1 && carved[i + 1]);
+            if (touchesCarved) {
+              out[i] = 0;
+              carved[i] = 1;
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+    mask = out;
+  } else if (inkLines) {
     // 2-conform — grow the fill up to the ink CENTERLINE (CLEAN EDGE).
+    //
+    // (a0) PREP the centerlines so the capsule wall tracks the SMOOTH VISIBLE
+    //      ink, not the raw gesture polyline (the bleed/staircase fix,
+    //      2026-06-13). The visible ink is perfect-freehand's `getStroke`
+    //      output: its centerline is the RAW points run through `streamline`
+    //      (an exponential moving average that, on convex bends, pulls the
+    //      midline INWARD of the raw points) and the body is then drawn as a
+    //      SMOOTH variable-width ribbon. Stamping capsules along the RAW points
+    //      gave a 40-chord FACETED tube that (1) staircased and (2) bowed
+    //      OUTSIDE the smooth ink on convex curves → grey BLED past the outline.
+    //      Prep mirrors perfect-freehand's STROKE_OPTS (streamline 0.5,
+    //      smoothing 0.5) in two cheap, dependency-free passes:
+    //        1. streamline EMA (α = 1 − 0.5) — same inward pull as the ink, so
+    //           the wall sits where the ink's midline actually is (kills bleed);
+    //        2. DENSIFY to ≤1px sub-segments — short chords make the swept
+    //           capsule tube hug the curve (kills the staircase facets).
+    //      Corners survive: the EMA is light (one pass) and densify is linear,
+    //      so a sharp gesture corner stays a corner (no Chaikin round-off — the
+    //      rejected EROSION notched corners; this doesn't touch corners).
+    const SMOOTH_WIN = 1; // ± neighbors in the centered moving average (1 = 3-tap)
+    const SMOOTH_PASSES = 2; // repeat the average — approaches perfect-freehand's pull
+    const DENSIFY_PX = 1; // sub-segment length so the capsule tube is smooth
+    // CENTERED moving average (NOT a forward EMA): a symmetric mean removes the
+    // per-segment zig-zag (the staircase source) WITHOUT the cumulative inward
+    // drift a forward EMA causes — that drift shrank closed loops and OPENED a
+    // seam gap, leaking the flood into the interior (the ring-only regression).
+    // Endpoints are ANCHORED so an open stroke keeps its tips and a near-closed
+    // loop keeps its closure, and a SHARP gesture corner stays a corner (the
+    // average rounds it only as much as perfect-freehand's round join does — it
+    // never bites a notch the way the rejected erosion did). Two 5-tap passes
+    // track the SMOOTH visible ink closely (perfect-freehand smooths the same
+    // zig-zag away and pulls convex bends inward), so the capsule wall sits
+    // where the ink actually is → the residual convex bleed closes.
+    const smoothPass = (line: [number, number][]): [number, number][] => {
+      if (line.length < 3) return line.slice();
+      const out: [number, number][] = [line[0]];
+      for (let i = 1; i < line.length - 1; i++) {
+        let sx = 0;
+        let sy = 0;
+        let n = 0;
+        for (let k = -SMOOTH_WIN; k <= SMOOTH_WIN; k++) {
+          const j = i + k;
+          if (j < 0 || j >= line.length) continue;
+          sx += line[j][0];
+          sy += line[j][1];
+          n++;
+        }
+        out.push([sx / n, sy / n]);
+      }
+      out.push(line[line.length - 1]);
+      return out;
+    };
+    const prep = (line: [number, number][]): [number, number][] => {
+      if (line.length < 3) return densify(line, DENSIFY_PX);
+      let sm = line;
+      for (let p = 0; p < SMOOTH_PASSES; p++) sm = smoothPass(sm);
+      // densify: walk each segment in ≤DENSIFY_PX steps so the swept capsule
+      // tube hugs the curve (kills the staircase facets).
+      return densify(sm, DENSIFY_PX);
+    };
+    const preppedLines = inkLines.map(prep);
     //
     // (a) stamp the bordering centerlines as TWO capsule masks:
     //       · floodWall (radius 2 cells) — a WATERTIGHT barrier for the flood +
@@ -393,7 +854,7 @@ export function rasterizeFillPatch(
     const fillWall = new Uint8Array(bw * bh);
     const stampWall = (maskArr: Uint8Array, rad: number) => {
       const rad2 = rad * rad;
-      for (const line of inkLines) {
+      for (const line of preppedLines) {
         for (let i = 0; i + 1 < line.length; i++) {
           const [ax, ay] = line[i];
           const [bx2, by2] = line[i + 1];
@@ -419,7 +880,14 @@ export function rasterizeFillPatch(
       }
     };
     stampWall(floodWall, 2 * TONE_CELL_PX);
-    stampWall(fillWall, TONE_CELL_PX);
+    // fillWall radius = HALF a cell so its OUTER extent lands at the centerline,
+    // not centerline + 1 cell (the old 1-cell radius was the bleed source — its
+    // outer ring sat at the ink's OUTER edge, where facet/quantization wobble
+    // poked grey PAST the smooth ink). At 0.5 cell the tone's reach is the
+    // centerline itself → covered by the ink-on-top, no bleed. Watertight is the
+    // floodWall's job (2 cells); fillWall only sets the REACH. The densified
+    // centerline (see prep) keeps even this thin wall continuous.
+    stampWall(fillWall, 0.5 * TONE_CELL_PX);
     // (b) flood the window border through NON-floodWall cells. Cells the flood
     //     does NOT reach are enclosed = interior. (Window has a ≥3-cell empty
     //     ring so the flood always seeds, even when ink hugs the bbox.)
@@ -478,15 +946,24 @@ export function rasterizeFillPatch(
         }
       }
     }
-    // (d) shave the OUTER overshoot: drop floodWall cells that are NOT fillWall
-    //     and touch the outside — the thick wall's outer ring sits PAST the
-    //     visible edge, so removing it stops the tone exactly at fillWall
-    //     (centerline ± 1 cell, under the ink) → no bleed. Interior floodWall
-    //     cells (wrapped by fill, not touching outside) stay → no sliver.
-    //     Iterate so the full ~1-cell ring peels (it can be 1-2 cells).
+    // (d) shave the OUTER overshoot down to the thin fillWall = the ink
+    //     CENTERLINE (the bleed fix, 2026-06-13). `out` currently reaches the
+    //     floodWall's outer extent (centerline + 2 cells) — well past the ink, so
+    //     grey bleeds. Peel floodWall cells that are NOT fillWall and touch the
+    //     exterior, iterating to CONVERGENCE: every cell on the outer side of the
+    //     fillWall peels away, so the boundary recedes exactly to fillWall
+    //     (centerline ± 0.5 cell) → tone stops UNDER the ink, no bleed. fillWall
+    //     cells are NEVER peeled, so the tone always reaches the centerline →
+    //     no sliver (the ink-on-top covers that seam). Converging-to-fillWall
+    //     (not a fixed depth) means a deep facet poke peels fully on convex
+    //     curves while straight edges (already at fillWall) don't recede → no
+    //     edge sliver. Corners: the peel stops at fillWall, which carries the
+    //     drawing's corner (densified centerline) rounded only as much as the
+    //     ink's own round join — never the rejected erosion's notch.
     let shaved = true;
     while (shaved) {
       shaved = false;
+      const peel: number[] = [];
       for (let r = 0; r < bh; r++) {
         for (let c = 0; c < bw; c++) {
           const i = r * bw + c;
@@ -496,12 +973,13 @@ export function rasterizeFillPatch(
             (r < bh - 1 && outside[i + bw]) ||
             (c > 0 && outside[i - 1]) ||
             (c < bw - 1 && outside[i + 1]);
-          if (touchesOutside) {
-            out[i] = 0;
-            outside[i] = 1; // becomes new exterior so the next ring can peel
-            shaved = true;
-          }
+          if (touchesOutside) peel.push(i);
         }
+      }
+      for (const i of peel) {
+        out[i] = 0;
+        outside[i] = 1; // new exterior so the next ring can peel
+        shaved = true;
       }
     }
     // (e) carve the holes back to PAPER, CONFORMED to the inner ink centerline:
