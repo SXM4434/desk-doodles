@@ -35,4 +35,9 @@ Everything parked for your call, in one place so nothing's forgotten. Grouped: q
 - [ ] **Video voice** — VO + burned captions (rec) vs screen-only + captions.
 - [ ] **Priority capture** — the lockstep-slider wedge (Shot 8 / Beat 4) is built but not yet filmed; it's the Grand/Runner-Up linchpin. First clean capture once the published Make URL exists? Fallback (2D→3D flip + orbit) is ready if not shot by edit time.
 
+## E. Gap-hunt rulings (2026-06-13 — flagged, now tracked)
+- [ ] **WEDGE HONESTY (H1/H2):** the round-trip *back half* (3D→2D) is deferred in code + the conversion cache is stamped-but-never-read — but we state both as fact (CLAUDE.md/README). Forward (hand→3D + 3D-wears-your-marks via Hatch) IS real. → **Reframe** the public claim to the true version ("your hand becomes 3D, and the 3D wears your own marks") — REC — vs **scope** the back-half/cache build. Protects credibility.
+- [ ] **DESK 2D↔3D FLIP (H3, the demo climax):** flipping a *placed desk object* to 3D has no code path (no geometry field, no convert action — only /canvas works). → **Build the desk-flip** (real work; I'm scaffolding the seam now so it's cheap) vs **demo the flip on /canvas** (free, already works). REC: scaffold now, decide at demo-cut.
+- [ ] **GOLDEN v3 bless = the ML go-live gate:** blessing golden v3 (after the clean wall) is now also what lets the 92.7% learned model wire LIVE (re-validated honestly). One eyeball → ML in production.
+
 _Claude clears B-board prep + C/D options as fleets land; you just rule._

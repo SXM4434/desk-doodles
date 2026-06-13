@@ -25,6 +25,15 @@
 
 | P12 | **Outline-only blank-poster fix is BROKEN** (fidelity catalog caught it): the synthesis at SvgStyleTransform.tsx:2455 reads the POST-CSS computed fill (already forced transparent) → skips every rect, so posters still blank under Outline-only. Fix = read the SOURCE fill, not computed. | SvgStyleTransform.tsx HOT (render-bug fleet `w7dt2ducr` may still be on it — check if it self-caught in verify first) | render-bug fleet lands; if still broken, fire correction | HIGH |
 
+| P13 | **Wire the 92.7% learned classifier LIVE** (the ML layer goes into production) — add learnedProvider to the chain `[ruleEngineProvider, learnedProvider]` (index.ts:194). Model committed 05a8428 (92.7% vs 77.5% rule baseline, no leak). 2-step recipe in tools/ml/README.md. | classifier.ts/index.ts cold (render fix + audit in them) AND golden v3 re-blessed (Sebs) AND a regression check | classifier free + golden v3 blessed | **HIGH** |
+| P14 | **Render-survival follow-up fixes** — whatever the hostile-SVG battery (in-flight `wf_28d6d942`) flags: O(n²) sibling pass element cap (H5), `<use>`/`<symbol>` dropped (H7), any crash/hang on torture SVG (H4). | SvgStyleTransform hot | render fleet/audit free + battery results | MED |
+| P15 | **Populated-desk perf gate** — the populated-desk battery (in-flight) measures fps@80/120; if it confirms the ~1fps@120 cliff, the per-object memoization fix is required before the "wall of doodles" demo. | DeskPage | battery results land | MED-HIGH |
+| — | _In-flight via wf_28d6d942: feed unfed collectors (shadeFillLog/shapeSnapLog — keep-feeding), build the two batteries above, commit+ingest GAP-HUNT. Full gap list: docs/submission/GAP-HUNT.md._ |  |  |  |
+
+| P-FINAL | **RECHECK EVERYTHING (the closing gate for Round 8)** — after ALL fix fleets land + the tree settles, re-run the FULL exhaustive audit (197×11 SVG + 3D + toggles low/mid/high vs Clean) on the COMBINED final state, READ every sheet myself. The interim audits ran against a mid-fix tree; this verifies the fixes didn't break each other. This is the gate before golden v3 bless → ML wiring → any push. Sebs: "sounds like you need to recheck everything again." | ALL fix fleets in flight (render-redo, dark-blob, audit, gap-fixes, scaffold) | last fix fleet lands + tree clean | **HIGH** |
+
+> **GATING RULE (Sebs 2026-06-13): build only when it can be ran.** Before firing ANY queued item, check its target files are COLD (git status + /tmp/dd-watchdog.log zone map). If hot → it stays queued, auto-fires when free. No build into a hot file, ever. The watchdog is the early-warning; the main loop is the gate.
+
 ## Git hygiene (do before any push, when fleets quiet)
 - **Consolidate branch:** all session work is linear on `og-image-baseline` (a stray branch from the og-image rock); `main` is stuck at f6bf608. FF it: `git checkout main && git merge --ff-only og-image-baseline && git branch -d og-image-baseline`. Nothing lost (linear). DO NOT switch branches while agents are committing.
 

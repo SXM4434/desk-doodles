@@ -8,6 +8,13 @@ Port-back to Hero-8-Lab / visitor playground / other portfolio surfaces is **pos
 
 ## ⭐ SESSION STATE — 2026-06-13 (READ THIS FIRST — crucial cross-session facts)
 
+### 📋 ROUND LEDGER (Sebs tracks work in ROUNDS — keep this current)
+- **Round 7** ✅ landed + verified 2026-06-12: 3D chrome split (rock 1 PASS) · conversion D2 v1 (rock 2 — failed on arrow rule, fixed in 7b) · tone brush (rock 3 PASS) · Phase A recalibration (rock 4 PASS, Sebs eyeball pending).
+- **Round 7b** ✅ landed + both verified PASS 2026-06-13: Rock X (arrow rod-default + chip, unified `__dd_decisionLog`, real engine options holes/joint/bevel/wall, Tier-2 geometry family pills) · Rock Y (real Wireframe schematic register).
+- **Round 8** 🔄 IN FLIGHT 2026-06-13 = shading/fill/shape tools + 3D symmetry + the FIX WAVE + verification + ML start. Done: F1 grid brush · F2 fill/lasso · F3 shape-assist · envmap tan fix (+slab re-fix) · Hatch/Native gap cells · wash-darkness fix · engine crash bugs (Infinity/hollow-circle/phantom) · render outline+riso fix · ML signals-only model trained (92.7% vs 77.5%, committed, NOT wired). In flight: classifier dark-blob re-fix (dense hatch not flat black) · the EXHAUSTIVE AUDIT (197×11 SVG + 3D + toggles low/mid/high vs Clean) + GAP-HUNT + their autonomous fixes. **CLOSES with the FINAL RECHECK** (queue P-FINAL) — re-audit the combined state clean before Round 9.
+- **Round 9** ⏭️ = production + forward (each item BUILDS ONLY WHEN ITS FILES ARE COLD — watchdog/collision protocol, see PENDING-AUTOFIRE-QUEUE): wire the 92.7% ML LIVE (gated: classifier cold + golden v3 bless) · vision/LLM layer #3 (scaffolded) · AI-mesh hard 3D path Tripo/fal → default, local fallback (scaffolded, keys Sebs-side ~Day 14) · desk 2D↔3D flip / demo climax (scaffolded) · round-trip back-half OR wedge-reframe (Sebs ruling) · video/Weave + intro animation.
+- **BUILD-WHEN-RUNNABLE rule (Sebs 2026-06-13):** nothing builds into a HOT file. Every queued build is gated on its target files being cold (check git status / the watchdog zone map first); colliding work waits in PENDING-AUTOFIRE-QUEUE and auto-fires when free. "Build only when it can be ran."
+
 ### 🚨 FABLE 5 SUSPENDED — ALL AGENTS RUN ON OPUS NOW
 Anthropic suspended ALL Claude Fable 5 access platform-wide (2026-06-13, US gov export-control directive). Mid-flight Fable agents died with `issue with the selected model (claude-fable-5[1m])`. Session switched to **Opus 4.8 (1M)**. **Launch every agent/workflow with `model:'opus'` (never 'fable').** That error = the suspension, NOT a bug/limit/our-fault. Memory: `feedback_fable_suspended_use_opus.md` (supersedes "use Fable for sub agents"). Restore-check later.
 
