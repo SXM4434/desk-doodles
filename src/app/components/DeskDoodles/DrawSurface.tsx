@@ -422,9 +422,6 @@ export type FillRegion = {
 /** Run the pool-raster extractor over the stroke pool at a gap multiplier and
  *  map the region tree back into viewBox px. Deterministic; cache by
  *  (strokesKey, gapIdx) — per ladder STEP, never per pointermove (spec §6). */
-/** 2D tone-fill grid resolution — higher than the 3D-solid cap (200) so a
- *  filled rectangle's sharp corners staircase the least (no white corner-notch). */
-const FILL_GRID_RESOLUTION = 420;
 export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegion[] {
   const raw = strokes.map((s) => s.points).filter((s) => s.length > 0);
   if (raw.length === 0) return [];
@@ -442,10 +439,10 @@ export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegi
     // max resolution = the finest grid so the boundary staircases the least and
     // the fill hugs the drawn line (Sebs: "fill doesn't conform, edges dirty").
     crisp: true,
-    // 2D fill uses a HIGHER grid cap than 3D solid so sharp corners staircase
-    // the least → kills the white corner-notch on filled squares (2026-06-13).
-    resolution: FILL_GRID_RESOLUTION,
-    maxResolution: FILL_GRID_RESOLUTION,
+    // REVERTED 2026-06-13: a 420 grid broke region enclosure (partial fill /
+    // white band — exceeded the grid budget). Back to the proven 200 cap; the
+    // corner-notch gets a different fix (not via global resolution).
+    resolution: SOLID_MAX_GRID_RESOLUTION,
   });
   // The world→viewBox inverse adapter: normalizeStrokePoints is
   //   wx = (x − cx)·s,  wy = −(y − cy)·s   →   x = wx/s + cx,  y = cy − wy/s.
