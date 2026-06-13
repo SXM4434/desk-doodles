@@ -41,6 +41,7 @@ import { applyStylePreset } from '../canvas/SvgStyleTransform';
 import { findDoodleBySvg, updateDoodleConfig, updateDoodleSvg } from '../../lib/publish';
 import { DrawSurface, strokesToObjectMarkup, capStrokes, type Stroke, type StrokePoint } from './DrawSurface';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
+import { exportCardSvg, exportCardPng } from '../../lib/exportCard';
 
 // ─── ObjectSurface — the one morphing object panel (modes, never nested) ──────
 // Per docs/design/object-model-and-desk-architecture.md §"The one object
@@ -88,6 +89,10 @@ export type ObjectSurfaceData = {
   svgMarkup: string;
   name?: string | null;
   why?: string | null;
+  /** Optional author "by ___" (card features). Usually arrives inside
+   *  renderConfig (an extra key); this top-level field lets a caller that
+   *  already has it pass it directly. */
+  author?: string | null;
   owner?: string | null;
   createdAt?: string | null;
   /** Supabase row id. Optional — when the caller doesn't pass it (DeskPage
@@ -530,6 +535,24 @@ export function ObjectSurface({
   const dirtyRef = useRef(false);
   const [, forceDirtyPaint] = useState(false);
 
+  // Optional author "by ___" (card features, Sebs 2026-06-13). The author rides
+  // INSIDE render_config (an extra key the parser preserves untouched), so it
+  // persists through the EXISTING config-save writer (updateDoodleConfig) — no
+  // new column, no new RPC, no live DB writer invented. Seeded from the caller's
+  // field if present, else the stored config's author key; re-seeded by the
+  // async row lookup below (only while the author input is untouched).
+  const configAuthor = (cfg: SurfaceRenderConfig | null | undefined): string => {
+    const a = (cfg as Record<string, unknown> | null | undefined)?.author;
+    return typeof a === 'string' ? a : '';
+  };
+  const [author, setAuthor] = useState<string>(
+    () => (object.author ?? '') || configAuthor(propConfig),
+  );
+  // Author edits must persist even when the render controls are untouched, so
+  // they get their own dirty flag (the controls' dirtyRef gates the config-only
+  // case; author-only edits still need a config write at Done).
+  const authorDirtyRef = useRef(false);
+
   // The row id used by Edit's Done persist — from props when the caller has
   // it; otherwise recovered by the lookup below.
   const [rowId, setRowId] = useState<string | null>(object.id ?? null);
@@ -553,6 +576,11 @@ export function ObjectSurface({
           setSurfStyle(cfg.svgStyle);
           setSurfMods(cfg.modifiers);
         }
+        // Re-seed the author from the looked-up config (rides as a config
+        // extra), but never clobber an author the user is already typing.
+        if (cfg && !authorDirtyRef.current && !object.author) {
+          setAuthor(configAuthor(cfg));
+        }
       })
       .catch(() => {});
     return () => {
@@ -572,6 +600,14 @@ export function ObjectSurface({
   const setSurfMod = <K extends keyof F3ModifiersState>(key: K, value: F3ModifiersState[K]) => {
     markDirty();
     setSurfMods((prev) => ({ ...prev, [key]: value }));
+  };
+
+  /** Author input — flags its own dirty bit so Done writes the config even if
+   *  the render controls are untouched (an author-only edit still needs to
+   *  reach the record). */
+  const handleAuthorChange = (v: string) => {
+    authorDirtyRef.current = true;
+    setAuthor(v);
   };
 
   /** Style switch — desk-chrome semantics (SmartHachureChrome onChange):
@@ -609,13 +645,21 @@ export function ObjectSurface({
     // Persist the edited name/why exactly as before. Empty → null.
     onSave?.(name.trim() || null, why.trim() || null);
 
-    // Controls untouched → legacy behavior: nothing config-related to do.
-    if (!dirtyRef.current) {
+    // Controls AND author both untouched → legacy behavior: nothing config-
+    // related to do. An author-only edit still needs a config write (it rides
+    // in render_config), so authorDirtyRef opens the same persist path.
+    if (!dirtyRef.current && !authorDirtyRef.current) {
       onClose();
       return;
     }
 
+    // Author rides in render_config as an extra key (empty → drop the key so a
+    // cleared author doesn't persist as ""). Built on the same {svgStyle,
+    // modifiers} config the controls produce; extras (strokes) ride untouched.
+    const trimmedAuthor = author.trim();
     const config: SurfaceRenderConfig = { ...baseline, svgStyle: surfStyle, modifiers: surfMods };
+    if (trimmedAuthor) config.author = trimmedAuthor;
+    else delete (config as Record<string, unknown>).author;
     // Optimistic local update — ALWAYS (the caller re-pins the desk object;
     // the note below covers the not-persisted case honestly).
     onConfigSave?.(config);
@@ -711,6 +755,44 @@ export function ObjectSurface({
     return () => ro.disconnect();
   }, []);
 
+  // ── EXPORT (card features — Sebs 2026-06-13) ──────────────────────────────
+  // The card detail modal is the PRIMARY export spot (RESTYLE/RE-DRAW/DELETE
+  // row). Both buttons capture the LIVE-rendered doodle out of the art well
+  // (exportCard.ts walks [data-dd-card-art] → the visible <svg> → bakes the
+  // computed cascade into a self-contained file), so the export matches exactly
+  // what the surface shows (current style + restyle edits in progress). Scoped
+  // to the card column so it never grabs the re-draw canvas's <svg>.
+  const [exportNote, setExportNote] = useState<string | null>(null);
+  const exportNoteTimer = useRef<number | null>(null);
+  const [exportingPng, setExportingPng] = useState(false);
+  const flashExportNote = (msg: string) => {
+    setExportNote(msg);
+    if (exportNoteTimer.current) window.clearTimeout(exportNoteTimer.current);
+    exportNoteTimer.current = window.setTimeout(() => {
+      setExportNote(null);
+      exportNoteTimer.current = null;
+    }, 4000);
+  };
+  useEffect(
+    () => () => {
+      if (exportNoteTimer.current) window.clearTimeout(exportNoteTimer.current);
+    },
+    [],
+  );
+  const exportFileName = (isSandbox ? object.name : name) || null;
+  const artRoot = () => cardColRef.current?.querySelector('[data-dd-card-art]') ?? null;
+  const handleExportSvg = () => {
+    const res = exportCardSvg(artRoot(), exportFileName);
+    flashExportNote(res.ok ? 'saved SVG' : res.error);
+  };
+  const handleExportPng = async () => {
+    if (exportingPng) return;
+    setExportingPng(true);
+    const res = await exportCardPng(artRoot(), exportFileName);
+    setExportingPng(false);
+    flashExportNote(res.ok ? 'saved PNG' : res.error);
+  };
+
   const scrim: CSSProperties = {
     position: 'fixed',
     inset: 0,
@@ -775,12 +857,16 @@ export function ObjectSurface({
             svgMarkup={artMarkup}
             name={isSandbox ? object.name : name}
             why={isSandbox ? object.why : why}
+            // Sandbox shows the stored author read-only (from the prop or the
+            // looked-up config); Edit shows the live editable value.
+            author={isSandbox ? (object.author ?? configAuthor(baseline)) || null : author}
             owner={object.owner}
             createdAt={object.createdAt}
             embedded
             editable={!isSandbox}
             onNameChange={setName}
             onWhyChange={setWhy}
+            onAuthorChange={handleAuthorChange}
           />
         </SurfaceRenderScope>
       </F3RoughModifiersProvider>
@@ -971,6 +1057,57 @@ export function ObjectSurface({
                 {saving ? 'Saving…' : 'Done'}
               </button>
             </footer>
+          </div>
+        )}
+
+        {/* EXPORT row (card features — Sebs 2026-06-13): the card detail modal
+            is the PRIMARY export spot. SVG + PNG share-buttons for whatever the
+            card currently shows; the transient note is the saved/fell-back
+            receipt. Hidden while re-drawing (the card UI is covered then). */}
+        {!redrawing && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              borderTop: '1px solid var(--dir-border)',
+              paddingTop: 12,
+            }}
+          >
+            <span style={SECTION_LABEL}>Share</span>
+            <button
+              onClick={handleExportSvg}
+              title="Download this doodle as a self-contained SVG"
+              style={{ ...PILL, padding: '6px 14px' }}
+            >
+              Export SVG
+            </button>
+            <button
+              onClick={() => void handleExportPng()}
+              disabled={exportingPng}
+              title="Download this doodle as a PNG image"
+              style={{ ...PILL, padding: '6px 14px', opacity: exportingPng ? 0.7 : 1 }}
+            >
+              {exportingPng ? 'Saving…' : 'Export PNG'}
+            </button>
+            {exportNote && (
+              <span
+                role="status"
+                style={{
+                  fontFamily: IS,
+                  fontSize: 10,
+                  fontStyle: 'italic',
+                  color: 'var(--dir-text-body-soft)',
+                  marginLeft: 'auto',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  minWidth: 0,
+                }}
+              >
+                {exportNote}
+              </span>
+            )}
           </div>
         )}
 

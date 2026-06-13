@@ -749,6 +749,10 @@ export function DrawPanel({
 
   const [stageName, setStageName] = useState('');
   const [stageWhy, setStageWhy] = useState('');
+  // Optional author "by ___" (card features, Sebs 2026-06-13) — skippable.
+  // Persists in render_config (a config extra) via the existing sourceConfig
+  // channel at Place, so no new live writer is invented.
+  const [stageAuthor, setStageAuthor] = useState('');
   // SIZE-CAP HONESTY: set when Place measured the staged svg over the 64KB
   // server cap. The popup STAYS OPEN — nothing is lost. `exhausted` = the
   // shrink lever ran out of detail to smooth and it still doesn't fit.
@@ -852,13 +856,16 @@ export function DrawPanel({
       setCapNote({ kb: Math.ceil(finalLength / 1024) });
       return;
     }
-    if (staged.toneFills && staged.toneFills.length > 0) {
-      // TONE IN THE RECORD: route the full config through the host's verbatim
-      // sourceConfig channel — DeskPage stores it byte-for-byte as the row's
-      // render_config (its parser passes extras through untouched on every
-      // hop, same contract that carries strokes). The pen half is the
-      // IDENTICAL snapshot DeskPage would take itself: svgStyle + mods are
-      // the same shared contexts (D-7, one pen) read at the same moment.
+    const author = stageAuthor.trim();
+    const hasTone = !!(staged.toneFills && staged.toneFills.length > 0);
+    // TONE or AUTHOR in the record: both ride render_config, so route through
+    // the host's verbatim sourceConfig channel — DeskPage stores it byte-for-
+    // byte as the row's render_config (its parser passes extras through
+    // untouched on every hop, same contract that carries strokes). The pen
+    // half is the IDENTICAL snapshot DeskPage would take itself: svgStyle +
+    // mods are the same shared contexts (D-7, one pen) read at the same moment.
+    // No-tone + no-author keeps the original lightweight path byte-for-byte.
+    if (hasTone || author) {
       onDone(staged.markup, {
         name: stageName.trim() || null,
         why: stageWhy.trim() || null,
@@ -866,7 +873,8 @@ export function DrawPanel({
           svgStyle,
           modifiers: mods,
           ...(staged.strokes && staged.strokes.length > 0 ? { strokes: staged.strokes } : {}),
-          toneFills: staged.toneFills,
+          ...(hasTone ? { toneFills: staged.toneFills } : {}),
+          ...(author ? { author } : {}),
         },
       });
       return;
@@ -1675,6 +1683,30 @@ export function DrawPanel({
                   outline: 'none',
                 }}
               />
+              {/* Optional author "by ___" (card features, Sebs 2026-06-13) \u2014
+                  sits with name + why; skippable. Persists in render_config. */}
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', flexShrink: 0 }}>
+                  by
+                </span>
+                <input
+                  value={stageAuthor}
+                  onChange={(e) => setStageAuthor(e.target.value)}
+                  placeholder="your name (optional)"
+                  aria-label="Author name (optional)"
+                  maxLength={48}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontFamily: IS,
+                    fontSize: 13,
+                    color: 'var(--dir-text-body)',
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                  }}
+                />
+              </div>
             </div>
             <footer style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
               <button

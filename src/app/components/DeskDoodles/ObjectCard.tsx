@@ -19,6 +19,11 @@ export type ObjectCardProps = {
   svgMarkup: string;
   name?: string | null;
   why?: string | null;
+  /** Optional author name the maker chose for the card (card features, Sebs
+   *  2026-06-13) — the "by ___" attribution. Skippable; null/empty hides it.
+   *  Conceptually ties to the onboarding handle, but for now a plain field
+   *  persisted in the doodle's render_config. */
+  author?: string | null;
   /** Owner handle, or null/undefined for an anonymous maker. */
   owner?: string | null;
   /** ISO timestamp; shown as a quiet date in the footer if present. */
@@ -37,10 +42,11 @@ export type ObjectCardProps = {
    *  card-like container (e.g. the ObjectSurface modal IS the card). Prevents
    *  a card-inside-a-card. The art well stays (it's the doodle's frame). */
   embedded?: boolean;
-  /** Editable mode (Create/Edit) — name + why become inputs. */
+  /** Editable mode (Create/Edit) — name + why + author become inputs. */
   editable?: boolean;
   onNameChange?: (v: string) => void;
   onWhyChange?: (v: string) => void;
+  onAuthorChange?: (v: string) => void;
 };
 
 const CARD_W = 300;
@@ -49,6 +55,7 @@ export function ObjectCard({
   svgMarkup,
   name,
   why,
+  author,
   owner,
   createdAt,
   mini = false,
@@ -57,6 +64,7 @@ export function ObjectCard({
   editable = false,
   onNameChange,
   onWhyChange,
+  onAuthorChange,
 }: ObjectCardProps) {
   // Embedded + mini both fill their container (modal panel / drawer grid
   // cell respectively); only the standalone full card carries its own width.
@@ -256,6 +264,56 @@ export function ObjectCard({
                 }}
               >
                 {why}
+              </div>
+            )
+          )}
+
+          {/* Author "by ___" — optional, skippable (card features, Sebs
+              2026-06-13). Editable: a quiet optional input. Read: the "by ___"
+              attribution line, only when the maker set one. */}
+          {editable ? (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span
+                style={{
+                  fontFamily: IS,
+                  fontSize: 13,
+                  color: 'var(--dir-text-body-soft)',
+                  flexShrink: 0,
+                }}
+              >
+                by
+              </span>
+              <input
+                value={author ?? ''}
+                onChange={(e) => onAuthorChange?.(e.target.value)}
+                placeholder="your name (optional)"
+                aria-label="Author name (optional)"
+                maxLength={48}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontFamily: IS,
+                  fontSize: 13,
+                  color: 'var(--dir-text-body)',
+                  background: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                }}
+              />
+            </div>
+          ) : (
+            author && (
+              <div
+                style={{
+                  fontFamily: IS,
+                  fontSize: 13,
+                  color: 'var(--dir-text-body-soft)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                by {author}
               </div>
             )
           )}
