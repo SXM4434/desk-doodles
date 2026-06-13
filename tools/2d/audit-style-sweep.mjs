@@ -214,7 +214,10 @@ page.on('pageerror', (e) => curConsole.push(String(e)));
 await page.goto(BASE_URL, { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.__sweepReady === true, null, { timeout: 30000 });
 
-const inventory = await page.evaluate(() => window.__sweep.inventory);
+let inventory = await page.evaluate(() => window.__sweep.inventory);
+// SHAPES env filter (targeted verify, e.g. SHAPES=replicaBelt,beltMini).
+const SHAPE_FILTER = process.env.SHAPES ? new Set(process.env.SHAPES.split(',').map((s) => s.trim())) : null;
+if (SHAPE_FILTER) inventory = inventory.filter((inv) => SHAPE_FILTER.has(inv.shape));
 const styles = await page.evaluate(() => window.__sweep.styles);
 console.log(`inventory: ${inventory.length} shapes · styles: ${styles.length}`);
 if (inventory.length !== 197) {

@@ -166,6 +166,32 @@ const RULE_outer_frame_encloses_all: Rule = {
   },
 };
 
+const RULE_dark_enclosing_body: Rule = {
+  id: 'dark-enclosing-body',
+  description:
+    'ANY dark body (darkness ≥ 0.55) that ENCLOSES ≥1 sibling → dense-tonal, ' +
+    'regardless of z-index / area-fraction / containment. Generalizes the dark ' +
+    'branch of outer-frame-encloses-all (which only catches z-index-0 rects that ' +
+    'fill ≥80% of their parent) to ANY dark enclosing shape. Without it, a dark ' +
+    'enclosing body that is NOT z0+≥80% (e.g. a belt-buckle ellipse, z≠0, ~27% ' +
+    'area, holding an inner ring + knockout "W") fires NO rule at all — outer-frame ' +
+    'needs z0+≥80%, root-tonal-dense bails when it encloses, inner-content needs ' +
+    'containedInZIndex — so it lands on the paper default and renders EMPTY (the ' +
+    'replicaBelt bug, 2026-06-13). dense-tonal makes it hatch legibly with its ' +
+    'knockout structure preserved (the render-side knockout fix keeps the inner ' +
+    'siblings white). Object-AGNOSTIC: keys on signals (dark + encloses), never on ' +
+    'shape identity — so it generalizes to any drawn dark form with content inside. ' +
+    'Confidence 0.8 < outer-frame 0.85 so the specific frame rule still leads where ' +
+    'it applies; scoring is accumulative so this only ADDS dense-tonal weight to ' +
+    'bodies that should already hatch — it cannot flip a non-enclosing detail off ' +
+    'solid-content (that path requires enclosesSiblingCount < 1).',
+  evaluate: (s) => {
+    if (s.darknessL < DARK_BAND_FLOOR) return null;
+    if (s.enclosesSiblingCount < 1) return null;
+    return { role: 'dense-tonal', confidence: 0.8 };
+  },
+};
+
 const RULE_outer_frame_bordered_wash: Rule = {
   id: 'outer-frame-bordered-wash',
   description:
@@ -377,6 +403,7 @@ const ALL_RULES: Rule[] = [
   RULE_text_label,
   // B. frames
   RULE_outer_frame_encloses_all,
+  RULE_dark_enclosing_body,
   RULE_outer_frame_bordered_wash,
   // C. content
   RULE_inner_band_dark,
