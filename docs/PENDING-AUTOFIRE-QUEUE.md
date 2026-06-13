@@ -32,6 +32,8 @@
 
 | P-FINAL | **RECHECK EVERYTHING (the closing gate for Round 8)** — after ALL fix fleets land + the tree settles, re-run the FULL exhaustive audit (197×11 SVG + 3D + toggles low/mid/high vs Clean) on the COMBINED final state, READ every sheet myself. The interim audits ran against a mid-fix tree; this verifies the fixes didn't break each other. This is the gate before golden v3 bless → ML wiring → any push. Sebs: "sounds like you need to recheck everything again." **EVERY object (all 197) visually checked vs its Clean SVG — NO sampling. AND ingest every result into datasets/smart-layer.dataset.jsonl (feed the systems).** | ALL fix fleets in flight (render-redo, dark-blob, audit, gap-fixes, scaffold) | last fix fleet lands + tree clean | **HIGH** |
 
+| P16 | **RC-5: wet-ink + charcoal styles are DEAD** — the host gate in renderSmartHachure admits only rough-handdrawn/sketchy/bold-ink/stipple, so wet-ink/charcoal's tonal-fill grammar never runs → they render as Clean + a thin filter (no real hand-drawn transform). This is the SA-3 FX-gate. FIX: lift the gate so their tonal grammar runs + ensure each renders legibly (compose with the dark-blob fix's tone-never-vanishes). VISUAL verify all 197 in wet-ink + charcoal. | the gate may live in techniqueMap/index (dark-blob fix territory) — wait until those are cold | dark-blob fix lands + files cold | P1 |
+
 > **GATING RULE (Sebs 2026-06-13): build only when it can be ran.** Before firing ANY queued item, check its target files are COLD (git status + /tmp/dd-watchdog.log zone map). If hot → it stays queued, auto-fires when free. No build into a hot file, ever. The watchdog is the early-warning; the main loop is the gate.
 
 ## Git hygiene (do before any push, when fleets quiet)
