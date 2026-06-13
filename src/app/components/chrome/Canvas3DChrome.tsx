@@ -34,9 +34,13 @@ import { SLIDER_SPECS } from './modifierSpecs';
 import {
   GEOMETRY_MODE_OPTIONS,
   STYLE3D_OPTIONS,
+  HATCH_GRAMMAR_OPTIONS,
+  HATCH_DIRECTION_OPTIONS,
   useCanvas3D,
   type Style3D,
 } from '../../state/Canvas3DContext';
+import type { HatchGrammar, HatchDirection } from '../canvas3d/hatchMaterial';
+import type { NativeProps3D } from '../canvas3d/materials3d';
 import { useF3RoughModifiers } from '../../state/F3RoughModifiersContext';
 import {
   EXTRUDE_BEVEL_PROFILE_OPTIONS,
@@ -279,6 +283,30 @@ function FamilyPills<T extends string>({
   );
 }
 
+/** Discrete pill row over `{ id, label, detail }` metadata (the STYLE-toggle
+ *  idiom for the symmetry-law gap cells). Same visual grammar as FamilyPills,
+ *  fed the context's option metadata directly. */
+function MetaPills<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: ReadonlyArray<{ id: T; label: string; detail: string }>;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <FamilyPills
+      label={label}
+      value={value}
+      options={options.map((o) => ({ value: o.id, label: o.label, title: o.detail }))}
+      onChange={onChange}
+    />
+  );
+}
+
 function SpecSlider({
   spec,
   value,
@@ -312,6 +340,12 @@ export function Canvas3DChrome() {
     materialPreset,
     setMaterialPreset,
     materialUserOverride,
+    nativeProps,
+    setNativeProps,
+    hatchGrammar,
+    setHatchGrammar,
+    hatchDirection,
+    setHatchDirection,
     modeParams,
     setRodParams,
     setExtrudeParams,
@@ -374,14 +408,77 @@ export function Canvas3DChrome() {
                 Following the mode's default material — an explicit pick survives mode switches.
               </p>
             )}
+            {/* PROPERTY dials (symmetry-law gap cell §2) — continuous shapers
+                of how light SITS, never color. Ink-black holds at every dial
+                position; Reflection is hard-bounded against the tan band. */}
+            <p style={SECTION_NOTE}>
+              These shape how the light sits on the form — never its color. The object
+              stays ink-black at every position.
+            </p>
+            <Slider
+              label="Polish"
+              value={nativeProps.polish}
+              min={0}
+              max={1}
+              step={1 / 12}
+              precision={2}
+              title="Highlight tightness — diffuse (left) to mirror (right). 0.5 = the preset's own surface."
+              onChange={(v) => setNativeProps({ polish: v })}
+            />
+            <Slider
+              label="Reflection"
+              value={nativeProps.reflection}
+              min={0}
+              max={1}
+              step={1 / 12}
+              precision={2}
+              title="Environment reflection amount — bounded so it can never reflect a warm band; ink-black holds at MAX."
+              onChange={(v) => setNativeProps({ reflection: v })}
+            />
+            <Slider
+              label="Sheen"
+              value={nativeProps.sheen}
+              min={0}
+              max={1}
+              step={1 / 12}
+              precision={2}
+              title="Satin grazing glow — soft broad highlight at the form's edge (warm-graphite register, never beige)."
+              onChange={(v) => setNativeProps({ sheen: v })}
+            />
+            <Slider
+              label="Outline"
+              value={nativeProps.outline}
+              min={0}
+              max={1}
+              step={1 / 12}
+              precision={2}
+              title="Drawn ink edge weight on the form — an inverted-hull silhouette in ink. 0 = off."
+              onChange={(v) => setNativeProps({ outline: v })}
+            />
           </>
         )}
 
         {style3d === 'hatch' && (
           <>
+            {/* STYLE toggles (symmetry-law gap cell §1) — discrete grammar +
+                direction, ABOVE the property sliders. Both feed the SAME band
+                table; a band-5 region is equally dark in every grammar. */}
+            <MetaPills<HatchGrammar>
+              label="Grammar"
+              value={hatchGrammar}
+              options={HATCH_GRAMMAR_OPTIONS}
+              onChange={setHatchGrammar}
+            />
+            <MetaPills<HatchDirection>
+              label="Direction"
+              value={hatchDirection}
+              options={HATCH_DIRECTION_OPTIONS}
+              onChange={setHatchDirection}
+            />
             <p style={SECTION_NOTE}>
-              The SAME Shading sliders as the 2D pen — one math, two renderers. Move
-              them and the 3D re-hatches live.
+              The SAME Shading sliders as the 2D pen — one math, four renderers. Move
+              them and the 3D re-hatches live. Grammar swaps the mark shape; the band
+              darkness stays the same.
             </p>
             <Slider
               label="Hachure gap"

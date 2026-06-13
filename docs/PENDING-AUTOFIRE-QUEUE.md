@@ -18,6 +18,7 @@
 | P6 | **README voice/accuracy pass** (draw from THE-STORY; fix public "Day 5 of 14") | THE-STORY synthesis | story fleet `wf_d0726d05` lands | MED |
 | P7 | **Project-file cleanup EXECUTION** (the merges/deletes the housekeeping plan flags safe) | the cleanup PLAN + in-flight submission docs finishing | housekeeping fleet + submission fleets land | MED |
 | P8 | **Visual smash of Hatch grammar + Native dials at scale** (beyond the gap-cells own battery) | canvas3d HOT | relaunch fleet lands | MED |
+| P9 | **Figma Agent reintegration** — Agent CONFIRMED (Sebs has beta); thread it back as the 5th suite tool across narrative docs (the-story · social-post-draft · demo-video-plan · README · makeathon-rules-VERBATIM framing) + ensure we actually USE Agent on a real asset (Community file / intro graphic / video) so the claim is true | housekeeping/story fleets editing docs | housekeeping fleet `wf_d63505a1` lands | HIGH |
 
 ## Sebs-gated (NOT auto-fire — his call, surface in main chat)
 - Identity / 06-16 design+motion pass (design decision).

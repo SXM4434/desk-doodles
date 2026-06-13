@@ -9,7 +9,7 @@ export type { Stroke3DSceneProps } from './Stroke3DScene';
 export type { GeometryMode, GeometryModeSetting } from '../../lib/geometry3d/strokeTo3d';
 // Round-7 chrome-split surface (3d-mode-controls-spec): per-mode params +
 // material presets + hatch inputs.
-export type { HatchInputs, HatchVariant } from './hatchMaterial';
+export type { HatchInputs, HatchVariant, HatchGrammar, HatchDirection } from './hatchMaterial';
 export type {
   ExtrudeBevelProfile3D,
   ExtrudeParams3D,
@@ -23,4 +23,4 @@ export type {
   SolidEdge3D,
   SolidParams3D,
 } from './modeParams';
-export type { MaterialPresetId } from './materials3d';
+export type { MaterialPresetId, NativeProps3D } from './materials3d';

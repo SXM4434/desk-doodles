@@ -83,12 +83,14 @@ function DeskDoodlesCanvasPage() {
   // — the 3D scene is fed the SAME strokes the 2D surface holds, so flipping
   // the mode tab converts exactly what's drawn).
   const [strokes3d, setStrokes3d] = useState<Stroke[]>([]);
-  const { geometryMode, style3d, materialPreset, modeParams } = useCanvas3D();
+  const { geometryMode, style3d, materialPreset, nativeProps, hatchGrammar, hatchDirection, modeParams } =
+    useCanvas3D();
   const { state: mods } = useF3RoughModifiers();
   const strokePoints = useMemo(() => strokes3d.map((s) => s.points), [strokes3d]);
-  // Live 2D Shading values → hatch/svg-port uniforms (one math, two
-  // renderers): the SAME F3RoughModifiers state the 2D pen reads. Memo keyed
-  // on the consumed fields only, so unrelated 2D toggles don't churn the prop.
+  // Live 2D Shading values → hatch/svg-port uniforms (one math, four
+  // renderers): the SAME F3RoughModifiers state the 2D pen reads + the Hatch
+  // STYLE toggles (grammar/direction, symmetry-law gap cell §1). Memo keyed on
+  // the consumed fields only, so unrelated 2D toggles don't churn the prop.
   const hatchInputs = useMemo<HatchInputs>(
     () => ({
       hachureGap: mods.hachureGap,
@@ -98,6 +100,8 @@ function DeskDoodlesCanvasPage() {
       fillStyle: mods.fillStyle,
       wobble: mods.wobble,
       fillOpacity: mods.fillOpacity,
+      grammar: hatchGrammar,
+      direction: hatchDirection,
     }),
     [
       mods.hachureGap,
@@ -107,6 +111,8 @@ function DeskDoodlesCanvasPage() {
       mods.fillStyle,
       mods.wobble,
       mods.fillOpacity,
+      hatchGrammar,
+      hatchDirection,
     ],
   );
   const [leftOpen, toggleLeft, setLeftOpen] = usePanelOpen('canvas.left');
@@ -342,6 +348,7 @@ function DeskDoodlesCanvasPage() {
                       geometryMode={geometryMode}
                       style3d={style3d}
                       materialPreset={materialPreset}
+                      nativeProps={nativeProps}
                       modeParams={modeParams}
                       hatchInputs={hatchInputs}
                       style={{ width: '100%', height: '100%' }}

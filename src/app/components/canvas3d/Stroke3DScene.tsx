@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
 import { ContactShadows, Environment, Lightformer, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import {
@@ -48,9 +48,17 @@ import {
   INK_3D_DEFAULT,
   MATERIAL_PARAMS_3D,
   MODE_MATERIAL_DEFAULTS_3D,
+  DEFAULT_NATIVE_PROPS_3D,
+  applyNativeProps,
   type MaterialPresetId,
+  type NativeProps3D,
 } from './materials3d';
-import { createHatchMaterial, updateHatchUniforms, type HatchInputs } from './hatchMaterial';
+import {
+  createHatchMaterial,
+  updateHatchUniforms,
+  updateHatchLightDir,
+  type HatchInputs,
+} from './hatchMaterial';
 
 // ─── Stroke3DScene — R3F scene for the stroke→3D round-trip ────────────────
 // Round-7 chrome-split build (docs/design/3d-mode-controls-spec.md): the scene
@@ -180,12 +188,18 @@ export function StudioRig() {
 
 /** Native preset → MeshPhysicalMaterial — EXPORTED factory so the material
  *  battery instantiates the EXACT product material (no harness re-typing of
- *  the param table). `inkColor` = the legacy explicit override prop. */
+ *  the param table). `inkColor` = the legacy explicit override prop.
+ *  `nativeProps` = the four PROPERTY dials (symmetry-law gap cell §2); when
+ *  omitted/neutral the preset params pass through unchanged (default-identity).
+ *  Reflection is HARD-bounded inside applyNativeProps — ink-black holds at
+ *  every dial position (be7aac7 policy). */
 export function createNativeMaterial(
   preset: MaterialPresetId,
   inkColor?: string,
+  nativeProps?: NativeProps3D,
 ): THREE.MeshPhysicalMaterial {
-  const p = MATERIAL_PARAMS_3D[preset];
+  const base = MATERIAL_PARAMS_3D[preset];
+  const p = nativeProps ? applyNativeProps(base, nativeProps) : base;
   return new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(inkColor ?? p.color),
     roughness: p.roughness,
@@ -395,6 +409,9 @@ export interface Stroke3DSceneProps {
   style3d?: 'native' | 'hatch' | 'svg-port';
   /** Native material preset. Default: FS per-mode default for geometryMode. */
   materialPreset?: MaterialPresetId;
+  /** Native PROPERTY dials (symmetry-law gap cell §2): polish/reflection/
+   *  sheen/outline. Default = neutral (preset passes through, no outline). */
+  nativeProps?: NativeProps3D;
   /** Per-mode param sets (spec §2). Default: the spec's tuned defaults. */
   modeParams?: Mode3DParams;
   /** Live 2D Shading-cluster values for hatch/svg-port (the scene only
@@ -435,6 +452,13 @@ function HatchUniformSync({
   useEffect(() => {
     updateHatchUniforms(material, variant, inputs, ink, paper, gl.getPixelRatio());
   }, [material, variant, inputs, ink, paper, gl]);
+  // Light-following + contour read the camera-relative light direction, which
+  // changes every orbit frame — push it per-frame (one matrix transform; for
+  // Fixed hachure the uniform is set but the shader ignores it, so this is
+  // harmless when light-following is off).
+  useFrame((s) => {
+    updateHatchLightDir(material, s.camera.matrixWorldInverse);
+  });
   return null;
 }
 
@@ -450,6 +474,7 @@ function StrokeMeshes({
   modeParams,
   showEdges,
   edgeColor,
+  outlineWidth = 0,
   treatAsClosedBySig,
 }: {
   strokes: StrokeInputPoint[][];
@@ -459,6 +484,8 @@ function StrokeMeshes({
   modeParams: Mode3DParams;
   showEdges: boolean;
   edgeColor: string;
+  /** Native OUTLINE dial → inverted-hull silhouette weight (0 = off). */
+  outlineWidth?: number;
   /** ARROW RULE chip overrides, keyed by strokeSignature (auto mode only). */
   treatAsClosedBySig?: Record<string, boolean>;
 }) {
@@ -607,10 +634,46 @@ function StrokeMeshes({
     return { center, radius, minY: min.y };
   }, [builds]);
 
+  // Native OUTLINE: inverted-hull material — backfaces pushed out along the
+  // normal by (outlineWidth × radius-scaled amount), flat ink. Push is in
+  // world units scaled by the pool radius so the silhouette weight reads the
+  // same regardless of object scale; depthWrite off so it never z-fights the
+  // body. 0 = no hull at all (default — byte-identical default render).
+  const outlinePush = outlineWidth > 0 && bounds ? outlineWidth * 0.04 * Math.max(bounds.radius, 0.5) : 0;
+  const hullMaterial = useMemo<THREE.ShaderMaterial | null>(() => {
+    if (outlinePush <= 0) return null;
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        u_push: { value: outlinePush },
+        u_ink: { value: new THREE.Color(edgeColor) },
+      },
+      vertexShader: /* glsl */ `
+        uniform float u_push;
+        void main() {
+          vec3 p = position + normal * u_push;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 u_ink;
+        void main() { gl_FragColor = vec4(u_ink, 1.0); }
+      `,
+      side: THREE.BackSide,
+      depthWrite: false,
+    });
+  }, [outlinePush, edgeColor]);
+  useEffect(() => {
+    return () => {
+      if (hullMaterial) hullMaterial.dispose();
+    };
+  }, [hullMaterial]);
+
   return (
     <group>
       {builds.map((b, i) => (
         <group key={i}>
+          {/* Native OUTLINE — inverted-hull backface pass UNDER the body. */}
+          {hullMaterial && <mesh geometry={b.geometry} material={hullMaterial} />}
           <mesh geometry={b.geometry} material={material} />
           {showEdges && edges[i] && (
             <lineSegments geometry={edges[i]} material={edgeMaterial} />
@@ -659,6 +722,7 @@ export function Stroke3DScene({
   geometryMode = 'auto',
   style3d = 'native',
   materialPreset,
+  nativeProps = DEFAULT_NATIVE_PROPS_3D,
   modeParams = DEFAULT_MODE3D_PARAMS,
   hatchInputs = DEFAULT_HATCH_INPUTS,
   background,
@@ -712,12 +776,23 @@ export function Stroke3DScene({
     setTreatAsClosedBySig((prev) => ({ ...prev, [sig]: !resolvedSolid }));
   };
 
-  // ── Native: FS preset MeshPhysicalMaterial (materials3d.ts, verbatim) ──
+  // ── Native: FS preset MeshPhysicalMaterial (materials3d.ts, verbatim) +
+  // the four PROPERTY dials (symmetry-law gap cell §2). Neutral dials =
+  // preset params unchanged; Reflection is hard-bounded (ink-black holds). ──
   const preset: MaterialPresetId = materialPreset ?? MODE_MATERIAL_DEFAULTS_3D[geometryMode];
-  const nativeMaterial = useMemo(() => createNativeMaterial(preset, inkColor), [preset, inkColor]);
+  const nativeMaterial = useMemo(
+    () => createNativeMaterial(preset, inkColor, nativeProps),
+    [preset, inkColor, nativeProps],
+  );
   useEffect(() => {
     return () => nativeMaterial.dispose();
   }, [nativeMaterial]);
+
+  // Native OUTLINE dial → inverted-hull silhouette in ink (the drawn edge
+  // weight on the form). 0 = off (default → no overlay → byte-identical
+  // default Native render). The hull pushes backfaces out along the normal,
+  // so weight reads even on non-spherical forms and scales with the object.
+  const outlineWidth = style3d === 'native' ? nativeProps.outline : 0;
 
   // ── Hatch / SVG-port: the band-quantized ShaderMaterial (one instance,
   // uniforms updated live — slider moves re-hatch without rebuilds). ──
@@ -763,6 +838,7 @@ export function Stroke3DScene({
         modeParams={modeParams}
         showEdges={style3d === 'svg-port'}
         edgeColor={ink}
+        outlineWidth={outlineWidth}
         treatAsClosedBySig={treatAsClosedBySig}
       />
       <OrbitControls makeDefault enableDamping />

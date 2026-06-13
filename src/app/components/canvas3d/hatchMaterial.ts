@@ -35,6 +35,42 @@ import { bandTableForUniforms } from '../../lib/smart/coverage';
 
 export type HatchVariant = 'hatch' | 'svg-port';
 
+// ─── HATCH STYLE TOGGLES (ratified symmetry law gap cell §1) ────────────────
+// The Hatch node was sliders-only; the law gives it BOTH a discrete STYLE set
+// AND its continuous PROPERTY set. The grammar + direction discretes live here.
+//
+// ONE MATH, TWO (now FOUR) RENDERERS: every grammar reads the SAME band/layers
+// off the shared COVERAGE_BANDS lambert quantization — a band-5 region is
+// equally DARK in Hachure, Cross-hatch, Stipple and Contour. Only the MARK
+// SHAPE differs (parallel lines · crossed lines · dots · curvature-following
+// lines). The darkness is the band; the grammar is how the band is inked.
+
+/** Discrete MARK GRAMMAR (Hatch variant). One band, four mark shapes. */
+export type HatchGrammar = 'hachure' | 'cross-hatch' | 'stipple' | 'contour';
+
+/** Discrete DIRECTION MODE (Hatch variant). Fixed = the angle slider drives
+ *  the mark direction (current behavior). Light-following = marks orient off
+ *  the rig's light direction in screen space, so they re-orient as the camera
+ *  orbits (a different read at every viewing angle). */
+export type HatchDirection = 'fixed' | 'light';
+
+/** Grammar → shader int. Hachure/cross-hatch/stipple reuse the proven fill
+ *  modes 0/1/2; Contour is the new mode 8 (curvature-following, needs the
+ *  view-normal — see the fragment shader). */
+export function hatchGrammarToMode(grammar: HatchGrammar): number {
+  switch (grammar) {
+    case 'cross-hatch':
+      return 1;
+    case 'stipple':
+      return 2;
+    case 'contour':
+      return 8;
+    case 'hachure':
+    default:
+      return 0;
+  }
+}
+
 /** Live inputs from the 2D chrome (the scene copies these into uniforms in an
  *  effect — slider moves re-hatch without geometry rebuilds). */
 export type HatchInputs = {
@@ -52,6 +88,10 @@ export type HatchInputs = {
   wobble?: number;
   /** SVG-port only: m.fillOpacity (0–1) — scales mark ink. */
   fillOpacity?: number;
+  /** Hatch variant only: discrete MARK GRAMMAR (default 'hachure' = current). */
+  grammar?: HatchGrammar;
+  /** Hatch variant only: discrete DIRECTION MODE (default 'fixed' = current). */
+  direction?: HatchDirection;
 };
 
 /** Screen-px calibration: 2D hachureGap is SVG-px inside an ~800px viewBox
@@ -86,8 +126,10 @@ export function fillStyleToMode(fillStyle: string | undefined): number {
 
 const VERTEX = /* glsl */ `
 varying vec3 vWorldNormal;
+varying vec3 vViewNormal;  // view-space normal — drives light-following + contour
 void main() {
   vWorldNormal = normalize(mat3(modelMatrix) * normal);
+  vViewNormal = normalize(normalMatrix * normal);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -96,16 +138,19 @@ void main() {
 // positions, normalized) + ambient floor — deterministic, no scene queries.
 const FRAGMENT = /* glsl */ `
 varying vec3 vWorldNormal;
+varying vec3 vViewNormal;
 uniform vec3 u_bands[8];      // [darknessMin, darknessMax, tamLayers] — coverage.ts verbatim
 uniform float u_gapPx;        // hachure gap, device px
-uniform float u_angleRad;     // hachure angle
+uniform float u_angleRad;     // hachure angle (Fixed direction mode)
 uniform float u_weightPx;     // line half-thickness, device px
 uniform float u_inkIntensity; // 0..1
 uniform vec3 u_ink;
 uniform vec3 u_paper;
-uniform int u_fillMode;       // 0 hachure · 1 cross-hatch · 2 dots · 3 zigzag · 4 dashed · 5 zigzag-line · 6 solid · 7 none
+uniform int u_fillMode;       // 0 hachure · 1 cross-hatch · 2 dots · 3 zigzag · 4 dashed · 5 zigzag-line · 6 solid · 7 none · 8 contour
 uniform float u_wobblePx;     // svg-port mark bend amplitude, device px
 uniform float u_markOpacity;  // svg-port fillOpacity (1.0 for hatch variant)
+uniform int u_directionMode;  // 0 fixed (angle slider) · 1 light-following
+uniform vec3 u_lightDirView;  // rig key light direction in VIEW space (light-following)
 
 // Distance-to-line-set mask: lines run along x at spacing 'gap'.
 float lineMask(vec2 p, float gap, float halfW) {
@@ -154,9 +199,30 @@ void main() {
     }
   }
 
+  // ── Mark direction: the DIRECTION MODE + CONTOUR grammar decide the angle ──
+  // Default: u_angleRad (Fixed direction mode, the angle slider).
+  float markAngle = u_angleRad;
+  if (u_directionMode == 1) {
+    // Light-following: marks run ACROSS the light gradient (perpendicular to
+    // the screen-projected key light), so they re-orient as the camera orbits.
+    // u_lightDirView is in view space; its xy projects to screen. atan gives
+    // the light's screen bearing; +90° (the .yx swizzle with sign) runs the
+    // marks across it — the classic NPR "hatch follows shading" read.
+    vec2 lvxy = u_lightDirView.xy;
+    if (length(lvxy) > 1e-4) markAngle = atan(lvxy.x, lvxy.y);
+  }
+  if (u_fillMode == 8) {
+    // Contour grammar: marks follow the FORM, not a global angle. The view-
+    // space normal's xy is the screen-projected surface gradient; running marks
+    // ALONG it (atan of yx) makes lines wrap around curvature — dense where the
+    // form turns toward silhouette, the cross-contour read. Falls back to the
+    // direction-mode angle on flat camera-facing faces (xy ≈ 0).
+    vec2 nvxy = vViewNormal.xy;
+    if (length(nvxy) > 1e-3) markAngle = atan(nvxy.y, nvxy.x);
+  }
   // Rotated screen-space mark coordinate (gl_FragCoord is device px).
-  float c = cos(u_angleRad);
-  float s = sin(u_angleRad);
+  float c = cos(markAngle);
+  float s = sin(markAngle);
   vec2 p = mat2(c, -s, s, c) * gl_FragCoord.xy;
   // SVG-port wobble: deterministic low-frequency bend along the mark direction.
   p.y += sin(p.x * 0.045) * u_wobblePx;
@@ -233,6 +299,8 @@ export function createHatchMaterial(variant: HatchVariant): THREE.ShaderMaterial
       u_fillMode: { value: 0 },
       u_wobblePx: { value: 0.0 },
       u_markOpacity: { value: 1.0 },
+      u_directionMode: { value: 0 },
+      u_lightDirView: { value: new THREE.Vector3(0, 0, 1) },
     },
     name: variant === 'hatch' ? 'dd-hatch' : 'dd-svg-port',
   });
@@ -270,11 +338,31 @@ export function updateHatchUniforms(
     u.u_fillMode.value = fillStyleToMode(inputs.fillStyle);
     u.u_wobblePx.value = (inputs.wobble ?? 0) * 2.2 * pixelRatio;
     u.u_markOpacity.value = inputs.fillOpacity ?? 1.0;
+    // SVG-port keeps the 2D angle slider (no light-following) — its grammar
+    // comes from fillStyle, not the Hatch grammar pills.
+    u.u_directionMode.value = 0;
   } else {
-    // Hatch variant: hachure grammar with TAM stacking, no wobble — the
-    // Shading cluster is its whole control surface (D-4 interim contract).
-    u.u_fillMode.value = 0;
+    // Hatch variant: the STYLE toggles (grammar + direction) now drive it
+    // alongside the Shading cluster sliders. Default grammar 'hachure' +
+    // direction 'fixed' = the pre-law behavior exactly (mode 0, dir 0).
+    u.u_fillMode.value = hatchGrammarToMode(inputs.grammar ?? 'hachure');
     u.u_wobblePx.value = 0;
     u.u_markOpacity.value = 1.0;
+    u.u_directionMode.value = (inputs.direction ?? 'fixed') === 'light' ? 1 : 0;
   }
+}
+
+/** Push the rig key light into the shader in VIEW space (light-following needs
+ *  the screen-projected light, which depends on the camera). Called per-frame
+ *  by the scene's uniform sync — cheap (one matrix transform). The world key
+ *  direction mirrors the Stroke3DScene rig (directionalLight at 5,8,5). */
+export function updateHatchLightDir(
+  mat: THREE.ShaderMaterial,
+  viewMatrix: THREE.Matrix4,
+): void {
+  const worldKey = new THREE.Vector3(5, 8, 5).normalize();
+  // Transform DIRECTION by the view matrix's rotation only (w=0 → no
+  // translation). transformDirection handles the upper-3x3 + renormalize.
+  const viewDir = worldKey.clone().transformDirection(viewMatrix);
+  (mat.uniforms.u_lightDirView.value as THREE.Vector3).copy(viewDir);
 }

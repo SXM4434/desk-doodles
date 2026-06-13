@@ -18,7 +18,7 @@ Everything parked for your call, in one place so nothing's forgotten. Grouped: q
 ## C. Strategy / your-side actions
 - [ ] **Make checkpoint #2** (your-side: you run Make uploads) — full current code → Make → publish. Gates the live URL + working-file link + makes the Make-version the public repo. Claude preps the clean file list + importability re-check + upload prompt.
 - [ ] **Push origin/main?** — ~31 commits unpushed. Entangled with the Make-repo plan: do we also push this local repo, or is the public/submission repo the Make version only? Your call.
-- [ ] **Figma Agent access?** — do you have the beta? If yes, Agent goes back into the workflow story; if no, it stays stripped (Make+Weave+MCP/Local still qualifies).
+- [x] **Figma Agent access — CONFIRMED (Sebs has the beta, 2026-06-13).** Agent goes back into the workflow story as the 5th suite tool (strengthens Innovative-Workflow criterion #4). ⚠️ HONESTY: must actually USE Agent on real work (the Community Figma file / the intro graphic / video design assets — things we're doing anyway) so "built across Make+MCP+Local+Weave+Agent" is TRUE, not just "we have access." Reintegration across narrative docs is QUEUED (fires when the doc-editing fleet lands).
 - [ ] **Identity / 06-16 pass** — the own design+motion language pass (design decision, comes to you).
 - [ ] **First-visit intro animation** — your Weave creative direction (not auto-built so it doesn't clash with your aesthetic).
 

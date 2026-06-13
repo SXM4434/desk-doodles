@@ -160,6 +160,132 @@ export const MATERIAL_PARAMS_3D: Record<MaterialPresetId, MaterialParams3D> = {
   },
 };
 
+// ─── NATIVE PROPERTY TOGGLES (ratified symmetry law gap cell §2) ────────────
+// The Native node was presets-only; the law gives it BOTH its discrete STYLE
+// set (the 6 material presets) AND a continuous PROPERTY set. Four dials, each
+// shaping how LIGHT sits — never color. INK-BLACK HOLDS AT EVERY DIAL POSITION
+// (the ratified policy, be7aac7): no dial touches `color`, and Reflection is
+// HARD-BOUNDED so it can never re-introduce the warm-tan band.
+//
+// These modulate the chosen preset's surface params (the preset is the base
+// "look", the dials nudge it) — so a glossy preset + low Polish reads
+// different from a matte preset + high Polish, but BOTH stay ink-black.
+
+export type NativeProps3D = {
+  /** Polish — highlight tightness, mirror (1) ↔ diffuse (0). Drives clearcoat
+   *  + clearcoatRoughness + a touch of base roughness. Default 0.5 = neutral
+   *  (the preset's own values pass through unchanged at 0.5). */
+  polish: number;
+  /** Reflection — environment reflection amount (0..1). BOUNDED: maps to
+   *  envMapIntensity in [0, REFLECTION_CEIL]. The ceiling is the
+   *  glossyPlastic value already battery-proven tan-dead at 72/72 (be7aac7) —
+   *  even at MAX the dark warm-graphite env stays ink-black. Default 0.5 =
+   *  neutral (preset's own envMapIntensity passes through). */
+  reflection: number;
+  /** Sheen — satin grazing glow (0..1). Drives the sheen channel with the
+   *  warm-graphite sheen register (never floods to beige). Default 0.5 =
+   *  neutral (preset's own sheen passes through). */
+  sheen: number;
+  /** Outline — drawn ink edge weight on the form (0 = off). The scene renders
+   *  an EdgesGeometry overlay in ink at this line width. Default 0 = off
+   *  (today's Native render = no outline → byte-identical default). */
+  outline: number;
+};
+
+/** Native dials at neutral — defaults render the preset EXACTLY as today
+ *  (polish/reflection/sheen at 0.5 pass the preset params through unchanged;
+ *  outline 0 = no edge overlay). */
+export const DEFAULT_NATIVE_PROPS_3D: NativeProps3D = {
+  polish: 0.5,
+  reflection: 0.5,
+  sheen: 0.5,
+  outline: 0.0,
+};
+
+/** Reflection HARD CEILING — the glossyPlastic envMapIntensity (1.8), the
+ *  exact value the be7aac7 battery proved tan-dead at 72/72. Reflection MAX
+ *  can never exceed this, so the dial can never reflect the env harder than
+ *  the already-proven-safe glossy slab. The env itself is ink-family
+ *  (#211e1a), so this is belt-and-suspenders. */
+export const REFLECTION_CEIL = 1.8;
+
+/** Apply the four Native dials onto a preset's surface params. PURE (plain
+ *  numbers in/out, no three) — the scene turns the result into the material.
+ *  NEVER touches color/sheenColor/emissive hue — only how light sits.
+ *
+ *  At all-neutral (polish/reflection/sheen = 0.5) the returned params equal
+ *  the preset's own values EXACTLY (the default-identity guarantee). */
+export function applyNativeProps(
+  base: MaterialParams3D,
+  props: NativeProps3D,
+): MaterialParams3D {
+  const polish = clamp01(props.polish);
+  const reflection = clamp01(props.reflection);
+  const sheen = clamp01(props.sheen);
+
+  // Polish: 0.5 = identity. Below → diffuse (raise roughnesses); above →
+  // mirror (drop clearcoatRoughness + base roughness). Polish owns the
+  // highlight TIGHTNESS (roughness channels); Reflection owns the AMOUNT
+  // (reflectivity + clearcoat presence) — orthogonal levers. Scaled around 0.5
+  // so the preset value is untouched at neutral.
+  const polishDelta = (polish - 0.5) * 2.0; // −1..+1
+  const clearcoatRoughness = clampUnit(
+    base.clearcoatRoughness - polishDelta * 0.5 * (polishDelta > 0 ? base.clearcoatRoughness : (1 - base.clearcoatRoughness)),
+  );
+  const roughness = clampUnit(
+    base.roughness - polishDelta * (polishDelta > 0 ? base.roughness : (1 - base.roughness)) * 0.3,
+  );
+
+  // Reflection: how much environment/specular the surface bounces. 0.5 = the
+  // preset's own values (identity). The VISIBLE lever is `reflectivity` (the
+  // dielectric specular F0) + `clearcoat` presence — the de-saturated graphite
+  // <Environment> is so dark that envMapIntensity alone moves nothing (measured:
+  // Δ0 px across all presets), so envMapIntensity rides along bounded but the
+  // reflectivity/clearcoat lift is what the eye reads. Below 0.5 → toward matte
+  // (drop reflectivity + clearcoat); above 0.5 → toward mirror (lift them).
+  // TAN BOUND: the env stays ink-family (#211e1a) AND envMapIntensity is hard-
+  // capped at REFLECTION_CEIL, so stronger reflection can never mirror a warm
+  // band — proven by the battery's tan re-assert at reflection MAX.
+  const refDelta = (reflection - 0.5) * 2.0; // −1..+1
+  const reflectivity = clampUnit(
+    base.reflectivity + refDelta * (refDelta > 0 ? (1 - base.reflectivity) : base.reflectivity),
+  );
+  const reflClearcoat = clampUnit(
+    base.clearcoat + (refDelta > 0 ? refDelta * (1 - base.clearcoat) * 0.5 : refDelta * base.clearcoat * 0.5),
+  );
+  const envMapIntensity =
+    reflection <= 0.5
+      ? (reflection / 0.5) * base.envMapIntensity
+      : base.envMapIntensity + ((reflection - 0.5) / 0.5) * (REFLECTION_CEIL - base.envMapIntensity);
+  const envMapIntensityBounded = Math.min(Math.max(envMapIntensity, 0), REFLECTION_CEIL);
+
+  // Sheen: 0.5 = preset's own sheen. Below → toward 0, above → toward 1. Keep
+  // the warm-graphite sheenColor register (or upgrade #000000 presets to it
+  // when the dial lifts sheen, so the satin glow has a register to use).
+  const sheenAmt =
+    sheen <= 0.5 ? (sheen / 0.5) * base.sheen : base.sheen + ((sheen - 0.5) / 0.5) * (1 - base.sheen);
+  const sheenColor =
+    sheenAmt > 0.001 && base.sheenColor === '#000000' ? SHEEN_GRAPHITE : base.sheenColor;
+
+  return {
+    ...base,
+    roughness,
+    clearcoat: reflClearcoat,
+    clearcoatRoughness,
+    reflectivity,
+    sheen: clampUnit(sheenAmt),
+    sheenColor,
+    envMapIntensity: envMapIntensityBounded,
+  };
+}
+
+function clamp01(v: number): number {
+  return Math.min(Math.max(v, 0), 1);
+}
+function clampUnit(v: number): number {
+  return Math.min(Math.max(v, 0), 1);
+}
+
 /** FS MODE_MATERIAL_DEFAULTS verbatim — applied only while the user has NOT
  *  explicitly picked a material (materialUserOverride false). A user pick
  *  always wins; geometry is never touched by this map (I-1 spirit in FS's own

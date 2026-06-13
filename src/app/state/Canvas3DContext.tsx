@@ -10,8 +10,11 @@ import {
 } from '../components/canvas3d/modeParams';
 import {
   MODE_MATERIAL_DEFAULTS_3D,
+  DEFAULT_NATIVE_PROPS_3D,
   type MaterialPresetId,
+  type NativeProps3D,
 } from '../components/canvas3d/materials3d';
+import type { HatchGrammar, HatchDirection } from '../components/canvas3d/hatchMaterial';
 
 // Canvas 3D controls — geometry mode + 3D style + per-mode param sets.
 //
@@ -65,6 +68,29 @@ export const STYLE3D_OPTIONS: Style3DMeta[] = [
   },
 ];
 
+// ─── HATCH STYLE TOGGLES (symmetry-law gap cell §1) ─────────────────────────
+// The Hatch node's discrete STYLE set: MARK GRAMMAR + DIRECTION MODE. Both
+// feed the SAME band-quantized coverage math as the sliders (one math, four
+// renderers). Defaults (hachure / fixed) = the pre-law behavior exactly.
+
+export type HatchGrammarMeta = { id: HatchGrammar; label: string; detail: string };
+export type HatchDirectionMeta = { id: HatchDirection; label: string; detail: string };
+
+/** MARK GRAMMAR pills — locked order, all four real (no stubs). */
+export const HATCH_GRAMMAR_OPTIONS: HatchGrammarMeta[] = [
+  { id: 'hachure', label: 'Hachure', detail: 'Parallel lines — the current grammar.' },
+  { id: 'cross-hatch', label: 'Cross-hatch', detail: 'A second crossed layer; darker bands earn the cross.' },
+  { id: 'stipple', label: 'Stipple', detail: 'Dots; density from the same band table.' },
+  { id: 'contour', label: 'Contour', detail: 'Lines following the form curvature.' },
+];
+
+/** DIRECTION MODE pills — Fixed keeps the angle slider; Light-following
+ *  orients marks off the light, re-orienting as you orbit. */
+export const HATCH_DIRECTION_OPTIONS: HatchDirectionMeta[] = [
+  { id: 'fixed', label: 'Fixed angle', detail: 'The angle slider drives the marks (current).' },
+  { id: 'light', label: 'Light-following', detail: 'Marks orient off the light, shifting as you orbit.' },
+];
+
 export type GeometryModeMeta = {
   id: GeometryModeSetting;
   label: string;
@@ -92,6 +118,15 @@ type Ctx = {
   setMaterialPreset: (m: MaterialPresetId) => void;
   /** True once the user explicitly picked a material. */
   materialUserOverride: boolean;
+  /** Native PROPERTY dials (symmetry-law gap cell §2) — polish/reflection/
+   *  sheen/outline. Reflection is bounded so ink-black always holds. */
+  nativeProps: NativeProps3D;
+  setNativeProps: (p: Partial<NativeProps3D>) => void;
+  /** Hatch discrete STYLE set (symmetry-law gap cell §1). */
+  hatchGrammar: HatchGrammar;
+  setHatchGrammar: (g: HatchGrammar) => void;
+  hatchDirection: HatchDirection;
+  setHatchDirection: (d: HatchDirection) => void;
   /** Per-geometry-mode param sets (spec §2 — full, never trimmed). */
   modeParams: Mode3DParams;
   setRodParams: (p: Partial<RodParams3D>) => void;
@@ -114,6 +149,12 @@ const UNPROVIDED_DEFAULTS: Ctx = {
   materialPreset: MODE_MATERIAL_DEFAULTS_3D.auto,
   setMaterialPreset: () => {},
   materialUserOverride: false,
+  nativeProps: DEFAULT_NATIVE_PROPS_3D,
+  setNativeProps: () => {},
+  hatchGrammar: 'hachure',
+  setHatchGrammar: () => {},
+  hatchDirection: 'fixed',
+  setHatchDirection: () => {},
   modeParams: DEFAULT_MODE3D_PARAMS,
   setRodParams: () => {},
   setExtrudeParams: () => {},
@@ -125,6 +166,9 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
   const [geometryMode, setGeometryModeRaw] = useState<GeometryModeSetting>('auto');
   const [style3d, setStyle3d] = useState<Style3D>('native');
   const [materialPick, setMaterialPick] = useState<MaterialPresetId | null>(null); // null = no override
+  const [nativeProps, setNativePropsState] = useState<NativeProps3D>(DEFAULT_NATIVE_PROPS_3D);
+  const [hatchGrammar, setHatchGrammar] = useState<HatchGrammar>('hachure');
+  const [hatchDirection, setHatchDirection] = useState<HatchDirection>('fixed');
   const [modeParams, setModeParams] = useState<Mode3DParams>(DEFAULT_MODE3D_PARAMS);
 
   // FS materialUserOverride semantics: mode switches re-default the material
@@ -139,6 +183,10 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const materialPreset = materialPick ?? MODE_MATERIAL_DEFAULTS_3D[geometryMode];
+
+  const setNativeProps = useCallback((p: Partial<NativeProps3D>) => {
+    setNativePropsState((prev) => ({ ...prev, ...p }));
+  }, []);
 
   const setRodParams = useCallback((p: Partial<RodParams3D>) => {
     setModeParams((prev) => ({ ...prev, rod: { ...prev.rod, ...p } }));
@@ -162,6 +210,12 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
       materialPreset,
       setMaterialPreset,
       materialUserOverride: materialPick !== null,
+      nativeProps,
+      setNativeProps,
+      hatchGrammar,
+      setHatchGrammar,
+      hatchDirection,
+      setHatchDirection,
       modeParams,
       setRodParams,
       setExtrudeParams,
@@ -175,6 +229,10 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
       materialPreset,
       setMaterialPreset,
       materialPick,
+      nativeProps,
+      setNativeProps,
+      hatchGrammar,
+      hatchDirection,
       modeParams,
       setRodParams,
       setExtrudeParams,
