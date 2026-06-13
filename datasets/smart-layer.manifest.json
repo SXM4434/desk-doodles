@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "dataset": "datasets/smart-layer.dataset.jsonl",
+  "dedupeKey": "exampleId",
+  "exampleCount": 1394,
+  "highWaterIngestIndex": 1393,
+  "groundTruthCount": 1394,
+  "countsBySource": {
+    "golden": 1394
+  },
+  "countsByLabelKind": {
+    "role": 1394
+  },
+  "countsByRegime": {
+    "canonical-eps3": 1394
+  },
+  "countsByRenderSurface": {
+    "audit": 1394
+  },
+  "lastFeedSources": [
+    "golden"
+  ],
+  "lastFeedCapturedAt": "2026-06-13T00:00:00Z"
+}
