@@ -66,6 +66,12 @@ export const KNOWN_SOURCES = new Set([
   // A fidelity-class verdict (mechanical, not human) — the regression gate the
   // ~1fps@120 alarm + the wall-of-doodles headline had been missing.
   'desk-perf', // tools/desk/populated-desk-battery.mjs (perf-report.json)
+  // OFAT (one-factor-at-a-time) audit sweeps — the TOGGLE-AWARE fidelity stream.
+  // Distinct from fidelity-2d/3d: those keyed on (shape, style) and COLLAPSED
+  // the toggle dimension on the region key — every (object × style × toggle ×
+  // level) cell here is its own example so the toggle axis survives dedupe.
+  'ofat-2d', // ofat-2d-live-findings.json rows (live /audit OFAT cell matrix)
+  'ofat-3d', // ofat-3d-toggle-findings.json rows (3D conversion OFAT matrix)
 ]);
 
 const KNOWN_LABEL_KINDS = new Set(['role', 'correct-or-not', 'treatment', 'fidelity']);
@@ -390,6 +396,143 @@ export function fidelity3dRecordToExample(r, idx) {
     },
     // gauntlet runs the conversion engine at its canonical RDP epsilon.
     regime: { ...CANONICAL_REGIME },
+  };
+}
+
+// ─── OFAT verdict normalization ──────────────────────────────────────────────
+// The OFAT sweeps emit UPPERCASE verdicts (OK / BLANK / FLOOD / DARKBLOB /
+// OVERFLOW / BROKEN / CONSOLE) plus the 3D 'clean' verdict and per-cell
+// autoFlags. Fold them to the dataset's lowercase fidelity label vocabulary
+// (ok / blank / flood / darkblob / overflow / broke), never inventing a verdict
+// the source didn't emit.
+function normalizeOfatVerdict(raw) {
+  const v = String(raw ?? '').toLowerCase().trim();
+  if (!v) return 'ok';
+  if (v === 'clean' || v === 'ok' || v === 'pass') return 'ok';
+  if (v === 'blank' || v === 'empty') return 'blank';
+  if (v === 'flood') return 'flood';
+  if (v === 'darkblob' || v === 'dark-blob' || v === 'black-blob') return 'darkblob';
+  if (v === 'overflow') return 'overflow';
+  if (v === 'broken' || v === 'broke' || v === 'fail' || v === 'error' || v === 'console') return 'broke';
+  return v; // pass through any future verdict verbatim rather than guess
+}
+
+/**
+ * Resolve the S11 regime for an OFAT cell. These findings files do NOT record an
+ * epsilon in their content (verified: no `epsilon`/`regime`/`rdp` keys), so the
+ * HONEST default is UNKNOWN — never silently stamped canonical (the whole point
+ * of S11). An operator who KNOWS a given run is the canonical /audit catalog
+ * (ε=3.0, polyAnchorCap=8) can assert it via `--ofat-*-regime canonical-eps3`,
+ * and only THEN does it stamp canonical. A per-row `epsilon` (if a future
+ * sweep ever records one) wins over both.
+ */
+function resolveOfatRegime(row, assertCanonical) {
+  if (typeof row?.epsilon === 'number') {
+    return { epsilon: row.epsilon, polyAnchorCap: row.polyAnchorCap ?? null, label: `eps${row.epsilon}` };
+  }
+  if (assertCanonical) return { ...CANONICAL_REGIME };
+  return { ...UNKNOWN_REGIME }; // source can't state ε → honest unknown (S11)
+}
+
+/** 2D OFAT cell (ofat-2d-live-findings.json `rows[]` entry) → toggle-aware
+ *  'fidelity' example. ONE example per (object × style × toggle × level): the
+ *  exampleId carries the full OFAT coordinate so the toggle dimension does NOT
+ *  collapse on the region key (the bug this adapter closes — the region-keyed
+ *  fidelity-2d adapter folded every toggle of a shape into a single row).
+ *
+ *  Row shape (live OFAT 2D): {source,url,object,subjectId,style,toggle,level,
+ *  value,inkPct,darkPct,cleanDarkPct,edgePct,verdict}. The measured signals
+ *  (inkPct/darkPct/cleanDarkPct/edgePct) ride in features — the per-cell render
+ *  measurements the verdict was computed from. Mechanical verdict (pixel
+ *  thresholds), so isGroundTruth=false. */
+export function ofat2dRecordToExample(r, idx, { assertCanonical = false } = {}) {
+  // `subjectId` in this file is a COARSE theme group (only ~14 distinct, e.g.
+  // "nintendo" spans 18 objects); `object` (197 distinct) is the per-shape
+  // identity. The OFAT matrix is 102 cases × 197 OBJECTS = 20,094 cells, so the
+  // key MUST carry `object` or 197 shapes collapse to 14 (the very collapse this
+  // adapter exists to prevent). We thread BOTH — subjectId:object — so the theme
+  // grouping is preserved AND every (object × style × toggle × level) cell is a
+  // distinct example. (This is the intent the spec's exampleId sketch encoded;
+  // its literal `subjectId` slot assumed subjectId WAS per-shape, but the live
+  // file proves it isn't — the goal "~20,094 distinct, toggle never collapses"
+  // is the contract.)
+  const subjectId = r.subjectId ?? r.object ?? `idx${idx}`;
+  const object = r.object ?? subjectId;
+  const style = r.style ?? 'style';
+  const toggle = r.toggle ?? '(baseline)';
+  const level = r.level ?? 'default';
+  const features = { object: r.object ?? null, subjectId: r.subjectId ?? null, style, toggle, level };
+  if (r.value !== undefined) features.value = r.value;
+  if (typeof r.inkPct === 'number') features.inkPct = r.inkPct;
+  if (typeof r.darkPct === 'number') features.darkPct = r.darkPct;
+  if (typeof r.cleanDarkPct === 'number') features.cleanDarkPct = r.cleanDarkPct;
+  if (typeof r.edgePct === 'number') features.edgePct = r.edgePct;
+  return {
+    // TOGGLE-AWARE key: subjectId:object:style:toggle:level — distinct per OFAT
+    // cell so re-feeding updates in place but DIFFERENT objects/toggles/levels
+    // never collapse (the whole point — 20,094 distinct cells stay 20,094).
+    exampleId: `ofat-2d:${subjectId}:${object}:${style}:${toggle}:${level}`,
+    source: 'ofat-2d',
+    labelKind: 'fidelity',
+    label: normalizeOfatVerdict(r.verdict),
+    confidence: null,
+    rawScore: null,
+    margin: null,
+    firedRules: [],
+    classifiedBy: 'rules',
+    isGroundTruth: false, // pixel-threshold verdict, not human-blessed
+    svgHash: null, // OFAT findings carry no svgHash (object name is the address)
+    regionPath: r.object ?? subjectId, // the catalog object under test
+    renderSurface: 'audit', // the live /audit route (row.url is the /audit page)
+    features,
+    regime: resolveOfatRegime(r, assertCanonical),
+  };
+}
+
+/** 3D OFAT cell (ofat-3d-toggle-findings.json array entry) → toggle-aware
+ *  'fidelity' example. ONE example per (object × mode × toggle × level): the
+ *  exampleId carries the full OFAT coordinate (verified unique across the 954
+ *  rows) so the toggle dimension survives dedupe.
+ *
+ *  Row shape (3D OFAT): {object,role,mode,toggle,level,verdict,autoFlags,note,
+ *  stats:{front:{objFrac,blackFrac,spread,overflowEdge,delta}, q35:{...}}}. The
+ *  front + q35 stats + autoFlags + note ride in features. Mechanical/contact-
+ *  sheet verdict, so isGroundTruth=false. */
+export function ofat3dRecordToExample(r, idx, { assertCanonical = false } = {}) {
+  const object = r.object ?? `idx${idx}`;
+  const mode = r.mode ?? 'auto';
+  const toggle = r.toggle ?? '(baseline)';
+  const level = r.level ?? 'default';
+  return {
+    // TOGGLE-AWARE key: object:mode:toggle:level — distinct per OFAT cell.
+    exampleId: `ofat-3d:${object}:${mode}:${toggle}:${level}`,
+    source: 'ofat-3d',
+    labelKind: 'fidelity',
+    label: normalizeOfatVerdict(r.verdict),
+    confidence: null,
+    rawScore: null,
+    margin: null,
+    // autoFlags are the heuristic flags raised on the cell — provenance for why
+    // a verdict might have been challenged (a model can't reconstruct these).
+    firedRules: Array.isArray(r.autoFlags) ? r.autoFlags : [],
+    classifiedBy: 'rules',
+    isGroundTruth: false,
+    svgHash: null,
+    regionPath: object,
+    renderSurface: null, // 3D OFAT render surface unwired in the findings (G-10)
+    features: {
+      object,
+      role: r.role ?? null,
+      mode,
+      toggle,
+      level,
+      autoFlags: Array.isArray(r.autoFlags) ? r.autoFlags : [],
+      note: typeof r.note === 'string' ? r.note : null,
+      // the per-view measured stats the verdict was read against.
+      front: r.stats?.front ?? null,
+      q35: r.stats?.q35 ?? null,
+    },
+    regime: resolveOfatRegime(r, assertCanonical),
   };
 }
 

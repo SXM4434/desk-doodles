@@ -2,31 +2,32 @@
   "schemaVersion": 1,
   "dataset": "datasets/smart-layer.dataset.jsonl",
   "dedupeKey": "exampleId",
-  "exampleCount": 39199,
-  "highWaterIngestIndex": 39198,
+  "exampleCount": 60247,
+  "highWaterIngestIndex": 60246,
   "groundTruthCount": 1394,
   "countsBySource": {
     "golden": 1394,
     "fidelity-2d": 8245,
     "desk-perf": 7,
-    "fidelity-3d": 29553
+    "fidelity-3d": 29553,
+    "ofat-2d": 20094,
+    "ofat-3d": 954
   },
   "countsByLabelKind": {
     "role": 1394,
-    "fidelity": 37805
+    "fidelity": 58853
   },
   "countsByRegime": {
     "canonical-eps3": 30954,
-    "unknown": 8245
+    "unknown": 29293
   },
   "countsByRenderSurface": {
-    "audit": 9639,
+    "audit": 29733,
     "desk": 7,
-    "null": 29553
+    "null": 30507
   },
   "lastFeedSources": [
-    "fidelity-2d",
-    "fidelity-3d"
+    "ofat-3d"
   ],
-  "lastFeedCapturedAt": "2026-06-13T14:00:00Z"
+  "lastFeedCapturedAt": null
 }

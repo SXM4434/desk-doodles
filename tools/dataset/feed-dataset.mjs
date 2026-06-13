@@ -21,6 +21,19 @@
 //   --from-fidelity-2d <path>   fold a 2D audit-style-sweep results.json
 //                               (the breakage curriculum, stream 2).
 //   --from-fidelity-3d <path>   fold a geometry-gauntlet gauntlet-report.json.
+//   --from-ofat-2d <path>       fold a 2D OFAT live-findings.json (the
+//                               TOGGLE-AWARE fidelity stream: one example per
+//                               object×style×toggle×level cell — the toggle axis
+//                               that the region-keyed fidelity-2d adapter was
+//                               collapsing on dedupe).
+//   --from-ofat-3d <path>       fold a 3D OFAT toggle-findings.json (one example
+//                               per object×mode×toggle×level cell).
+//   --ofat-2d-regime <r>        OPTIONAL S11 regime assertion for --from-ofat-2d.
+//                               Pass 'canonical-eps3' ONLY when you KNOW the run
+//                               is the canonical /audit catalog (ε=3.0). The
+//                               findings file states no ε, so the default is the
+//                               honest 'unknown' — never silently canonical.
+//   --ofat-3d-regime <r>        same, for --from-ofat-3d.
 //   --from-shade-fill <path>    fold a saved __dd_shadeFillLog JSON export
 //                               (the 'shade-fill' tone-fill labels, rock F2).
 //   --from-shape-snap <path>    fold a saved __dd_shapeSnapLog JSON export
@@ -58,6 +71,8 @@ import {
   inputPickEntryToExample,
   fidelity2dRecordToExample,
   fidelity3dRecordToExample,
+  ofat2dRecordToExample,
+  ofat3dRecordToExample,
   shadeFillEntryToExample,
   shapeSnapEntryToExample,
   deskPerfReportToExamples,
@@ -74,6 +89,10 @@ function parseArgs(argv) {
     fromInputPick: null,
     fromFidelity2d: null,
     fromFidelity3d: null,
+    fromOfat2d: null,
+    fromOfat3d: null,
+    ofat2dRegime: null, // S11: only 'canonical-eps3' stamps canonical (opt-in)
+    ofat3dRegime: null,
     fromShadeFill: null,
     fromShapeSnap: null,
     fromDeskPerf: null,
@@ -89,6 +108,10 @@ function parseArgs(argv) {
     else if (k === '--from-input-pick') a.fromInputPick = argv[++i];
     else if (k === '--from-fidelity-2d') a.fromFidelity2d = argv[++i];
     else if (k === '--from-fidelity-3d') a.fromFidelity3d = argv[++i];
+    else if (k === '--from-ofat-2d') a.fromOfat2d = argv[++i];
+    else if (k === '--from-ofat-3d') a.fromOfat3d = argv[++i];
+    else if (k === '--ofat-2d-regime') a.ofat2dRegime = argv[++i];
+    else if (k === '--ofat-3d-regime') a.ofat3dRegime = argv[++i];
     else if (k === '--from-shade-fill') a.fromShadeFill = argv[++i];
     else if (k === '--from-shape-snap') a.fromShapeSnap = argv[++i];
     else if (k === '--from-desk-perf') a.fromDeskPerf = argv[++i];
@@ -217,6 +240,35 @@ function pullFidelity3d(p) {
   return rows.map((r, i) => fidelity3dRecordToExample(r, i));
 }
 
+// OFAT (one-factor-at-a-time) findings → toggle-aware fidelity examples. The 2D
+// file wraps its cells under `rows` (alongside `breaks`/`summary`); the 3D file
+// is a raw array. Both: ONE example per OFAT cell, exampleId carries the full
+// (object × … × toggle × level) coordinate so the toggle axis never collapses.
+function resolveOfatRegimeFlag(flag) {
+  if (flag == null) return { assertCanonical: false };
+  const f = String(flag).toLowerCase();
+  if (f === 'canonical-eps3' || f === 'canonical' || f === 'eps3') return { assertCanonical: true };
+  if (f === 'unknown') return { assertCanonical: false };
+  console.error(`Unknown --ofat-*-regime value: ${flag} (use 'canonical-eps3' or 'unknown')`);
+  process.exit(2);
+}
+
+function pullOfat2d(p, regimeFlag) {
+  const j = readJson(p);
+  const rows = Array.isArray(j) ? j : (j.rows ?? j.cells ?? j.findings ?? j.results ?? []);
+  const opts = resolveOfatRegimeFlag(regimeFlag);
+  console.log(`  ofat-2d: ${rows.length} cells${opts.assertCanonical ? ' (regime asserted canonical-eps3)' : ' (regime: unknown — file states no ε, S11 honest default)'}`);
+  return rows.map((r, i) => ofat2dRecordToExample(r, i, opts));
+}
+
+function pullOfat3d(p, regimeFlag) {
+  const j = readJson(p);
+  const rows = Array.isArray(j) ? j : (j.rows ?? j.cells ?? j.findings ?? j.results ?? []);
+  const opts = resolveOfatRegimeFlag(regimeFlag);
+  console.log(`  ofat-3d: ${rows.length} cells${opts.assertCanonical ? ' (regime asserted canonical-eps3)' : ' (regime: unknown — file states no ε, S11 honest default)'}`);
+  return rows.map((r, i) => ofat3dRecordToExample(r, i, opts));
+}
+
 // A __dd_shadeFillLog / __dd_shapeSnapLog export is a raw array (the get()
 // snapshot), or wrapped {entries|log:[...]}. Both pullers tolerate either, and
 // also a unified __dd_decisionLog export — they filter by entryType so a single
@@ -254,6 +306,7 @@ async function main() {
   const requested =
     !!args.fromGolden || args.fromAudit || !!args.fromConversion ||
     !!args.fromInputPick || !!args.fromFidelity2d || !!args.fromFidelity3d ||
+    !!args.fromOfat2d || !!args.fromOfat3d ||
     !!args.fromShadeFill || !!args.fromShapeSnap || !!args.fromDeskPerf;
   if (!requested) {
     console.error('No source flag given. See header for --from-* options.');
@@ -274,6 +327,8 @@ async function main() {
   if (args.fromInputPick) { batch = batch.concat(pullInputPick(args.fromInputPick)); feedingSources.push('input-pick'); }
   if (args.fromFidelity2d) { batch = batch.concat(pullFidelity2d(args.fromFidelity2d)); feedingSources.push('fidelity-2d'); }
   if (args.fromFidelity3d) { batch = batch.concat(pullFidelity3d(args.fromFidelity3d)); feedingSources.push('fidelity-3d'); }
+  if (args.fromOfat2d) { batch = batch.concat(pullOfat2d(args.fromOfat2d, args.ofat2dRegime)); feedingSources.push('ofat-2d'); }
+  if (args.fromOfat3d) { batch = batch.concat(pullOfat3d(args.fromOfat3d, args.ofat3dRegime)); feedingSources.push('ofat-3d'); }
   if (args.fromShadeFill) { batch = batch.concat(pullShadeFill(args.fromShadeFill)); feedingSources.push('shade-fill'); }
   if (args.fromShapeSnap) { batch = batch.concat(pullShapeSnap(args.fromShapeSnap)); feedingSources.push('shape-snap'); }
   if (args.fromDeskPerf) { batch = batch.concat(pullDeskPerf(args.fromDeskPerf)); feedingSources.push('desk-perf'); }
