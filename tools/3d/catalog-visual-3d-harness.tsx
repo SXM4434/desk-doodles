@@ -344,6 +344,36 @@ function VisMeshes({
 
   useEffect(() => () => { for (const b of builds) b.geometry.dispose(); }, [builds]);
 
+  // SOLID FACE-INK (RC-2 fix) — PORT of Stroke3DScene StrokeMeshes. The pool-
+  // raster Solid buries the interior hand into a featureless slab; we overlay
+  // the user's actual strokes as raised glossy-ink ridges proud of the front
+  // face so the hand survives into the solid. Solid mode only → null otherwise.
+  const solidFaceInk = useMemo<THREE.BufferGeometry[] | null>(() => {
+    if (state.geometryMode !== 'solid' || builds.length === 0) return null;
+    const mass = builds[0];
+    mass.geometry.computeBoundingBox();
+    const bb = mass.geometry.boundingBox;
+    if (!bb || !Number.isFinite(bb.max.z)) return null;
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES);
+    if (pool.length === 0) return null;
+    const center = poolCenter(pool, SCENE_VIEWBOX);
+    const lift = bb.max.z + params.rod.radius * 0.5;
+    const geoms: THREE.BufferGeometry[] = [];
+    for (const points of pool) {
+      const rod = buildStrokeWithParams(points, SCENE_VIEWBOX, center, 'rod', params);
+      rod.geometry.translate(0, 0, lift);
+      geoms.push(rod.geometry);
+    }
+    return geoms;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [builds, state.geometryMode, JSON.stringify(params)]);
+  useEffect(() => () => { if (solidFaceInk) for (const g of solidFaceInk) g.dispose(); }, [solidFaceInk]);
+  const faceInkMaterial = useMemo<THREE.MeshPhysicalMaterial | null>(
+    () => (state.geometryMode === 'solid' ? createNativeMaterial('glossyPlastic', INK_3D_DEFAULT) : null),
+    [state.geometryMode],
+  );
+  useEffect(() => () => faceInkMaterial?.dispose(), [faceInkMaterial]);
+
   // Materials.
   const nativeProps: NativeProps3D = { ...DEFAULT_NATIVE_PROPS_3D, ...(state.nativeProps ?? {}) };
   const preset: MaterialPresetId = state.materialPreset ?? MODE_MATERIAL_DEFAULTS_3D[state.geometryMode];
@@ -454,6 +484,13 @@ function VisMeshes({
           ))}
         </group>
       ))}
+      {solidFaceInk && faceInkMaterial && (
+        <group>
+          {solidFaceInk.map((g, i) => (
+            <mesh key={`faceink${i}`} geometry={g} material={faceInkMaterial} />
+          ))}
+        </group>
+      )}
     </group>
   );
 }

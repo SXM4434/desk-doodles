@@ -580,6 +580,63 @@ function StrokeMeshes({
     };
   }, [builds]);
 
+  // ── SOLID FACE-INK (RC-2 fix) ──────────────────────────────────────────────
+  // The pool-raster Solid merges EVERY stroke into ONE watertight silhouette
+  // mass — faithful to the OUTLINE, but it buries the drawing's interior hand
+  // into a featureless dark slab (the exhaustive audit's RC-2: 144/197 shapes).
+  // rod + inflate preserve the hand because they're per-stroke; Solid is
+  // pool-level by nature, so the fix is not topology — it's wearing the marks.
+  // The mass stays the BODY; we overlay the user's ACTUAL strokes as ink rods
+  // riding PROUD of the front face, so the hand survives into the solid ("the
+  // 3D wears your own marks", CLAUDE.md). Solid mode ONLY — every other mode
+  // returns null → byte-identical default render. The overlay rods are NOT in
+  // `builds`, so they take their own glossy-ink material (read on the matte
+  // mass), and never pick up the mass's EdgesGeometry / adornments / framing.
+  const solidFaceInk = useMemo<THREE.BufferGeometry[] | null>(() => {
+    if (geometryMode !== 'solid' || builds.length === 0) return null;
+    const mass = builds[0];
+    mass.geometry.computeBoundingBox();
+    const bb = mass.geometry.boundingBox;
+    if (!bb || !Number.isFinite(bb.max.z)) return null;
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES_3D);
+    if (pool.length === 0) return null;
+    const center = poolCenter(pool, viewBox);
+    // Raise the rod centerline ~half a radius above the front face so the marks
+    // sit PROUD as relief ridges (the lower arc still tucks into the mass, so
+    // they read as ink raised FROM the surface, not wires hovering over it).
+    // Relief + specular is how the hand reads at all under the ink-black-
+    // everything policy: same ink hue/value as the body, separated only by how
+    // the light sits on a raised glossy mark vs the flat matte mass.
+    const lift = bb.max.z + modeParams.rod.radius * 0.5;
+    const geoms: THREE.BufferGeometry[] = [];
+    for (const points of pool) {
+      const rod = buildStrokeWithParams(points, viewBox, center, 'rod', modeParams);
+      rod.geometry.translate(0, 0, lift);
+      geoms.push(rod.geometry);
+    }
+    return geoms;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [builds, key, paramsKey, geometryMode, viewBox.w, viewBox.h]);
+  useEffect(() => {
+    return () => {
+      if (solidFaceInk) for (const g of solidFaceInk) g.dispose();
+    };
+  }, [solidFaceInk]);
+  // Glossy-Plastic ink material for the face-ink rods — max clearcoat + low
+  // roughness so each raised mark catches a tight bright specular highlight,
+  // reading as wet ink against the matte-clay Solid body. Same ink hue/value as
+  // the body (ink-black policy holds); the SEPARATION is purely surface +
+  // relief + the light, never color. Solid mode only.
+  const faceInkMaterial = useMemo<THREE.MeshPhysicalMaterial | null>(
+    () => (geometryMode === 'solid' ? createNativeMaterial('glossyPlastic', edgeColor) : null),
+    [geometryMode, edgeColor],
+  );
+  useEffect(() => {
+    return () => {
+      if (faceInkMaterial) faceInkMaterial.dispose();
+    };
+  }, [faceInkMaterial]);
+
   // Debug introspection (window.__dd_decisionLog house pattern, QW-2): the
   // verify harness + future calibration sweeps read what the scene actually
   // built — no sampled claims, receipts from the live object.
@@ -587,6 +644,10 @@ function StrokeMeshes({
     (window as unknown as Record<string, unknown>).__dd3d = {
       geometryMode,
       paramsKey,
+      // RC-2 receipt: how many ink-hand rods the Solid body is wearing (0 for
+      // every non-solid mode). The verify harness reads this from the live
+      // object — no sampled claims.
+      solidFaceInkRods: solidFaceInk ? solidFaceInk.length : 0,
       rodFamilies: {
         capStyle: modeParams.rod.capStyle,
         jointStyle: modeParams.rod.jointStyle,
@@ -602,7 +663,7 @@ function StrokeMeshes({
               : { kind: b.kind },
       ),
     };
-  }, [builds, geometryMode, paramsKey, modeParams.rod]);
+  }, [builds, geometryMode, paramsKey, modeParams.rod, solidFaceInk]);
 
   // SVG-port ink outline: EdgesGeometry per mesh (30° crease threshold —
   // smooth tubes contribute almost nothing, slab rims read as drawn lines).
@@ -740,6 +801,16 @@ function StrokeMeshes({
           ))}
         </group>
       ))}
+      {/* SOLID FACE-INK (RC-2): the user's actual strokes as glossy-ink rods
+          riding proud of the matte Solid body — the hand survives into the
+          solid instead of being buried in a featureless slab. Solid mode only. */}
+      {solidFaceInk && faceInkMaterial && (
+        <group>
+          {solidFaceInk.map((g, i) => (
+            <mesh key={`faceink${i}`} geometry={g} material={faceInkMaterial} />
+          ))}
+        </group>
+      )}
       {/* Soft ground-contact shadow (rig adaptation for white paper). frames={1}
           bakes ONCE per mount = deterministic; the key remounts it whenever
           the strokes/mode/params (and therefore the geometry) change. */}
