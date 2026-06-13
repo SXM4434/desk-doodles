@@ -1637,6 +1637,25 @@ export function applyCandidate(
     if (Math.hypot(first[0] - last[0], first[1] - last[1]) > 1e-6) {
       pts.push([first[0], first[1], meanP]);
     }
+    // SEAM SEAL (Sebs 2026-06-13, verified visually): perfect-freehand renders a
+    // closed point-loop as an OPEN ribbon with a cap-GAP at the start/end — so a
+    // snapped circle/rect/triangle showed a visible seam even though the data was
+    // closed. Retrace a short run of the LEADING points so the end-cap overlaps
+    // the start arc → the shape renders SEALED. Length-based (density-independent)
+    // and capped to a small fraction of the loop so a tiny shape never overshoots
+    // into a tail.
+    let perim = 0;
+    for (let i = 1; i < pts.length; i++) {
+      perim += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    }
+    const overlapPx = Math.min(14, perim * 0.05);
+    const lead: StrokeInputPoint[] = [];
+    let acc = 0;
+    for (let i = 1; i < pts.length && acc < overlapPx; i++) {
+      acc += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      lead.push([pts[i][0], pts[i][1], meanP]);
+    }
+    pts.push(...lead);
   }
   return pts;
 }
