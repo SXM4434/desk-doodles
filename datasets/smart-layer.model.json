@@ -1,0 +1,207 @@
+{
+  "model": "smart-layer-region-role-classifier",
+  "modelType": "softmax-logistic-regression",
+  "version": 1,
+  "trainedAt": "2026-06-13T06:00:28.605Z",
+  "note": "First real trained model for the Desk Doodles smart layer. Predicts region role from (darknessL, log1p(area), fillStyle one-hot). Trained by minibatch SGD on golden role labels. Re-run tools/ml/train-region-classifier.mjs to refit as the dataset grows.",
+  "dataset": "datasets/smart-layer.dataset.jsonl",
+  "exampleCount": 1394,
+  "classes": [
+    "dense-tonal",
+    "label-text",
+    "line-decoration",
+    "paper",
+    "solid-content",
+    "structural-frame"
+  ],
+  "featureNames": [
+    "darknessL",
+    "log1pArea",
+    "fill=none",
+    "fill=solid",
+    "fill=hachure"
+  ],
+  "fillStyles": [
+    "none",
+    "solid",
+    "hachure"
+  ],
+  "standardizer": {
+    "mean": [
+      0.5175438596491229,
+      4.226587608308187,
+      0.6647173489278753,
+      0.08382066276803118,
+      0.25146198830409355
+    ],
+    "std": [
+      0.4999358110274052,
+      2.9205535406936,
+      0.4723194124186506,
+      0.27725382049218217,
+      0.434065081124089
+    ]
+  },
+  "weights": [
+    [
+      0.42193194573723614,
+      0.195447172205229,
+      -1.7633025311584853,
+      0.7389426655681878,
+      1.4467124069353936,
+      -0.291046765291294
+    ],
+    [
+      0.03286159411371479,
+      -1.576468579415855,
+      1.1520399630482205,
+      -0.6851528220371323,
+      -0.8159366332388681,
+      2.3021360253027616
+    ],
+    [
+      -0.6450548199453101,
+      -4.3185101019147,
+      0.8770153837797884,
+      -0.7726022346090723,
+      -0.460816771910849,
+      1.6278625598888419
+    ],
+    [
+      -0.6033557663529091,
+      0.7965434228504047,
+      0.8944545155731444,
+      -0.3033146004909989,
+      -0.7795446216434879,
+      1.3949360470278767
+    ],
+    [
+      0.42792696046832573,
+      -0.6432499782547977,
+      -1.6579060248359883,
+      0.8314813932011442,
+      1.2729192708425692,
+      0.15944455784645106
+    ],
+    [
+      0.3656900859789407,
+      5.546238064529728,
+      0.49769869359331936,
+      0.1906455983678739,
+      -0.6633336509847608,
+      -5.193332424774672
+    ]
+  ],
+  "classWeights": [
+    1.6132075471698113,
+    2.1923076923076925,
+    0.5277777777777778,
+    0.7008196721311475,
+    0.7184873949579832,
+    4.75
+  ],
+  "hyperparams": {
+    "epochs": 300,
+    "lr": 0.3,
+    "l2": 0.001
+  },
+  "split": {
+    "rule": "group-by-svgHash; whole shapes to one side (leakage-safe, no straddle)",
+    "seed": "desk-doodles-v1",
+    "testFraction": 0.25,
+    "trainShapes": 148,
+    "testShapes": 49,
+    "trainRegions": 1026,
+    "testRegions": 368
+  },
+  "metrics": {
+    "heldOut": {
+      "accuracy": 0.6521739130434783,
+      "macroF1": 0.61579934307801,
+      "perClass": [
+        {
+          "name": "dense-tonal",
+          "support": 34,
+          "precision": 0.3717948717948718,
+          "recall": 0.8529411764705882,
+          "f1": 0.5178571428571428
+        },
+        {
+          "name": "label-text",
+          "support": 15,
+          "precision": 0.19696969696969696,
+          "recall": 0.8666666666666667,
+          "f1": 0.32098765432098764
+        },
+        {
+          "name": "line-decoration",
+          "support": 101,
+          "precision": 0.9411764705882353,
+          "recall": 0.7920792079207921,
+          "f1": 0.8602150537634408
+        },
+        {
+          "name": "paper",
+          "support": 111,
+          "precision": 0.953125,
+          "recall": 0.5495495495495496,
+          "f1": 0.6971428571428572
+        },
+        {
+          "name": "solid-content",
+          "support": 90,
+          "precision": 0.8913043478260869,
+          "recall": 0.45555555555555555,
+          "f1": 0.6029411764705883
+        },
+        {
+          "name": "structural-frame",
+          "support": 17,
+          "precision": 0.5517241379310345,
+          "recall": 0.9411764705882353,
+          "f1": 0.6956521739130435
+        }
+      ]
+    },
+    "trainSet": {
+      "accuracy": 0.6812865497076024,
+      "macroF1": 0.6288598975726364
+    },
+    "baselines": {
+      "majorityClass": {
+        "accuracy": 0.27445652173913043,
+        "macroF1": 0.07178393745557925
+      },
+      "lookupRuleStyle": {
+        "accuracy": 0.5190217391304348,
+        "macroF1": 0.2823254285847388
+      }
+    },
+    "lift": {
+      "vsMajority": 0.37771739130434784,
+      "vsLookup": 0.13315217391304346
+    }
+  },
+  "honesty": {
+    "featuresAvailable": [
+      "darknessL",
+      "log1pArea",
+      "fill=none",
+      "fill=solid",
+      "fill=hachure"
+    ],
+    "featuresMissingVsRuleEngine": [
+      "zIndex",
+      "areaFractionOfParent",
+      "enclosesSiblingCount",
+      "containedInZIndex",
+      "aspectRatio",
+      "tag",
+      "stroke",
+      "hasDasharray",
+      "isPartOfStripeCluster"
+    ],
+    "labelProvenance": "Golden labels originated as blessed rule-engine output; labels and the rule baseline share an ancestor. The held-out metric still measures generalization to UNSEEN shapes.",
+    "metricScope": "All headline metrics are on held-out test shapes the model never saw in training."
+  }
+}
