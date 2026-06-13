@@ -247,7 +247,11 @@ async function scanNonFinite() {
 }
 
 const records = [];
-const STYLE_ORDER = styles;
+// STYLES env filter (RC-5 verify: sweep only the styles under test, e.g.
+// STYLES=wet-ink,charcoal). Absent → all styles.
+const STYLE_FILTER = process.env.STYLES ? new Set(process.env.STYLES.split(',').map((s) => s.trim())) : null;
+const STYLE_ORDER = STYLE_FILTER ? styles.filter((s) => STYLE_FILTER.has(s)) : styles;
+console.log(`sweeping styles: ${STYLE_ORDER.join(', ')}`);
 
 for (const style of STYLE_ORDER) {
   curConsole = [];

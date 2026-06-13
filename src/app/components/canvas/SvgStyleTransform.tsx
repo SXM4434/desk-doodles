@@ -2581,12 +2581,18 @@ export function SvgStyleTransform({
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).get('smartHachure') !== '0';
   }, []);
-  // Only the 4 rough-family styles run through Smart Hachure. Other styles
-  // (clean / outline-only / wet-ink / charcoal / risograph / newsprint)
-  // keep their existing render path.
+  // Smart Hachure hosts the rough family PLUS wet-ink + charcoal (RC-5 / SA-3
+  // FX-gate lift, 2026-06-13). wet-ink + charcoal already carry real tonal
+  // grammar in techniqueMap (loaded-brush ×1.3 weight; dry-media ×1.5 weight,
+  // 0.85 opacity) but the old gate routed them to a texture-filter-ONLY path —
+  // they rendered as Clean + a thin filter, no real hand-drawn transform (the
+  // "dead styles" bug). Admitting them runs their tonal grammar; applyTexture
+  // still layers their wet/chalky media filter ON TOP (line ~2636). Clean /
+  // outline-only / risograph / newsprint / wireframe keep their own paths.
   const useSmartHachure =
     smartHachureEnabled &&
-    (style === 'rough-handdrawn' || style === 'sketchy' || style === 'bold-ink' || style === 'stipple');
+    (style === 'rough-handdrawn' || style === 'sketchy' || style === 'bold-ink' ||
+      style === 'stipple' || style === 'wet-ink' || style === 'charcoal');
 
   // DEGRADE-TO-RAW warn-once latch (Rock B): the first transform throw per
   // component instance logs one console.warn; later throws degrade silently
