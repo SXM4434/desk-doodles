@@ -159,3 +159,20 @@ These are DISCRETE family pickers (dropdown/pill rows), distinct from the slider
 **Tier 3 — PER-MODE PROPERTY SLIDERS (exclusive, continuous — already specced above):** Rod radius etc.; Extrude width/depth; Inflate base/tip/pressure/Puff; Solid ink-radius/depth.
 
 Chrome layout: Tier 1 on top → mode dropdown → Tier 2 (that mode's style row) → Tier 3 (that mode's sliders). Only the active mode's Tier 2+3 render. SVG chrome still ONLY under SVG-port. BUILD SEQUENCE: rock 1 ships Tiers 1+3 as in-flight; Tier 2 = the immediate fast-follow rock (it needs the per-family render boards for Sebs's eyeball).
+
+## RATIFIED SYMMETRY LAW (Sebs 2026-06-13 ~01:40): EVERY AXIS NODE GETS BOTH TOGGLE KINDS
+
+Sebs's framing: SVG never says it explicitly, but its control system has TWO kinds of toggles — STYLE toggles (discrete grammar picks: fillStyle, texture, pen tip, multi-stroke, sketching style) and PROPERTY toggles (continuous sliders: wobble, gap, strokeWidth, opacity). The 3D side's two main axes (3D STYLE and GEOMETRY) must each carry the SAME dual structure, per node.
+
+The law: **no axis node ships with only one kind of toggle.** Every geometry mode and every 3D style gets a discrete style-toggle set AND a continuous property-toggle set.
+
+Status matrix at ratification (2026-06-13):
+
+| Node | Style toggles | Property toggles |
+|---|---|---|
+| Rod / Extrude / Inflate / Solid | ✓ Tier-2 families (rock X) | ✓ Tier-3 sliders (rock 1) |
+| SVG-port | ✓ inherited 2D chrome | ✓ inherited 2D chrome |
+| Hatch | ✗ GAP → mark grammar (Hachure/Cross-hatch/Stipple/Contour) + direction mode (Fixed/Light-following) rows | ✓ gap/angle/strokeWidth/inkIntensity |
+| Native | ✓ 6 material presets | ✗ GAP → Polish (highlight tightness) · Reflection (env amount, bounded by ink-black policy) · Sheen · Outline (ink edge weight) |
+
+Both gap cells = one rock, fired after the envmap ink-black fix lands (same files). Hatch grammar rows feed the SAME COVERAGE_BANDS table (one math, two renderers — a band-5 region is equally dark in every grammar). Native dials shape how light sits, never color (ink-black policy holds at every dial position). Boards for Sebs before lock: Hatch grammar × band contact sheet; Native per-dial min/max strips.
