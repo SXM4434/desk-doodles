@@ -7,6 +7,7 @@ import { DeskGallery } from './components/DeskDoodles/DeskGallery';
 import { DeskDoodlesPublicCanvas } from './components/DeskDoodles/DeskDoodlesPublicCanvas';
 import { DeskDoodlesPlayground } from './components/DeskDoodles/DeskDoodlesPlayground';
 import { DeskDoodlesAudit } from './components/DeskDoodles/DeskDoodlesAudit';
+import { PosterDiag } from './components/DeskDoodles/PosterDiag';
 
 function NotFound() {
   return (
@@ -45,5 +46,6 @@ export const router = createBrowserRouter([
   { path: '/public', Component: DeskDoodlesPublicCanvas },
   { path: '/playground', Component: DeskDoodlesPlayground },
   { path: '/audit', Component: DeskDoodlesAudit },
+  { path: '/poster-diag', Component: PosterDiag },
   { path: '*', Component: NotFound },
 ]);
