@@ -11,9 +11,23 @@ import {
   stampToneCapsule,
   extractToneFills,
   rasterizeToneFills,
+  rasterizeFillPatch,
   type ToneMaskGrid,
   type ToneFill,
 } from '../../lib/toneMask';
+import {
+  extractPoolRegions,
+  pointInLoop,
+  poolCenter,
+  normalizeStrokePoints,
+  rdpPoints,
+  strokesKey,
+  RDP_EPSILON,
+  WORLD_SCALE,
+  SOLID_INK_RADIUS,
+  REGION_EXTRACTOR_VERSION,
+} from '../../lib/geometry3d/strokeTo3d';
+import { pushShadeFillEntry, type ShadeFillGesture } from '../../lib/shadeFillLog';
 
 // ─── DrawSurface — pointer-event freehand capture + SvgStyleTransform render ──
 // Extracted 2026-06-11 from DeskDoodlesCanvas.tsx (mechanical move, zero
@@ -268,6 +282,158 @@ export function sortedToneFills(toneFills: ToneFill[]): ToneFill[] {
   return [...toneFills].sort((a, b) => a.band - b.band);
 }
 
+// ─── REGION FILL — extractor-backed Fill + freehand Lasso (rock F2) ──────────
+// docs/design/region-fill-spec.md (D-RF1..D-RF7 ratified): three tools, one
+// engine, one output type — everything commits as a ToneFill band patch into
+// the SAME band grid the brush stamps (replace-on-refill, eraser carve and
+// brush composition all compose for free; never average, never stack).
+//
+// THE TOPOLOGY CHOICE (spec §2/§6 made concrete): Fill runs the pool-raster
+// extractor in INK-ONLY topology — `closedFlags` all false, NO closure-state
+// scanline fill. Closure flags are the 3D conversion's MASS semantic (a
+// near-closed stroke welds into a slab); the fill semantic is ENCLOSURE, and
+// with ink-only rasterization the enclosed paper shows up as the odd-depth
+// loops of the containment-parity tree while the ink-stamp radius stays the
+// ONLY gap-closer — exactly "the ink radius IS the tolerance". Under closure
+// flags the Gap slider would be a lie for single strokes (a 20px-gap circle
+// scanline-fills at ANY tolerance) and a donut would collapse to a disc.
+//
+// Fill targets are the ODD-depth (paper) regions — D-RF4's "a hole is paper
+// the user may want toned", generalized: in ink-only topology every enclosed
+// paper area IS an odd-parity loop. Even-depth regions are ink bodies; a tap
+// on one (tap exactly ON a line, tap on a dropped-tiny-region) is an honest
+// miss, never an invisible under-ink patch.
+
+/** Gap-tolerance ladder — multiplier on the extractor's ink-stamp radius
+ *  (spec §6: 6 ticks per feedback_more_toggle_options_better; default 1× =
+ *  SOLID_INK_RADIUS parity with the 3D conversion). */
+export const GAP_LADDER: readonly number[] = [0.5, 0.75, 1, 1.5, 2, 3];
+
+/** Nearest ladder index for a stored multiplier (slider round-trip). */
+export function gapIdxOf(gap: number): number {
+  let best = 2; // 1×
+  let bestD = Infinity;
+  for (let i = 0; i < GAP_LADDER.length; i++) {
+    const d = Math.abs(GAP_LADDER[i] - gap);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** One extractor region mapped into the draw frame (viewBox px) — the
+ *  world→viewBox inverse adapter output (spec §2: "the inverse of
+ *  normalizeStrokePoints applied to outline — a ~15-line adapter, not a new
+ *  extractor"). */
+export type FillRegion = {
+  /** Closed outline, draw-frame viewBox px (RDP+Chaikin from the extractor). */
+  outline: [number, number][];
+  /** Containment depth — ink-only topology: even = ink body, odd = paper. */
+  depth: number;
+  role: 'outer' | 'hole';
+  parentIndex: number | null;
+  areaWorld: number;
+};
+
+/** Run the pool-raster extractor over the stroke pool at a gap multiplier and
+ *  map the region tree back into viewBox px. Deterministic; cache by
+ *  (strokesKey, gapIdx) — per ladder STEP, never per pointermove (spec §6). */
+export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegion[] {
+  const raw = strokes.map((s) => s.points).filter((s) => s.length > 0);
+  if (raw.length === 0) return [];
+  const viewBox = { w: VIEWBOX_W, h: VIEWBOX_H };
+  const simplified = raw.map((s) => rdpPoints(s, RDP_EPSILON));
+  const center = poolCenter(simplified, viewBox);
+  const world = simplified.map((s) => normalizeStrokePoints(s, viewBox, WORLD_SCALE, center));
+  const extraction = extractPoolRegions(world, {
+    inkRadius: SOLID_INK_RADIUS * gapMult,
+    // INK-ONLY TOPOLOGY (see the header comment): enclosure comes from the
+    // stamped ink alone — the gap slider is the only thing that closes gaps.
+    closedFlags: world.map(() => false),
+  });
+  // The world→viewBox inverse adapter: normalizeStrokePoints is
+  //   wx = (x − cx)·s,  wy = −(y − cy)·s   →   x = wx/s + cx,  y = cy − wy/s.
+  const toVb = ([wx, wy]: [number, number]): [number, number] => [
+    Math.round((wx / WORLD_SCALE + center.x) * 10) / 10,
+    Math.round((center.y - wy / WORLD_SCALE) * 10) / 10,
+  ];
+  return extraction.regions.map((r) => ({
+    outline: r.outline.map(toVb),
+    depth: r.depth,
+    role: r.role,
+    parentIndex: r.parentIndex,
+    areaWorld: r.areaWorld,
+  }));
+}
+
+/** Innermost PAPER region under a point — max containment depth wins, ties
+ *  break to the smaller area (D-RF4: innermost wins; donut hole is a
+ *  legitimate target). Returns the region index, or -1 (honest miss). */
+export function innermostPaperRegionAt(x: number, y: number, regions: FillRegion[]): number {
+  let best = -1;
+  for (let i = 0; i < regions.length; i++) {
+    const r = regions[i];
+    if (r.depth % 2 !== 1) continue; // even = ink body, not a fill target
+    if (r.outline.length < 3 || !pointInLoop(x, y, r.outline)) continue;
+    if (
+      best < 0 ||
+      r.depth > regions[best].depth ||
+      (r.depth === regions[best].depth && r.areaWorld < regions[best].areaWorld)
+    ) {
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** The even-depth islands sitting directly inside a paper region — the fill
+ *  patch subtracts them so e.g. a donut-ring fill keeps the inner circle's
+ *  ink AND its enclosed paper as paper (ring fills ring only). */
+function fillChildrenOf(regions: FillRegion[], idx: number): [number, number][][] {
+  const target = regions[idx];
+  const holes: [number, number][][] = [];
+  for (let j = 0; j < regions.length; j++) {
+    const r = regions[j];
+    if (j === idx || r.depth !== target.depth + 1 || r.outline.length < 1) continue;
+    const [px, py] = r.outline[0];
+    if (pointInLoop(px, py, target.outline)) holes.push(r.outline);
+  }
+  return holes;
+}
+
+/** Shoelace area in viewBox px² (lasso degenerate-loop guard). */
+function polyAreaPx(pts: [number, number][]): number {
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[(i + 1) % pts.length];
+    area += ax * by - bx * ay;
+  }
+  return Math.abs(area / 2);
+}
+
+/** Decimate + round a lasso loop for the record (≤ TONE_OUTLINE_MAX_PTS,
+ *  0.1px — the same compaction brushed outlines get). */
+function decimateLoop(pts: [number, number][]): [number, number][] {
+  let out = pts.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10] as [number, number]);
+  while (out.length > TONE_OUTLINE_MAX_PTS) {
+    out = out.filter((_, i) => i % 2 === 0);
+  }
+  return out;
+}
+
+/** The Fill commit's outward dilation in px: tone tucks under the VISIBLE ink
+ *  edge (3px stroke → 1.5px half-width) instead of stopping at the extractor
+ *  boundary inkRadius px inside the centerline (see rasterizeFillPatch). */
+function fillDilatePx(gapMult: number): number {
+  return Math.max(0, (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE - 1.5);
+}
+
+/** The honest-miss caption (spec §5.4 — never silent, never flood). */
+export const FILL_MISS_NOTE = 'no closed region here — raise Gap, or use Lasso';
+
 /** Markup for the patches as they enter the STYLE PIPELINE: flat solid
  *  band-grey fills, stroke="none" (mapPaletteColor passes 'none' through →
  *  the smartHachure outline pass renders invisibly; only fill MARKS show),
@@ -501,6 +667,8 @@ export function DrawSurface({
   shade,
   initialToneFills,
   onToneFillsChange,
+  onGapChange,
+  onFillNote,
 }: {
   mode: CanvasMode;
   input: InputMode;
@@ -534,14 +702,30 @@ export function DrawSurface({
    *  the live preview == the published object). Host (DrawPanel) owns the
    *  file pick; /canvas leaves this unset. */
   backdrop?: BackdropFrame | null;
-  /** THE SHADE REGISTER (round 7, tone-fill brush): when `active`, the
-   *  pointer brushes TONE instead of ink — soft band-grey regions in the
-   *  discrete coverage.ts 8-band ladder, stored as ToneFill records (the
-   *  explicit shading register — mark-intent D2-F: always beats inference).
-   *  `erase` flips the brush into a patch-lifter (band 0 = paper = absence).
-   *  Tool state is owned by the host's chrome (DrawPanel's Ink|Shade pills +
-   *  band cluster); /canvas leaves this unset — zero behavior change. */
-  shade?: { active: boolean; band: number; radius: number; erase: boolean } | null;
+  /** THE SHADE REGISTER (round 7, tone-fill brush · rock F2 region fill):
+   *  when `active`, the pointer puts down TONE instead of ink. `tool` picks
+   *  HOW (D-RF1 — the register answers "tone goes down", the tool answers
+   *  how): 'brush' = the swept-capsule grid brush; 'fill' = extractor-backed
+   *  region fill (tap/hover-preview/highlight-drag/gap-scrub); 'lasso' =
+   *  freehand loop, auto-closed on release (D-RF7). `erase` flips every tool
+   *  into a lifter (band 0 = paper = absence). `gap` = the Fill tool's
+   *  gap-tolerance multiplier (GAP_LADDER). Tool state is owned by the
+   *  host's chrome; /canvas leaves this unset — zero behavior change. */
+  shade?: {
+    active: boolean;
+    tool: ShadeTool;
+    band: number;
+    radius: number;
+    erase: boolean;
+    gap: number;
+  } | null;
+  /** Fill-tool gap scrub → host slider sync (press-hold-drag walks the
+   *  ladder LIVE; the chrome slider follows and the value persists — both
+   *  controls, spec D-RF3). Fired once per ladder STEP, never per move. */
+  onGapChange?: (gap: number) => void;
+  /** Honest-miss channel: one-line notes for the host's caption slot (spec
+   *  §5.4 — "no closed region here…"; never silent, never a stray blob). */
+  onFillNote?: (note: string) => void;
   /** Preload tone patches (Re-draw: the object's recorded tone comes back
    *  editable, sibling of initialStrokes — addendum ch.2 lifecycle). */
   initialToneFills?: ToneFill[];
@@ -593,14 +777,195 @@ export function DrawSurface({
   // CANCEL; a 120KB copy per pen-down is trivially cheap). Without this, a
   // mid-stroke Escape fell through to the host popup's close handler, which
   // saw empty strokes/tone state and silently ATE the in-progress gesture
-  // (caught by the rock-F1 break battery).
-  const toneSnapshotRef = useRef<Uint8Array | null>(null);
+  // (caught by the rock-F1 break battery). Rock F2: provenance sidecars ride
+  // the snapshot too — a cancelled brush-over-fill must restore the fill's
+  // src/gapTol, not leave brush provenance on reverted bands.
+  const toneSnapshotRef = useRef<{
+    bands: Uint8Array;
+    src: Uint8Array;
+    gapTolQ: Uint8Array;
+  } | null>(null);
   // Pointer position while the shade register is active — drives the honest
   // brush-footprint ring (the radius is in viewBox units, so a CSS cursor
   // could not show the true footprint).
   const [hoverPt, setHoverPt] = useState<[number, number] | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ── REGION FILL state (rock F2) ────────────────────────────────────────────
+  // Extraction cache: (strokesKey, gapIdx) → regions. Per ladder STEP, never
+  // per pointermove (spec §6 cost rule); entries for stale stroke pools are
+  // simply never hit (key mismatch) and the map is cleared on stroke edits.
+  const regionCacheRef = useRef<Map<string, FillRegion[]>>(new Map());
+  const strokesSig = strokesKey(strokes.map((s) => s.points));
+  // The in-flight fill gesture — ref (handlers + Escape listener read it
+  // without stale-closure risk); `fillGestureOn` mirrors "a fill gesture is
+  // mid-flight" into state so the Escape listener mounts.
+  const fillGesRef = useRef<{
+    phase: 'pending' | 'scrub' | 'highlight';
+    start: [number, number];
+    baseGapIdx: number;
+    lastIdx: number;
+    timer: number;
+  } | null>(null);
+  const [fillGestureOn, setFillGestureOn] = useState(false);
+  // Hover preview target (Fill mode, pen up): which region, at which step.
+  const [fillHover, setFillHover] = useState<{ gapIdx: number; idx: number } | null>(null);
+  // Live gap scrub (press-hold-drag): current step + the anchor the preview
+  // re-resolves under as the ladder walks (watch the leak happen — §6).
+  const [scrubState, setScrubState] = useState<{ idx: number; anchor: [number, number] } | null>(
+    null,
+  );
+  // Highlight-drag trail (transient — never recorded as ink, spec §5.3).
+  const [highlightPts, setHighlightPts] = useState<[number, number][] | null>(null);
+  // Lasso trail (its own outline becomes the patch on release, D-RF7).
+  const [lassoPts, setLassoPts] = useState<[number, number][] | null>(null);
+  // The previous fill act missed — the next lasso commit is the spec §7
+  // extractor-miss label ('lasso-after-miss').
+  const lastMissRef = useRef(false);
+  // Latest shade prop for the Escape listener (mounted per-gesture, so the
+  // closure would otherwise hold a stale band/erase).
+  const shadeRef = useRef(shade);
+  shadeRef.current = shade;
+
+  /** Regions at a ladder step — cached, deterministic, extraction only on a
+   *  cache miss (entering Fill, a new step, or after stroke edits). */
+  function regionsFor(gapIdx: number): FillRegion[] {
+    const key = `${strokesSig}|${gapIdx}`;
+    const cached = regionCacheRef.current.get(key);
+    if (cached) return cached;
+    if (regionCacheRef.current.size > 18) regionCacheRef.current.clear();
+    const regions = extractFillRegions(strokes, GAP_LADDER[gapIdx]);
+    regionCacheRef.current.set(key, regions);
+    return regions;
+  }
+
+  const currentGapIdx = gapIdxOf(shade?.gap ?? 1);
+
+  /** Decision-log every act (spec §7/§8 — the learned ladder's diet). */
+  function logShadeFill(
+    tool: 'fill' | 'lasso',
+    gesture: ShadeFillGesture,
+    gapMult: number,
+    region: FillRegion | null,
+    outcome: 'committed' | 'cancelled' | 'miss' | 'lasso-after-miss',
+    regionCount: number,
+  ) {
+    pushShadeFillEntry({
+      entryType: 'shade-fill',
+      surface: 'shade-fill',
+      tool,
+      gesture,
+      band: shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3,
+      erase: !!shadeRef.current?.erase,
+      gapTol: gapMult,
+      regionDepth: region ? region.depth : null,
+      regionAreaWorld: region ? region.areaWorld : null,
+      outcome,
+      extractorVersion: REGION_EXTRACTOR_VERSION,
+      regionCount,
+    });
+  }
+
+  /** Commit one region as a ToneFill band patch: rasterize into the band
+   *  grid (REPLACE semantics, src/gapTol provenance, dilation tucks tone
+   *  under the visible ink) and re-extract the record. */
+  function applyFillRegion(
+    regions: FillRegion[],
+    idx: number,
+    gapMult: number,
+    gesture: ShadeFillGesture,
+  ) {
+    const grid = toneGridRef.current;
+    if (!grid) return;
+    const r = regions[idx];
+    const band = shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3;
+    rasterizeFillPatch(grid, r.outline, fillChildrenOf(regions, idx), band, 'fill', {
+      gapTol: gapMult,
+      dilatePx: fillDilatePx(gapMult),
+    });
+    setToneFills(extractToneFills(grid));
+    lastMissRef.current = false;
+    logShadeFill('fill', gesture, gapMult, r, 'committed', regions.length);
+  }
+
+  /** Tap/scrub-release commit at a point — innermost paper region wins;
+   *  no region = honest miss (caption + log, never a stray blob). */
+  function commitFillAt(pt: [number, number], gapIdx: number, gesture: ShadeFillGesture) {
+    const regions = regionsFor(gapIdx);
+    const hit = innermostPaperRegionAt(pt[0], pt[1], regions);
+    if (hit < 0) {
+      lastMissRef.current = true;
+      logShadeFill('fill', gesture, GAP_LADDER[gapIdx], null, 'miss', regions.length);
+      onFillNote?.(FILL_MISS_NOTE);
+      return;
+    }
+    applyFillRegion(regions, hit, GAP_LADDER[gapIdx], gesture);
+  }
+
+  /** Highlight-drag release: every point votes for its innermost paper
+   *  region; regions with ≥ 0.6 of the votes commit (LazyBrush's rule of
+   *  majority, spec §5.3). None over the bar = honest miss. */
+  function commitHighlight(pts: [number, number][] | null, gapIdx: number) {
+    const regions = regionsFor(gapIdx);
+    if (!pts || pts.length < 2) {
+      lastMissRef.current = true;
+      logShadeFill('fill', 'highlight', GAP_LADDER[gapIdx], null, 'miss', regions.length);
+      onFillNote?.(FILL_MISS_NOTE);
+      return;
+    }
+    const votes = new Map<number, number>();
+    for (const [x, y] of pts) {
+      const hit = innermostPaperRegionAt(x, y, regions);
+      if (hit >= 0) votes.set(hit, (votes.get(hit) ?? 0) + 1);
+    }
+    const winners: number[] = [];
+    for (const [idx, n] of votes) {
+      if (n / pts.length >= 0.6) winners.push(idx);
+    }
+    winners.sort((a, b) => a - b); // deterministic commit order
+    if (winners.length === 0) {
+      lastMissRef.current = true;
+      logShadeFill('fill', 'highlight', GAP_LADDER[gapIdx], null, 'miss', regions.length);
+      onFillNote?.(FILL_MISS_NOTE);
+      return;
+    }
+    for (const idx of winners) applyFillRegion(regions, idx, GAP_LADDER[gapIdx], 'highlight');
+  }
+
+  /** Lasso release: the loop auto-closes and ITS outline is the patch
+   *  (D-RF7 — no extractor). Degenerate loops miss honestly. */
+  function commitLasso(pts: [number, number][] | null) {
+    const grid = toneGridRef.current;
+    const gapMult = GAP_LADDER[currentGapIdx];
+    if (!grid) return;
+    const regionCount = regionsFor(currentGapIdx).length;
+    if (!pts || pts.length < 3 || polyAreaPx(pts) < 16) {
+      lastMissRef.current = true;
+      logShadeFill('lasso', 'lasso', gapMult, null, 'miss', regionCount);
+      onFillNote?.('that lasso is too small — draw a bigger loop');
+      return;
+    }
+    const band = shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3;
+    rasterizeFillPatch(grid, decimateLoop(pts), [], band, 'lasso', {});
+    setToneFills(extractToneFills(grid));
+    const outcome = lastMissRef.current ? 'lasso-after-miss' : 'committed';
+    lastMissRef.current = false;
+    logShadeFill('lasso', 'lasso', gapMult, null, outcome, regionCount);
+  }
+
+  /** Tear down any in-flight fill/lasso gesture (tool switches, Escape,
+   *  rapid pill cycling — break-battery items). No commit. */
+  function resetFillGesture() {
+    const g = fillGesRef.current;
+    if (g) window.clearTimeout(g.timer);
+    fillGesRef.current = null;
+    setFillGestureOn(false);
+    setScrubState(null);
+    setHighlightPts(null);
+    setLassoPts(null);
+    setFillHover(null);
+  }
 
   // Mirror the preview pool out to an optional host (DrawPanel).
   useEffect(() => {
@@ -687,8 +1052,31 @@ export function DrawSurface({
   }
 
   // The shade register owns the pointer when active (and drawing isn't
-  // paused) — same gating as ink, different tool in the hand.
+  // paused) — same gating as ink, different tool in the hand. The register
+  // answers "tone goes down"; `tool` answers how (D-RF1).
   const shadeActive = !!shade?.active && !styled && input === 'draw' && mode !== '3d';
+  const shadeToolKind: ShadeTool = shade?.tool ?? 'brush';
+  const brushActive = shadeActive && shadeToolKind === 'brush';
+  const fillActive = shadeActive && shadeToolKind === 'fill';
+  const lassoActive = shadeActive && shadeToolKind === 'lasso';
+
+  // Tool/register switches mid-gesture never strand a half-armed scrub or a
+  // dangling lasso trail (rapid pill cycling — the break battery); stroke
+  // edits invalidate the region cache wholesale.
+  useEffect(() => {
+    resetFillGesture();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shadeToolKind, shade?.erase, shadeActive, strokesSig]);
+
+  // Entering Fill mode (or stroke edits while in it) pre-extracts the current
+  // ladder step so the first hover answers instantly (spec §6: run on
+  // entering Fill + debounced after stroke edits, NOT per pointermove).
+  useEffect(() => {
+    if (!fillActive) return;
+    const t = window.setTimeout(() => regionsFor(currentGapIdx), 50);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fillActive, strokesSig, currentGapIdx]);
 
   /** Stamp one brush segment into the band grid — paint goes through the §3
    *  marker table; erase is the band-0 stamp (per-cell partial carve, §4 —
@@ -724,7 +1112,8 @@ export function DrawSurface({
   // grid snapshot (erase included — true cancel). The gesture is the topmost
   // "layer", so stopPropagation keeps every other Escape layer untouched;
   // with the pen up this listener isn't even mounted.
-  const gestureActive = current !== null || toneBrush !== null;
+  const gestureActive =
+    current !== null || toneBrush !== null || fillGestureOn || lassoPts !== null;
   useEffect(() => {
     if (!gestureActive) return;
     const onKey = (e: KeyboardEvent) => {
@@ -733,14 +1122,43 @@ export function DrawSurface({
       setCurrent(null);
       if (toneGestureRef.current) {
         const grid = toneGridRef.current;
-        if (grid && toneSnapshotRef.current) grid.bands.set(toneSnapshotRef.current);
+        const snap = toneSnapshotRef.current;
+        if (grid && snap) {
+          grid.bands.set(snap.bands);
+          grid.src.set(snap.src);
+          grid.gapTolQ.set(snap.gapTolQ);
+        }
         toneGestureRef.current = false;
         setToneBrush(null);
         lastTonePtRef.current = null;
       }
+      // Fill/lasso gesture cancel (rock F2): no commit; a scrub restores the
+      // pre-scrub Gap (true cancel — the persisted value is the one the user
+      // RELEASED at, never the one they bailed on). Logged as 'cancelled'.
+      const g = fillGesRef.current;
+      if (g) {
+        window.clearTimeout(g.timer);
+        if (g.phase === 'scrub') onGapChange?.(GAP_LADDER[g.baseGapIdx]);
+        logShadeFill(
+          'fill',
+          g.phase === 'scrub' ? 'scrub' : g.phase === 'highlight' ? 'highlight' : 'tap',
+          GAP_LADDER[g.phase === 'scrub' ? g.lastIdx : g.baseGapIdx],
+          null,
+          'cancelled',
+          regionCacheRef.current.get(`${strokesSig}|${g.lastIdx}`)?.length ?? 0,
+        );
+        fillGesRef.current = null;
+        setFillGestureOn(false);
+        setScrubState(null);
+        setHighlightPts(null);
+      } else if (lassoPts !== null) {
+        logShadeFill('lasso', 'lasso', GAP_LADDER[currentGapIdx], null, 'cancelled', 0);
+        setLassoPts(null);
+      }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gestureActive]);
 
   function handlePointerDown(e: React.PointerEvent) {
@@ -748,10 +1166,39 @@ export function DrawSurface({
     if (styled) return;
     if (input !== 'draw' || mode === '3d') return;
     (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+    if (fillActive) {
+      // FILL — one pointer-down, three possible gestures (spec §5/§6):
+      // release fast+still = TAP; move first = HIGHLIGHT scribble; hold
+      // ~350ms still = the Gap SCRUB arms (horizontal drag walks the ladder
+      // with a live re-extracted preview; release commits at that step).
+      const [x, y] = eventToSvgPoint(e);
+      const baseGapIdx = currentGapIdx;
+      const timer = window.setTimeout(() => {
+        const g = fillGesRef.current;
+        if (g && g.phase === 'pending') {
+          g.phase = 'scrub';
+          setScrubState({ idx: g.baseGapIdx, anchor: g.start });
+        }
+      }, 350);
+      fillGesRef.current = { phase: 'pending', start: [x, y], baseGapIdx, lastIdx: baseGapIdx, timer };
+      setFillGestureOn(true);
+      setFillHover(null);
+      return;
+    }
+    if (lassoActive) {
+      const [x, y] = eventToSvgPoint(e);
+      setLassoPts([[x, y]]);
+      return;
+    }
     if (shadeActive) {
       const [x, y] = eventToSvgPoint(e);
-      beginToneStroke(toneGridRef.current!); // new stroke — reset the §3 dirty bitset
-      toneSnapshotRef.current = toneGridRef.current!.bands.slice(); // Escape = cancel
+      const grid = toneGridRef.current!;
+      beginToneStroke(grid); // new stroke — reset the §3 dirty bitset
+      toneSnapshotRef.current = {
+        bands: grid.bands.slice(),
+        src: grid.src.slice(),
+        gapTolQ: grid.gapTolQ.slice(),
+      }; // Escape = cancel (provenance rides the snapshot)
       toneGestureRef.current = true;
       lastTonePtRef.current = null;
       stampSegment([x, y]); // a tap is a dab (paint) / a dab-lift (erase)
@@ -762,6 +1209,55 @@ export function DrawSurface({
   }
 
   function handlePointerMove(e: React.PointerEvent) {
+    if (fillActive) {
+      const [x, y] = eventToSvgPoint(e);
+      setHoverPt([x, y]);
+      const g = fillGesRef.current;
+      if (!g) {
+        // HOVER PREVIEW (spec §5.1): the candidate region under the cursor,
+        // translucent wash + dashed outline — no pointer-down, no commitment.
+        // Regions come from the per-step cache; only pointInLoop runs here.
+        const regions = regionsFor(currentGapIdx);
+        const hit = innermostPaperRegionAt(x, y, regions);
+        setFillHover((prev) => {
+          if (hit < 0) return prev === null ? prev : null;
+          if (prev && prev.gapIdx === currentGapIdx && prev.idx === hit) return prev;
+          return { gapIdx: currentGapIdx, idx: hit };
+        });
+        return;
+      }
+      if (g.phase === 'pending') {
+        if (Math.hypot(x - g.start[0], y - g.start[1]) > 8) {
+          window.clearTimeout(g.timer);
+          g.phase = 'highlight';
+          setHighlightPts([g.start, [x, y]]);
+        }
+        return;
+      }
+      if (g.phase === 'scrub') {
+        // Horizontal drag walks the ladder — one step per 56 viewBox px.
+        // Re-extraction happens at most once per STEP (regionsFor cache).
+        const idx = Math.max(
+          0,
+          Math.min(GAP_LADDER.length - 1, g.baseGapIdx + Math.round((x - g.start[0]) / 56)),
+        );
+        if (idx !== g.lastIdx) {
+          g.lastIdx = idx;
+          setScrubState({ idx, anchor: g.start });
+          onGapChange?.(GAP_LADDER[idx]); // the chrome slider follows live
+        }
+        return;
+      }
+      // highlight
+      setHighlightPts((p) => (p ? [...p, [x, y]] : [[x, y]]));
+      return;
+    }
+    if (lassoActive) {
+      const [x, y] = eventToSvgPoint(e);
+      setHoverPt([x, y]);
+      if (lassoPts) setLassoPts((p) => (p ? [...p, [x, y]] : p));
+      return;
+    }
     if (shadeActive) {
       const [x, y] = eventToSvgPoint(e);
       setHoverPt([x, y]);
@@ -776,6 +1272,29 @@ export function DrawSurface({
   }
 
   function handlePointerUp() {
+    if (fillActive && fillGesRef.current) {
+      const g = fillGesRef.current;
+      window.clearTimeout(g.timer);
+      fillGesRef.current = null;
+      setFillGestureOn(false);
+      if (g.phase === 'highlight') {
+        commitHighlight(highlightPts, g.baseGapIdx);
+        setHighlightPts(null);
+      } else if (g.phase === 'scrub') {
+        // Release commits at the scrubbed tolerance; the Gap value persists
+        // (Procreate's remembered threshold, spec §6).
+        commitFillAt(g.start, g.lastIdx, 'scrub');
+        setScrubState(null);
+      } else {
+        commitFillAt(g.start, g.baseGapIdx, 'tap');
+      }
+      return;
+    }
+    if (lassoActive && lassoPts) {
+      commitLasso(lassoPts);
+      setLassoPts(null);
+      return;
+    }
     if (toneBrush) {
       commitToneStroke();
       return;
@@ -787,6 +1306,7 @@ export function DrawSurface({
 
   function handlePointerLeave() {
     setHoverPt(null);
+    setFillHover(null);
     handlePointerUp();
   }
 
@@ -796,7 +1316,14 @@ export function DrawSurface({
     setToneFills([]);
     setToneBrush(null);
     lastTonePtRef.current = null;
-    toneGridRef.current?.bands.fill(0); // the grid IS the tone truth — clear it too
+    const grid = toneGridRef.current;
+    if (grid) {
+      grid.bands.fill(0); // the grid IS the tone truth — clear it too
+      grid.src.fill(0); // provenance sidecars follow the truth
+      grid.gapTolQ.fill(0);
+    }
+    regionCacheRef.current.clear();
+    resetFillGesture();
     setCommitted(false);
   }
 
@@ -811,6 +1338,29 @@ export function DrawSurface({
 
   const allStrokes = current ? [...strokes, current] : strokes;
   const isUpload = input === 'upload-svg';
+
+  // REGION-FILL preview resolution (render-time, cache-backed — extraction
+  // never runs per pointermove, only on a cache miss at a new ladder step).
+  // Scrub preview re-resolves the region under the press ANCHOR at the live
+  // step — the user watches gaps close/regions merge as they drag (§6).
+  let fillPreview: { outline: [number, number][]; holes: [number, number][][] } | null = null;
+  if (fillActive) {
+    if (scrubState) {
+      const regions = regionsFor(scrubState.idx);
+      const hit = innermostPaperRegionAt(scrubState.anchor[0], scrubState.anchor[1], regions);
+      if (hit >= 0) {
+        fillPreview = { outline: regions[hit].outline, holes: fillChildrenOf(regions, hit) };
+      }
+    } else if (fillHover) {
+      const regions = regionsFor(fillHover.gapIdx);
+      if (fillHover.idx < regions.length) {
+        fillPreview = {
+          outline: regions[fillHover.idx].outline,
+          holes: fillChildrenOf(regions, fillHover.idx),
+        };
+      }
+    }
+  }
 
   return (
     <div
@@ -1004,7 +1554,10 @@ export function DrawSurface({
         style={{
           position: 'absolute',
           inset: 0,
-          cursor: shadeActive ? 'none' : input === 'draw' ? 'crosshair' : 'default',
+          // Brush hides the native cursor (the footprint ring is the honest
+          // cursor); Fill/Lasso keep the crosshair — their honest cursor is
+          // the live region preview / loop trail itself.
+          cursor: brushActive ? 'none' : input === 'draw' ? 'crosshair' : 'default',
           touchAction: 'none',
         }}
         onPointerDown={handlePointerDown}
@@ -1043,8 +1596,9 @@ export function DrawSurface({
           />
         )}
         {/* Brush-footprint ring — paint mode shows the band grey; erase mode
-            shows a dashed accent lifter. */}
-        {shadeActive && hoverPt && (
+            shows a dashed accent lifter. Brush tool only — Fill/Lasso have
+            their own honest cursors below. */}
+        {brushActive && hoverPt && (
           <circle
             cx={hoverPt[0]}
             cy={hoverPt[1]}
@@ -1054,6 +1608,75 @@ export function DrawSurface({
             stroke={shade?.erase ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)'}
             strokeWidth={1.25}
             strokeDasharray={shade?.erase ? '5 4' : undefined}
+            pointerEvents="none"
+          />
+        )}
+        {/* FILL preview — the candidate region as a translucent band wash +
+            dashed outline (spec §5.1, the honest-cursor idiom): hover shows
+            it before any commitment; during a Gap scrub it re-extracts live
+            per ladder step. Erase mode previews outline-only (a lifter takes
+            tone away — washing it on would lie). Holes render via evenodd so
+            a donut-ring preview shows the ring only. */}
+        {fillPreview && (
+          <path
+            data-fill-preview
+            d={tonePathD(fillPreview.outline, fillPreview.holes)}
+            fill={shade?.erase ? 'none' : TONE_BAND_HEX[shade?.band ?? 3] ?? '#888888'}
+            fillOpacity={shade?.erase ? 0 : 0.35}
+            fillRule="evenodd"
+            stroke={shade?.erase ? 'var(--dir-accent)' : 'var(--dir-text-secondary)'}
+            strokeWidth={1.25}
+            strokeDasharray="6 4"
+            pointerEvents="none"
+          />
+        )}
+        {/* Gap-scrub readout — the live multiplier above the press anchor
+            (the Procreate threshold-bar moment, ours says the number). */}
+        {scrubState && (
+          <g data-gap-scrub pointerEvents="none">
+            <text
+              x={scrubState.anchor[0]}
+              y={Math.max(18, scrubState.anchor[1] - 16)}
+              textAnchor="middle"
+              style={{
+                fontFamily: IS,
+                fontSize: 13,
+                fontWeight: 600,
+                letterSpacing: '0.04em',
+                fill: 'var(--dir-text-primary)',
+              }}
+            >
+              Gap {GAP_LADDER[scrubState.idx]}×
+            </text>
+          </g>
+        )}
+        {/* Highlight-drag trail — transient accent scribble (never recorded
+            as ink, spec §5.3); regions it majority-covers commit on release. */}
+        {highlightPts && highlightPts.length > 1 && (
+          <path
+            data-fill-highlight
+            d={strokeToPolylinePath(highlightPts.map(([x, y]) => [x, y, 0.5] as StrokePoint))}
+            fill="none"
+            stroke="var(--dir-accent)"
+            strokeOpacity={0.45}
+            strokeWidth={12}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            pointerEvents="none"
+          />
+        )}
+        {/* Lasso trail — the loop-in-progress; it auto-closes on release and
+            its own outline becomes the patch (D-RF7). Wash previews the
+            committed band; erase mode previews the dashed lifter only. */}
+        {lassoPts && lassoPts.length > 1 && (
+          <path
+            data-lasso-trail
+            d={`${strokeToPolylinePath(lassoPts.map(([x, y]) => [x, y, 0.5] as StrokePoint))} Z`}
+            fill={shade?.erase ? 'none' : TONE_BAND_HEX[shade?.band ?? 3] ?? '#888888'}
+            fillOpacity={shade?.erase ? 0 : 0.18}
+            stroke="var(--dir-accent)"
+            strokeWidth={1.25}
+            strokeDasharray="5 4"
             pointerEvents="none"
           />
         )}
@@ -1211,17 +1834,33 @@ export function DrawSurface({
 // (cross-rock contract — pairs with DrawSurface's shade/initialToneFills/
 // onToneFillsChange props). Pill idioms per chromeStyles.
 
+/** Which tool the Shade register wields (D-RF1: Fill/Lasso live INSIDE the
+ *  register's tool row — the register answers "tone goes down", the tool
+ *  answers how). */
+export type ShadeTool = 'brush' | 'fill' | 'lasso';
+
 export type ShadeToolState = {
-  /** COVERAGE_BANDS index 1–7 (paint band). */
+  /** Brush | Fill | Lasso — the register's tool pills. */
+  tool: ShadeTool;
+  /** COVERAGE_BANDS index 1–7 (paint band) — shared by all three tools. */
   band: number;
-  /** Brush radius, draw-frame viewBox px. */
+  /** Brush radius, draw-frame viewBox px (Brush tool). */
   radius: number;
-  /** Erase mode — the band-0 stamp: a per-cell partial carve out of whatever
-   *  tone is there (band 0 = paper = absence). */
+  /** Erase mode — shared by all three tools: brush carves per-cell; Fill
+   *  lifts the tapped region; Lasso lifts its loop (band 0 = paper). */
   erase: boolean;
+  /** Fill gap-tolerance multiplier (GAP_LADDER tick, persists per session —
+   *  the Procreate remembered-threshold behavior, spec §6). */
+  gap: number;
 };
 
-export const SHADE_TOOL_DEFAULT: ShadeToolState = { band: 3, radius: 26, erase: false };
+export const SHADE_TOOL_DEFAULT: ShadeToolState = {
+  tool: 'brush',
+  band: 3,
+  radius: 26,
+  erase: false,
+  gap: 1,
+};
 
 export function ToneShadeCluster({
   value,
@@ -1238,11 +1877,47 @@ export function ToneShadeCluster({
         display: 'flex',
         alignItems: 'center',
         gap: 10,
+        rowGap: 6,
+        flexWrap: 'wrap',
         minWidth: 0,
         opacity: disabled ? 0.45 : 1,
         pointerEvents: disabled ? 'none' : 'auto',
       }}
     >
+      {/* Tool pills — Brush | Fill | Lasso (D-RF1: tools INSIDE the Shade
+          register; band swatches + Erase shared by all three). Same pill
+          grammar as the Ink|Shade register pills. */}
+      <div style={{ display: 'flex', gap: 6 }} role="radiogroup" aria-label="Shade tool">
+        {(
+          [
+            ['brush', 'Brush', 'Brush soft tone regions freehand'],
+            ['fill', 'Fill', 'Tap inside a region to fill it — hold & drag sideways to scrub Gap'],
+            ['lasso', 'Lasso', 'Draw a loop — it closes on release and becomes the patch'],
+          ] as [ShadeTool, string, string][]
+        ).map(([tool, label, title]) => (
+          <button
+            key={tool}
+            role="radio"
+            aria-checked={value.tool === tool}
+            data-shade-tool={tool}
+            title={title}
+            onClick={() => onChange({ ...value, tool })}
+            style={{
+              ...PILL,
+              padding: '6px 14px',
+              flexShrink: 0,
+              background: value.tool === tool ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+              color: value.tool === tool ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <span
+        aria-hidden
+        style={{ width: 1, alignSelf: 'stretch', background: 'var(--dir-border)', flexShrink: 0 }}
+      />
       {/* Band swatches — bands 1..7 of the one 8-band table, light → dark. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} role="radiogroup" aria-label="Tone band">
         {COVERAGE_BANDS.map((b, band) => {
@@ -1289,39 +1964,78 @@ export function ToneShadeCluster({
       >
         Erase
       </button>
-      {/* Brush size — viewBox px, 29 ticks (8–64 step 2). */}
-      <label
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          minWidth: 0,
-          fontFamily: IS,
-          fontSize: 10,
-          fontWeight: 500,
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
-          color: 'var(--dir-text-secondary)',
-          whiteSpace: 'nowrap',
-        }}
-        title="Brush radius — soft region size, in canvas units"
-      >
-        Brush
-        <input
-          type="range"
-          className="dd-range"
-          min={8}
-          max={64}
-          step={2}
-          value={value.radius}
-          onChange={(e) => onChange({ ...value, radius: Number(e.target.value) })}
-          style={{ width: 90 }}
-          aria-label="Brush radius"
-        />
-        <span style={{ color: 'var(--dir-text-body-soft)', fontVariantNumeric: 'tabular-nums' }}>
-          {value.radius}px
-        </span>
-      </label>
+      {/* Per-tool slider slot (spec §3: same slot, per-tool relabel) —
+          Brush: radius (viewBox px, 29 ticks). Fill: the Gap tolerance
+          ladder (6 ticks, multiplier on the extractor's ink-stamp radius).
+          Lasso: no slider — the loop IS the patch. */}
+      {value.tool === 'brush' && (
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            minWidth: 0,
+            fontFamily: IS,
+            fontSize: 10,
+            fontWeight: 500,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            color: 'var(--dir-text-secondary)',
+            whiteSpace: 'nowrap',
+          }}
+          title="Brush radius — soft region size, in canvas units"
+        >
+          Brush
+          <input
+            type="range"
+            className="dd-range"
+            min={8}
+            max={64}
+            step={2}
+            value={value.radius}
+            onChange={(e) => onChange({ ...value, radius: Number(e.target.value) })}
+            style={{ width: 90 }}
+            aria-label="Brush radius"
+          />
+          <span style={{ color: 'var(--dir-text-body-soft)', fontVariantNumeric: 'tabular-nums' }}>
+            {value.radius}px
+          </span>
+        </label>
+      )}
+      {value.tool === 'fill' && (
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            minWidth: 0,
+            fontFamily: IS,
+            fontSize: 10,
+            fontWeight: 500,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            color: 'var(--dir-text-secondary)',
+            whiteSpace: 'nowrap',
+          }}
+          title="Gap tolerance — how big an ink gap the fill may leap (×0.5–×3 of the ink-stamp radius); press-hold-drag on the canvas scrubs it live"
+        >
+          Gap
+          <input
+            type="range"
+            className="dd-range"
+            min={0}
+            max={GAP_LADDER.length - 1}
+            step={1}
+            value={gapIdxOf(value.gap)}
+            onChange={(e) => onChange({ ...value, gap: GAP_LADDER[Number(e.target.value)] })}
+            style={{ width: 90 }}
+            aria-label="Gap tolerance"
+          />
+          <span style={{ color: 'var(--dir-text-body-soft)', fontVariantNumeric: 'tabular-nums' }}>
+            {value.gap}×
+          </span>
+        </label>
+      )}
     </div>
   );
 }

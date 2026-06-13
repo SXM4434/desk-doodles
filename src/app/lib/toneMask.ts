@@ -59,10 +59,21 @@ export type ToneFill = {
    *  roles). Optional — most patches have none. */
   holes?: [number, number][][];
   /** Provenance — which input produced this patch (D-RF6, region-fill-spec):
-   *  'brush' = the shade brush (this module); 'fill' / 'lasso' reserved for
-   *  the R1 region-fill tools. Optional; absent on legacy records. */
+   *  'brush' = the shade brush; 'fill' = extractor-backed region fill;
+   *  'lasso' = the freehand loop tool. Optional; absent on legacy records.
+   *  Island provenance is the MAJORITY cell vote at extraction (a fill the
+   *  user then brushes over becomes brush-majority honestly). */
   src?: 'brush' | 'fill' | 'lasso';
+  /** Gap-tolerance multiplier the fill was committed at (region-fill-spec
+   *  D-RF6: recorded only when ≠ 1× and src is 'fill'). Training-ladder
+   *  provenance — a few bytes, budget-guarded by capToneFills. */
+  gapTol?: number;
 };
+
+/** Per-cell provenance codes for the sidecar src grid (rock F2). */
+export const TONE_SRC_BRUSH = 0;
+export const TONE_SRC_FILL = 1;
+export const TONE_SRC_LASSO = 2;
 
 // ─── The grid ─────────────────────────────────────────────────────────────────
 
@@ -72,6 +83,12 @@ export interface ToneMaskGrid {
   /** Per-STROKE dirty bitset (spec §3: "same stroke" = cells already stamped
    *  since pen-down) — cleared by beginToneStroke. */
   dirty: Uint8Array;
+  /** Per-cell provenance sidecar (rock F2, D-RF6): TONE_SRC_* code of the
+   *  act that last WROTE the cell's band. Meaningful only where band > 0. */
+  src: Uint8Array;
+  /** Per-cell gap-tolerance sidecar: the fill's gapTol multiplier ×4 (the
+   *  0.5×–3× ladder quantizes to integers 2..12). 0 = not a fill cell. */
+  gapTolQ: Uint8Array;
   w: number;
   h: number;
 }
@@ -79,7 +96,14 @@ export interface ToneMaskGrid {
 export function createToneGrid(viewW: number, viewH: number): ToneMaskGrid {
   const w = Math.ceil(viewW / TONE_CELL_PX);
   const h = Math.ceil(viewH / TONE_CELL_PX);
-  return { bands: new Uint8Array(w * h), dirty: new Uint8Array(w * h), w, h };
+  return {
+    bands: new Uint8Array(w * h),
+    dirty: new Uint8Array(w * h),
+    src: new Uint8Array(w * h),
+    gapTolQ: new Uint8Array(w * h),
+    w,
+    h,
+  };
 }
 
 /** Pen-down: a new stroke begins — reset the within-stroke dirty bitset. */
@@ -137,15 +161,30 @@ export function stampToneCapsule(
       if (band === 0) {
         // Eraser: band-0 stamp, ignores band — lifts whatever is there (§4).
         bands[idx] = 0;
+        grid.src[idx] = TONE_SRC_BRUSH; // paper carries no provenance
+        grid.gapTolQ[idx] = 0;
         dirty[idx] = 1;
         continue;
       }
       if (dirty[idx]) continue; // flat within a stroke (§3 row 2)
       const b = bands[idx];
-      if (b === 0) bands[idx] = band;
-      else if (band === b) bands[idx] = Math.min(7, b + 1);
-      else if (band > b) bands[idx] = band;
-      // band < b → ignore (cell keeps b)
+      // Provenance: a cell becomes brush-sourced only when the brush actually
+      // WRITES it — the lighter-over-darker IGNORE leaves the standing
+      // statement (and its fill/lasso provenance) untouched.
+      if (b === 0) {
+        bands[idx] = band;
+        grid.src[idx] = TONE_SRC_BRUSH;
+        grid.gapTolQ[idx] = 0;
+      } else if (band === b) {
+        bands[idx] = Math.min(7, b + 1);
+        grid.src[idx] = TONE_SRC_BRUSH;
+        grid.gapTolQ[idx] = 0;
+      } else if (band > b) {
+        bands[idx] = band;
+        grid.src[idx] = TONE_SRC_BRUSH;
+        grid.gapTolQ[idx] = 0;
+      }
+      // band < b → ignore (cell keeps b + its provenance)
       dirty[idx] = 1;
     }
   }
@@ -187,12 +226,17 @@ function xInSpans(x: number, spans: Array<[number, number]>): boolean {
 }
 
 /** Write stored tone patches into the grid. Ascending band order — darker
- *  wins by painting later; within a band, input order (stable). */
+ *  wins by painting later; within a band, input order (stable). Provenance
+ *  sidecars reload too (Re-draw round-trips src/gapTol). */
 export function rasterizeToneFills(grid: ToneMaskGrid, fills: ToneFill[]): void {
   const sorted = [...fills].sort((a, b) => a.band - b.band);
   const { bands, w, h } = grid;
   for (const f of sorted) {
     if (f.band < 1 || f.band > 7 || f.points.length < 3) continue;
+    const srcCode =
+      f.src === 'fill' ? TONE_SRC_FILL : f.src === 'lasso' ? TONE_SRC_LASSO : TONE_SRC_BRUSH;
+    const gapQ =
+      f.src === 'fill' && f.gapTol ? Math.max(0, Math.min(255, Math.round(f.gapTol * 4))) : 0;
     // Row range from the outer loop's bbox.
     let minY = Infinity;
     let maxY = -Infinity;
@@ -218,7 +262,131 @@ export function rasterizeToneFills(grid: ToneMaskGrid, fills: ToneFill[]): void 
             break;
           }
         }
-        if (!inHole) bands[row * w + col] = f.band;
+        if (!inHole) {
+          const idx = row * w + col;
+          bands[idx] = f.band;
+          grid.src[idx] = srcCode;
+          grid.gapTolQ[idx] = gapQ;
+        }
+      }
+    }
+  }
+}
+
+// ─── Region-fill patch rasterization (rock F2 — region-fill-spec §4/§7) ───────
+// A Fill/Lasso commit writes its patch INTO the band grid — the grid stays the
+// ONE session truth, so eraser carve, brush composition and replace-on-refill
+// all compose for free. Semantics per the spec table: re-fill of a region
+// REPLACES its band (unconditional write — never average, never stack).
+// Band 0 = the Fill-mode eraser (lift the region back to paper).
+
+/** Rasterize one fill/lasso patch into the grid. `dilatePx` (Fill commits
+ *  only) grows the patch outward so tone tucks under the VISIBLE ink edge:
+ *  the extractor's enclosed-paper boundary sits inkRadius px inside the
+ *  stroke centerline, but drawn ink is only ~3px wide — committing the raw
+ *  outline would leave a paper ring between tone and line. Dilation by
+ *  (inkRadius·gap − 1.5)px lands the tone edge at the visible ink edge; the
+ *  overshoot is under ink (invisible) and bounded by the tolerance the user
+ *  explicitly chose. Octagonal structuring element (alternating 8-/4-neighbor
+ *  passes) — deterministic. */
+export function rasterizeFillPatch(
+  grid: ToneMaskGrid,
+  points: [number, number][],
+  holes: [number, number][][],
+  band: number,
+  src: 'fill' | 'lasso',
+  opts: { gapTol?: number; dilatePx?: number } = {},
+): void {
+  if (points.length < 3) return;
+  const { bands, w, h } = grid;
+  const srcCode = src === 'lasso' ? TONE_SRC_LASSO : TONE_SRC_FILL;
+  const gapQ =
+    src === 'fill' && opts.gapTol ? Math.max(0, Math.min(255, Math.round(opts.gapTol * 4))) : 0;
+  const dilate = Math.max(0, Math.round((opts.dilatePx ?? 0) / TONE_CELL_PX));
+
+  // Window bbox (cells) — patch bbox + dilation margin, clamped to the grid.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x, y] of points) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const c0 = Math.max(Math.floor(minX / TONE_CELL_PX) - dilate - 1, 0);
+  const c1 = Math.min(Math.ceil(maxX / TONE_CELL_PX) + dilate + 1, w - 1);
+  const r0 = Math.max(Math.floor(minY / TONE_CELL_PX) - dilate - 1, 0);
+  const r1 = Math.min(Math.ceil(maxY / TONE_CELL_PX) + dilate + 1, h - 1);
+  const bw = c1 - c0 + 1;
+  const bh = r1 - r0 + 1;
+  if (bw <= 0 || bh <= 0) return;
+
+  // 1 — rasterize the polygon (nonzero winding, holes subtract) into a window
+  // mask. Nonzero matches the browser's fill of a self-crossing lasso loop.
+  let mask = new Uint8Array(bw * bh);
+  for (let row = r0; row <= r1; row++) {
+    const y = (row + 0.5) * TONE_CELL_PX;
+    const outer = loopSpansAtY(points, y);
+    if (outer.length === 0) continue;
+    const holeSpans = holes.map((hl) => loopSpansAtY(hl, y));
+    for (let col = c0; col <= c1; col++) {
+      const x = (col + 0.5) * TONE_CELL_PX;
+      if (!xInSpans(x, outer)) continue;
+      let inHole = false;
+      for (const hs of holeSpans) {
+        if (xInSpans(x, hs)) {
+          inHole = true;
+          break;
+        }
+      }
+      if (!inHole) mask[(row - r0) * bw + (col - c0)] = 1;
+    }
+  }
+
+  // 2 — dilate (alternating 8/4-neighbor ≈ octagonal ball), double-buffered.
+  let buf = new Uint8Array(bw * bh);
+  for (let pass = 0; pass < dilate; pass++) {
+    const eight = pass % 2 === 0;
+    buf.set(mask);
+    for (let r = 0; r < bh; r++) {
+      for (let c = 0; c < bw; c++) {
+        if (mask[r * bw + c]) continue;
+        const up = r > 0 && mask[(r - 1) * bw + c];
+        const dn = r < bh - 1 && mask[(r + 1) * bw + c];
+        const lf = c > 0 && mask[r * bw + c - 1];
+        const rt = c < bw - 1 && mask[r * bw + c + 1];
+        let on = up || dn || lf || rt;
+        if (!on && eight) {
+          on =
+            (r > 0 && c > 0 && mask[(r - 1) * bw + c - 1]) ||
+            (r > 0 && c < bw - 1 && mask[(r - 1) * bw + c + 1]) ||
+            (r < bh - 1 && c > 0 && mask[(r + 1) * bw + c - 1]) ||
+            (r < bh - 1 && c < bw - 1 && mask[(r + 1) * bw + c + 1]);
+        }
+        if (on) buf[r * bw + c] = 1;
+      }
+    }
+    const t = mask;
+    mask = buf;
+    buf = t;
+  }
+
+  // 3 — write: unconditional REPLACE (spec §7 "re-fill same region → REPLACE
+  // its band, don't stack"); band 0 lifts to paper.
+  for (let r = 0; r < bh; r++) {
+    for (let c = 0; c < bw; c++) {
+      if (!mask[r * bw + c]) continue;
+      const idx = (r + r0) * w + (c + c0);
+      if (band === 0) {
+        bands[idx] = 0;
+        grid.src[idx] = TONE_SRC_BRUSH;
+        grid.gapTolQ[idx] = 0;
+      } else {
+        bands[idx] = band;
+        grid.src[idx] = srcCode;
+        grid.gapTolQ[idx] = gapQ;
       }
     }
   }
@@ -402,10 +570,97 @@ function simplifyLoopToPx(loop: Array<[number, number]>): [number, number][] {
   ]);
 }
 
+/** Label the connected islands of a padded binary mask (4-connectivity, BFS
+ *  in raster-scan discovery order — deterministic) and accumulate per-label
+ *  provenance votes from the sidecar grids. Returns the label map plus, per
+ *  label, src-code counts and gapTolQ counts (rock F2 provenance). */
+function labelIslands(
+  mask: Uint8Array,
+  pw: number,
+  ph: number,
+  grid: ToneMaskGrid,
+): {
+  labels: Int32Array;
+  srcCounts: number[][];
+  gapCounts: Array<Map<number, number>>;
+} {
+  const labels = new Int32Array(pw * ph).fill(-1);
+  const srcCounts: number[][] = [];
+  const gapCounts: Array<Map<number, number>> = [];
+  const stack: number[] = [];
+  const { w } = grid;
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || labels[start] >= 0) continue;
+    const label = srcCounts.length;
+    srcCounts.push([0, 0, 0]);
+    gapCounts.push(new Map());
+    stack.length = 0;
+    stack.push(start);
+    labels[start] = label;
+    while (stack.length > 0) {
+      const j = stack.pop()!;
+      // Vote: padded sample (i, jrow) ↔ grid cell (i−1, jrow−1).
+      const col = (j % pw) - 1;
+      const row = Math.floor(j / pw) - 1;
+      const cellIdx = row * w + col;
+      const code = grid.src[cellIdx] ?? 0;
+      srcCounts[label][code <= 2 ? code : 0]++;
+      const q = grid.gapTolQ[cellIdx] ?? 0;
+      if (q > 0) gapCounts[label].set(q, (gapCounts[label].get(q) ?? 0) + 1);
+      // 4-neighbors (fixed order — deterministic).
+      const x = j % pw;
+      const y = Math.floor(j / pw);
+      if (x > 0 && mask[j - 1] && labels[j - 1] < 0) { labels[j - 1] = label; stack.push(j - 1); }
+      if (x < pw - 1 && mask[j + 1] && labels[j + 1] < 0) { labels[j + 1] = label; stack.push(j + 1); }
+      if (y > 0 && mask[j - pw] && labels[j - pw] < 0) { labels[j - pw] = label; stack.push(j - pw); }
+      if (y < ph - 1 && mask[j + pw] && labels[j + pw] < 0) { labels[j + pw] = label; stack.push(j + pw); }
+    }
+  }
+  return { labels, srcCounts, gapCounts };
+}
+
+/** The island label adjacent to a marching-squares loop's first point. Loop
+ *  points are edge midpoints (one coord *.5) between a 1-sample and a
+ *  0-sample — the 1-sample side names the island. -1 when unresolvable. */
+function loopLabel(
+  loop: Array<[number, number]>,
+  labels: Int32Array,
+  mask: Uint8Array,
+  pw: number,
+): number {
+  const [x, y] = loop[0];
+  const cands: Array<[number, number]> =
+    x % 1 !== 0
+      ? [
+          [Math.floor(x), y],
+          [Math.ceil(x), y],
+        ]
+      : [
+          [x, Math.floor(y)],
+          [x, Math.ceil(y)],
+        ];
+  for (const [cx, cy] of cands) {
+    const idx = cy * pw + cx;
+    if (mask[idx]) return labels[idx];
+  }
+  return -1;
+}
+
+/** Majority vote with deterministic tie-break (smaller key wins). */
+function majoritySrc(counts: number[]): number {
+  let best = 0;
+  for (let code = 1; code < counts.length; code++) {
+    if (counts[code] > counts[best]) best = code;
+  }
+  return best;
+}
+
 /** Extract the merged per-band islands from the grid → the toneFills record.
  *  Deterministic: bands ascend 1→7; islands in marching-squares discovery
  *  order (raster scan order); ids `t{band}-{k}`. Same scripted strokes →
- *  byte-identical JSON. */
+ *  byte-identical JSON. Provenance (rock F2): each island carries the
+ *  MAJORITY src of its cells ('brush'|'fill'|'lasso') + the majority gapTol
+ *  for fill islands when ≠ 1× (D-RF6). */
 export function extractToneFills(grid: ToneMaskGrid): ToneFill[] {
   const { bands, w, h } = grid;
   // Which bands are present (one scan, skips empty extraction passes).
@@ -433,6 +688,9 @@ export function extractToneFills(grid: ToneMaskGrid): ToneFill[] {
       (l) => loopArea(l) >= MIN_ISLAND_AREA_CELLS,
     );
     if (loops.length === 0) continue;
+
+    // Provenance labeling (rock F2): per-island src/gapTol majority votes.
+    const { labels, srcCounts, gapCounts } = labelIslands(mask, pw, ph, grid);
 
     // Containment-depth parity: even = island outline, odd = hole.
     const depths = loops.map((loop, i) => {
@@ -474,12 +732,30 @@ export function extractToneFills(grid: ToneMaskGrid): ToneFill[] {
         const hole = simplifyLoopToPx(loops[i]);
         if (hole.length >= 3) holes.push(hole);
       }
+      // Island provenance: majority cell vote (deterministic tie → brush).
+      const label = loopLabel(loops[oi], labels, mask, pw);
+      const code = label >= 0 ? majoritySrc(srcCounts[label]) : TONE_SRC_BRUSH;
+      const src: ToneFill['src'] =
+        code === TONE_SRC_FILL ? 'fill' : code === TONE_SRC_LASSO ? 'lasso' : 'brush';
+      let gapTol: number | undefined;
+      if (src === 'fill' && label >= 0) {
+        let bestQ = 0;
+        let bestN = 0;
+        for (const [q, n] of gapCounts[label]) {
+          if (n > bestN || (n === bestN && q < bestQ)) {
+            bestQ = q;
+            bestN = n;
+          }
+        }
+        if (bestQ > 0 && bestQ !== 4) gapTol = bestQ / 4; // record only when ≠ 1×
+      }
       fills.push({
         id: `t${band}-${k}`,
         band,
         points,
         ...(holes.length > 0 ? { holes } : {}),
-        src: 'brush',
+        src,
+        ...(gapTol !== undefined ? { gapTol } : {}),
       });
       k++;
     }

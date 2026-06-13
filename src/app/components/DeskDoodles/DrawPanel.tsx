@@ -295,6 +295,30 @@ export function DrawPanel({
     },
     [],
   );
+  // FILL-TOOL NOTE (rock F2, region-fill-spec §5.4): the honest-miss one-liner
+  // ("no closed region here — raise Gap, or use Lasso") rides the same caption
+  // slot as the remove-note — quiet, zero layout shift, self-clearing.
+  const [fillNote, setFillNote] = useState<string | null>(null);
+  const fillNoteTimer = useRef<number | null>(null);
+  const showFillNote = useCallback((note: string) => {
+    setFillNote(note);
+    if (fillNoteTimer.current) window.clearTimeout(fillNoteTimer.current);
+    fillNoteTimer.current = window.setTimeout(() => {
+      setFillNote(null);
+      fillNoteTimer.current = null;
+    }, 4000);
+  }, []);
+  useEffect(
+    () => () => {
+      if (fillNoteTimer.current) window.clearTimeout(fillNoteTimer.current);
+    },
+    [],
+  );
+  // Gap scrub → slider sync (DrawSurface fires once per ladder step; the
+  // scrubbed value persists in the shared tool state — spec D-RF3).
+  const handleGapChange = useCallback((gap: number) => {
+    setShadeTool((prev) => (prev.gap === gap ? prev : { ...prev, gap }));
+  }, []);
   const fileRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -702,17 +726,27 @@ export function DrawPanel({
   // ellipsized) text and its title tooltip always match.
   const captionText = removeNote
     ? 'upload removed — your strokes stay'
-    : composeMode === 'draw'
-      ? penRegister === 'shade'
-        ? shadeTool.erase
-          ? 'erasing tone — brush carves it back to paper'
-          : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
+    : fillNote
+      ? fillNote
+      : composeMode === 'draw'
+        ? penRegister === 'shade'
+          ? shadeTool.tool === 'fill'
+            ? shadeTool.erase
+              ? 'erase fill — tap a region to lift its tone'
+              : 'tap inside a region to fill it — hold, then drag sideways to scrub Gap'
+            : shadeTool.tool === 'lasso'
+              ? shadeTool.erase
+                ? 'lasso erase — loop an area to lift its tone'
+                : 'lasso — draw a loop, it closes on release and fills'
+              : shadeTool.erase
+                ? 'erasing tone — brush carves it back to paper'
+                : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
+          : input === 'upload-svg' && backdropFrame
+            ? 'raw ink over your upload — keep sketching'
+            : 'raw ink — keep sketching'
         : input === 'upload-svg' && backdropFrame
-          ? 'raw ink over your upload — keep sketching'
-          : 'raw ink — keep sketching'
-      : input === 'upload-svg' && backdropFrame
-        ? 'styled — the pen renders your upload live'
-        : 'styled — play with the pen, flip back to keep drawing';
+          ? 'styled — the pen renders your upload live'
+          : 'styled — play with the pen, flip back to keep drawing';
 
   return (
     // Overlay scrim — click outside the panel closes ONLY when nothing is
@@ -951,13 +985,13 @@ export function DrawPanel({
                 </button>
               ))}
               <span
-                role={removeNote ? 'status' : undefined}
+                role={removeNote || fillNote ? 'status' : undefined}
                 title={captionText}
                 style={{
                   fontFamily: IS,
                   fontSize: 10,
                   fontStyle: 'italic',
-                  color: removeNote ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)',
+                  color: removeNote || fillNote ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)',
                   flex: '1 1 0%',
                   minWidth: 0,
                   whiteSpace: 'nowrap',
@@ -1036,11 +1070,15 @@ export function DrawPanel({
                 onStrokesChange={setStrokes}
                 shade={{
                   active: composeMode === 'draw' && penRegister === 'shade',
+                  tool: shadeTool.tool,
                   band: shadeTool.band,
                   radius: shadeTool.radius,
                   erase: shadeTool.erase,
+                  gap: shadeTool.gap,
                 }}
                 onToneFillsChange={setTone}
+                onGapChange={handleGapChange}
+                onFillNote={showFillNote}
               />
 
               {/* Upload picker — no file yet. */}
