@@ -16,12 +16,15 @@ _Last full comb: 2026-06-13 (whole session + summary + memories + round plan + d
 - 🔴 **RE-DRAW modal MISSING drawing toggles/tools** — only SKETCH/STYLE + BACK/DONE; no brush/fill/snap/primitives [img].
 - 🟡 **Elongated drawing shifts out of view** on SKETCH→STYLE — CASE-3. FIX FOUND (percentage-source → wrapper+inner hosts fill 100%); worktree a2a70592 stale-base → RE-IMPLEMENT on current SvgStyleTransform (main loop).
 - 🟢 Place→move→disappears (c6b087e) · SVG upload freeze+truncation (57a0359) · 2D systemic group-transform + riso flood (3ed6924).
+- 🔴 **stipple style is a NO-OP on the UPLOAD path** — uploaded-SVG + stipple renders byte-identical to rough-handdrawn (fillStyle:'dots' not pushed into live modifiers on upload; "live render uses raw state, not preset"). Real `project_f3_styles_must_all_be_real` violation. Found by svg-upload OFAT (aaaf91d8). Scope: confirmed on /canvas upload; could not scope /audit. ← MAIN LOOP fix.
 
 ## 🐛 3D BUGS
 - 🟡 **svg-port 3D** ("all hella broken" → uniform hachure slab, drawing absent) → REBUILT + committed (2c23850): drawing now ON the form, surface-locked, carved (emissive ink + displacement + normal). STRUCTURE fixed. 🔵 CRAFT pending: marks read FAINT — needs bold-carve tuning + Sebs's eye. ← pushing now.
 - 🔴 **svg-port RETAIN 2D vibe** AND feel FULLY 3D (carved, not plopped on top) — main loop, in progress.
 - 🔴 **svg-port shading svg→3D** (no double-shade/wash of 2D tone) — design resolved (emissive ink + lit relief); verify in tuning.
+- 🟢 **Faceted/jagged silhouette rims** ("weird polygon artifacts in different 3d things") → FIXED + committed (186a1a4): corner-aware multi-pass Chaikin on the smoothed contour (circle rim 39.8°→3.8°, square corners pinned/sharp, watertight, 51/51 smoke, tsc, live-verified circle smooth + square sharp). 2D crisp-fill lane untouched.
 - 🟢 RC-2 solid buries hand → bas-relief. RC-5 wet-ink/charcoal dead → fixed. Arrow→rod default.
+- ⚠️ **UPLOADED-SVG → 3D IS NOT WIRED** (svg-upload OFAT aaaf91d8): /canvas flips to 3D on DRAWN STROKES only; uploads show honest gate "Upload→3D is the hard path — drawn strokes only for now". So the **svg→3D half of the grande-daddy can't run live yet**. 🔵 DECISION (main chat): defer svg→3D to R10 hard-path (credits) vs wire EASY svg→3D now (uploaded paths → strokes → existing strokeTo3d engine, no credits).
 
 ## ✨ FEATURES — DRAWING TOOLS (most 🔵 design)
 - 🔴 **FULL drawing-tool gambit ON the /canvas (3D) route** (Sebs 2026-06-13) — brush · fill · snap · shade · ALL primitives available in the canvas so you can draw + test the draw tools AND the 3D together in one place. (= "import the drawing tools into the 3D canvas".)
@@ -48,6 +51,14 @@ _Last full comb: 2026-06-13 (whole session + summary + memories + round plan + d
 - 🟡 **MANUALLY draw the objects myself by hand** via the draw tools — exercises the draw tools AND the 3D conversion on real hand input.
 - 🟡 **Adversarial break-it** — weird/made-up/degenerate/extreme inputs; toggle extremes.
 - 🟡 **Paired-vs-Clean per object, OFAT every toggle LMH, SVG AND 3D**, read by me, never sample-and-claim. + svg-port-vs-2D-style.
+
+### 🏆 THE GRANDE-DADDY OFAT (Sebs 2026-06-14 — the FINAL R8 cert, runs AFTER separate OFATs + all fixes land)
+Structure (Sebs, restated): the **full user flow** checked end-to-end once the separate per-stage OFATs are done. **3 OFATs in one grande-daddy**, using the AUDIT catalog objects, **hand-drawn by me through the live tools**:
+1. **Manual-draw → 2D check** — hand-draw each audit object via live tools; OFAT every 2D toggle, baseline held, switch ONE thing, **compare to the SVG/Clean** render, paired, read.
+2. **Manual-draw → 3D convert → 3D check** — convert each to 3D; OFAT every 3D toggle the same way.
+3. **SVG-upload flow** — upload each object's SVG → 2D check → (→ 3D check **blocked: upload→3D not wired**, see 3D BUGS decision).
+- METHOD = true OFAT (one object, one toggle, one change vs Clean) at SCALE via **parallel agents, one object each** (`feedback_parallel_agent_verification_and_feed`): parallelism = throughput, each agent = the rigorous paired-with-Clean read. Every result feeds the dataset. NOT fast pixel-triage — that's the per-stage pre-check, this is the eyeball cert.
+- DATASET adapters still TODO: `--from-ofat-manualdraw`, `--from-ofat-upload`, `--from-ofat-drawtools` (findings JSONs preserved on disk).
 
 ## 🔁 PROCESS / QUALITY (standing)
 - 🟡 **THE LOOP** — audit→fix→re-audit, multiple iterations until air-tight (iter-2 fires after fill+redraw+svg-port settle).
