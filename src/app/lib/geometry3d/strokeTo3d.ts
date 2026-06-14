@@ -710,6 +710,62 @@ function dedupeClosedLoop(world: THREE.Vector3[]): THREE.Vector3[] | null {
   return pts;
 }
 
+/** OPEN/SELF-INTERSECTING GUARD (LOW-3, 2026-06-13): Auto correctly routes an
+ *  open stroke to Rod, but the MANUAL Extrude/Solid override is exposed unguarded
+ *  — forcing a slab from an open or self-intersecting outline makes THREE.Shape
+ *  implicitly close the path with a straight chord, and for a figure-8 / bowtie /
+ *  spiral that produces a CRUMPLED self-intersecting surface (the degenerate
+ *  triangulation). These two predicates let the slab builders detect that case
+ *  and fall back to a clean Rod (the honest read of a non-fillable stroke),
+ *  exactly as Auto would, instead of emitting the bowtie. A genuinely CLOSED
+ *  simple loop passes both → identical behaviour to before. */
+
+/** Do segments a1-a2 and b1-b2 properly cross in XY? (shared endpoints don't
+ *  count — adjacent edges of a polygon always touch.) */
+function segmentsCrossXY(
+  a1: THREE.Vector3,
+  a2: THREE.Vector3,
+  b1: THREE.Vector3,
+  b2: THREE.Vector3,
+): boolean {
+  const d = (p: THREE.Vector3, q: THREE.Vector3, r: THREE.Vector3) =>
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const d1 = d(b1, b2, a1);
+  const d2 = d(b1, b2, a2);
+  const d3 = d(a1, a2, b1);
+  const d4 = d(a1, a2, b2);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** True when the CLOSED polygon (implicit last→first edge) has any non-adjacent
+ *  edge pair that crosses — i.e. the outline is self-intersecting and would
+ *  triangulate into a crumpled bowtie. O(n²); n is a deduped loop (small). */
+function loopSelfIntersectsXY(pts: THREE.Vector3[]): boolean {
+  const n = pts.length;
+  if (n < 4) return false;
+  for (let i = 0; i < n; i++) {
+    const a1 = pts[i];
+    const a2 = pts[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      // skip adjacent edges (share a vertex) including the wrap-around pair
+      if (j === i || (j + 1) % n === i || (i + 1) % n === j) continue;
+      if (segmentsCrossXY(a1, a2, pts[j], pts[(j + 1) % n])) return true;
+    }
+  }
+  return false;
+}
+
+/** A stroke is slab-eligible (Extrude/Solid can fill it) only when it reads as a
+ *  CLOSED loop AND its outline is a simple (non-self-intersecting) polygon. An
+ *  open path (large endpoint gap) or a self-intersecting one falls back to Rod.
+ *  `world` is the raw (pre-dedupe) world stroke. */
+function isSlabEligible(world: THREE.Vector3[]): boolean {
+  if (!isClosedWorldLoop(world)) return false;
+  const loop = dedupeClosedLoop(world);
+  if (!loop) return false;
+  return !loopSelfIntersectsXY(loop);
+}
+
 /** 2D-parity outline dispatch on a deduped closed loop: ≤8 anchors =
  *  polygonal intent (straight edges, sharp corners, untouched); 9+ anchors =
  *  curve intent — sample a CLOSED centripetal Catmull-Rom through the anchors
@@ -792,6 +848,14 @@ export function buildExtrudeGeometryWithHoles(
   const pts = dedupeClosedLoop(world);
   if (!pts) {
     return buildRodGeometry(world, { radius: opts.rodRadius });
+  }
+  // OPEN / SELF-INTERSECTING GUARD (LOW-3): a forced Extrude on an open or
+  // self-intersecting outline would emit a crumpled bowtie slab. Auto routes such
+  // a stroke to Rod; the manual override now does the same — fall back to a clean
+  // closed Rod (the honest read of a non-fillable single stroke) instead of the
+  // degenerate surface. A genuinely-closed simple loop passes through unchanged.
+  if (!isClosedWorldLoop(world) || loopSelfIntersectsXY(pts)) {
+    return buildRodGeometry(world, { radius: opts.rodRadius, closed: isClosedWorldLoop(world) });
   }
 
   try {
@@ -1346,7 +1410,14 @@ function rasterizePoolLoops(
   // ── Rasterize: closed interiors (scanline) + ink bodies (stamp) ──
   for (let i = 0; i < pool.length; i++) {
     const closed = closedFlags?.[i] ?? isClosedWorldLoop(pool[i]);
-    if (closed) scanlineFillPolygon(grid, w, h, originX, originY, cell, pool[i]);
+    // SELF-INTERSECTION GUARD (LOW-3): scanline even-odd fill of a SELF-CROSSING
+    // loop produces a garbage interior (alternating filled/empty bands → a
+    // crumpled solid). Only scanline-fill SIMPLE closed loops; a self-intersecting
+    // one falls through to the ink-body stamp alone (a clean ribbon, the honest
+    // read), never the bowtie. Simple closed loops are unaffected.
+    if (closed && !loopSelfIntersectsXY(pool[i])) {
+      scanlineFillPolygon(grid, w, h, originX, originY, cell, pool[i]);
+    }
     stampInkBody(grid, w, h, originX, originY, cell, pool[i], inkRadius);
   }
 
@@ -1707,6 +1778,16 @@ export function buildStrokeGeometry(
     // Explicit-only. Solid is POOL-level by nature (overlapping strokes merge
     // — the scene calls buildPoolSolidGeometry); this branch keeps the
     // per-stroke API total with a single-stroke solid.
+    // OPEN / SELF-INTERSECTING GUARD (LOW-3): a forced Solid on a single open or
+    // self-intersecting stroke can't fill a clean silhouette (scanline even-odd
+    // on a self-crossing loop is garbage) — fall back to Rod exactly like Auto /
+    // forced-Extrude. A simple closed loop is unaffected.
+    if (!isSlabEligible(world)) {
+      return buildRodGeometry(world, {
+        radius: opts.radius,
+        closed: isClosedStroke(simplified),
+      });
+    }
     return buildSolidGeometry([world], {
       depth: opts.depth,
       closedFlags: [isClosedStroke(simplified)],

@@ -139,6 +139,108 @@ export const CORNER_RDP_EPS_CAP = 34.0;
  *  was hiding. The honest closure value still rides in diag.closure for the log. */
 export const SNAP_CLOSE_GAP_DIAG_RATIO = 0.22;
 export const SNAP_CLOSE_TURNSUM_FRAC = 0.6; // |turnSum| ≥ this × 2π (216°) reads as one loop
+/** SHAPE-AWARE closure (LOW-1, 2026-06-13): the gap/turnSum gate above is
+ *  geometry-uniform, but a CORNERED shape and a ROUNDED shape don't accumulate
+ *  closure evidence the same way. A circle drawn 67%-of-the-way still turns
+ *  ~1.3π and reads closed; a triangle with one full edge missing (a 33%-open
+ *  cornered shape the user clearly meant to close) turns only ~0.7π and its gap
+ *  is a whole edge wide — so it stayed an OPEN polyline while the equally-open
+ *  circle welded. When the stroke is CORNERED (it has clear sharp direction
+ *  changes — PaleoSketch DCR), we (a) widen the close gap ratio and (b) relax
+ *  the turnSum loop fraction, because a cornered shape legitimately closes with
+ *  fewer turning radians and a larger missing-edge gap. A genuinely-open stroke
+ *  (line / open L / arc) has either too few corners or too little total turning
+ *  to trip the relaxed gate, so it stays open. */
+export const SNAP_CLOSE_CORNERED_GAP_DIAG_RATIO = 0.34;
+/** Cornered loop-turn fraction (LOW-1): set so a CORNERED shape that turned most
+ *  of a full loop welds even with a whole-edge gap, while an OPEN zigzag/W (whose
+ *  turning OSCILLATES in sign and nets out well below a full loop) does NOT. A
+ *  triangle drawn 20% open turns ~1.4π (0.7 × 2π); an open zigzag-W nets ~0.88π
+ *  (0.44 × 2π). 0.62 × 2π (≈1.24π / 223°) sits cleanly between them, so the
+ *  cornered closure is OR-gated (gap OR strong turn) yet a genuinely-open
+ *  sign-alternating stroke never welds. */
+export const SNAP_CLOSE_CORNERED_TURNSUM_FRAC = 0.62;
+/** A "sharp direction change" for the corneredness signal: a resampled-polyline
+ *  windowed turn at or above this many degrees is a vertex-grade bend (well above
+ *  the per-sample jitter of a smooth curve, at/below a real polygon vertex). The
+ *  count of WELL-SPREAD sharp bends is the DCR-style corner evidence that gates
+ *  the cornered closure relaxation AND the polygon-beats-circle promotion. */
+export const CORNERED_SHARP_TURN_DEG = 42;
+export const CORNERED_TURN_WINDOW = 2; // ± resampled samples for the windowed turn
+/** Minimum count of well-spread sharp bends for the stroke to read as CORNERED
+ *  (a polygon has ≥3; a circle/ellipse has ~0; an arc/line has 0-1). */
+export const CORNERED_MIN_SHARP = 3;
+/** Closure-relaxation cornered threshold (LOW-1): LOWER than CORNERED_MIN_SHARP
+ *  because a cornered shape drawn with one edge missing only shows 2 sharp
+ *  corners (a triangle with its base un-drawn, a square with one side open — the
+ *  3rd/4th corner sits at the un-met seam). 2 cleanly separates a cornered-but-
+ *  open polygon (≥2 corners) from an open L (1) or a line/arc (0), and the
+ *  cornered closure gate ALSO requires meaningful turning (gapClosed AND
+ *  loopClosed), so an open L/V with only a partial turn never welds. */
+export const CLOSURE_CORNERED_MIN_SHARP = 2;
+/** ROUND-EVIDENCE polygon-suppression (MED-1, 2026-06-13): an ultra-wobbly
+ *  circle (per-sample hand-shake ≳ ⅓ radius) manufactures a dozen+ false corners,
+ *  so the generic Polygon(N) hugs the wobble at a tiny RMS and out-ranks the true
+ *  Circle — and at worst a min-area Rect does too, leaving Rectangle as the
+ *  default and Circle buried/dropped. This mirrors TEMPLATE_OVER_POLYGON but for
+ *  the ROUND family: when a circle/ellipse fit is genuinely good (normErr below
+ *  the bound) AND the stroke is NOT cornered (few sharp bends — it's wobble, not
+ *  vertices), the round read is the one the user wants and is promoted over the
+ *  jitter-polygon / jitter-rect. [PaleoSketch NDDE/DCR: low direction-change-ratio
+ *  ⇒ curve, not polyline; a wobbly circle is still a curve.] */
+export const ROUND_OVER_POLYGON_NORMERR = 0.085;
+/** A circle/ellipse candidate with strong round evidence (good fit + not
+ *  cornered) is GUARANTEED a chip slot regardless of the 2× cutoff, so the user
+ *  can always recover a circle even when a rect also fits (Sebs's non-recoverable
+ *  MED-1 case). */
+export const ROUND_CHIP_GUARANTEE_NORMERR = 0.12;
+/** POLYGON-BEATS-CIRCLE (MED-2, 2026-06-13): a clean regular n-gon (pentagon /
+ *  hexagon / 45°-diamond) has a SMALL, fixed vertex count (its polygon fit lands
+ *  on exactly N corners) and a markedly better polygon fit than a circle, yet
+ *  CIRCLE_PREFERENCE + the complexity prior let circle out-rank it as the default
+ *  read. The decisive discriminant (proven on the catalog: a clean n-gon's
+ *  polygon fit has 4-8 verts; an ultra-wobbly circle's has 20+) is the polygon
+ *  VERTEX COUNT — a low-vertex polygon-family read that fits markedly better than
+ *  the circle is a real n-gon and WINS; a high-vertex polygon is jitter (handled
+ *  by ROUND-BEATS-POLYGON below). [PaleoSketch NDDE/DCR + vertex-count, the same
+ *  philosophy as TEMPLATE_VERTEX_EXCESS_GAIN.] A LOW-vertex (real n-gon) polygon
+ *  only needs to beat the circle by this modest factor; a genuine circle's only
+ *  polygon fit is HIGH-vertex (excluded from the n-gon test), so a smaller factor
+ *  can't promote a polygon over a true circle. 1.25 catches the clean hand-drawn
+ *  pentagon/hexagon whose polygon fit (0.012) is only ~1.35× better than its
+ *  circle fit (0.016) without false-promoting wobble. A genuine circle's only
+ *  polygon fit is HIGH-vertex (excluded from the n-gon test), so even this modest
+ *  factor can't promote a polygon over a true circle. */
+export const POLYGON_OVER_CIRCLE_ERR_FACTOR = 1.12;
+/** A polygon-family read with at most this many vertices is a candidate REGULAR
+ *  POLYGON (triangle … octagon — the shapes a user draws as a clean n-gon). More
+ *  vertices ⇒ the "polygon" is hugging per-sample wobble on a round stroke (the
+ *  MED-1 case), so the round read wins instead. rect=4 and triangle=3 are always
+ *  within this; star carries its own (2p) count. */
+export const POLYGON_NGON_MAX_VERTS = 8;
+/** REGULAR-POLYGON RECOVERY (MED-2 robustness, 2026-06-13): the primary corner
+ *  pipeline's noise-adaptive RDP epsilon (CORNER_RDP_MINDIM_RATIO) is tuned to
+ *  COLLAPSE rough-square wobble — but on a clean pentagon/hexagon whose vertices
+ *  are "soft" (60-72° turns) it occasionally smears one vertex, under-segmenting a
+ *  5-gon to 4 corners → a bad polygon fit → circle wins. Lowering that shipped
+ *  ratio re-opened the rough-square over-segmentation, so instead we ADD a
+ *  dedicated regular-polygon hypothesis: a SECOND, finer-epsilon cyclic corner
+ *  pass that recovers the soft vertices, gated hard on REGULARITY (near-equal
+ *  edges + consistent same-sign convex turns). It only EVER adds a polygon
+ *  candidate when the stroke really is a regular n-gon; it never touches the
+ *  primary pipeline or the shipped triangle/rect reads. [PaleoSketch: a regular
+ *  polygon's defining feature is equal edges + equal turning.] */
+export const NGON_RECOVERY_EPS_FLOOR = 3.0;
+export const NGON_RECOVERY_MINDIM_RATIO = 0.045; // finer than the primary 0.085
+export const NGON_RECOVERY_MIN_VERTS = 5; // triangle/rect already recovered by the primary pipeline
+export const NGON_RECOVERY_MAX_VERTS = 8;
+/** Edge-length coefficient-of-variation ceiling for the regular-polygon gate (a
+ *  regular n-gon's edges are near-equal; a lumpy blob's vary wildly). */
+export const NGON_EDGE_CV_MAX = 0.30;
+/** Every vertex of a CONVEX regular polygon turns the SAME sign (no concave
+ *  notches) and by a similar amount; require at least this fraction of the
+ *  turns to share the dominant sign (rejects a star / lumpy blob). */
+export const NGON_CONVEX_FRAC_MIN = 0.85;
 /** Regularization PREFERENCE (PaleoSketch interpretation-priority): a rect or
  *  triangle that CLEARS its geometric gate is the higher-value read the user
  *  wants — it should beat the generic polygon even when the regularized fit's
@@ -358,6 +460,52 @@ interface SnapSignals {
   reversalFreq: number; // per 100px (markIntent grammar)
   selfIsectDensity: number; // per 100px
   turnSum: number; // signed total turning
+  /** Centroid WINDING — the signed angle swept around the point cloud's centroid
+   *  as the stroke is traversed. UNLIKE turnSum (per-sample tangent turning), this
+   *  is ROBUST to per-sample radial wobble: an ultra-wobbly circle still winds
+   *  ≈ ±2π around its center even when its per-sample turnSum is corrupted into
+   *  noise. It's the wobble-proof round-corroboration signal (MED-1) — a heavily
+   *  shaken circle's turnSum gate was rejecting the circle FIT outright; the
+   *  winding gate rescues it. An open stroke winds well under a full turn. */
+  windingSum: number;
+  /** Count of WELL-SPREAD sharp direction changes on the resampled polyline
+   *  (PaleoSketch-DCR-style corner evidence) — measured DIRECTLY here so it can
+   *  drive the shape-aware closure BEFORE the full corner pipeline runs. A
+   *  polygon has ≥3; a circle/ellipse ~0; a line/arc 0-1. See sharpBendCount. */
+  sharpBends: number;
+  /** True when sharpBends ≥ CORNERED_MIN_SHARP — the stroke is a cornered
+   *  (polygon-intent) shape, not a rounded one. Gates LOW-1 closure relaxation,
+   *  MED-1 round-promotion suppression, and MED-2 polygon-over-circle. */
+  cornered: boolean;
+}
+
+/** Count WELL-SPREAD sharp direction changes (vertex-grade bends) on a polyline.
+ *  For each interior sample we take the windowed turn over ±CORNERED_TURN_WINDOW
+ *  samples; a turn ≥ CORNERED_SHARP_TURN_DEG is a sharp bend. Consecutive sharp
+ *  samples (one real corner smeared over a few samples) collapse to one. This is
+ *  the DCR-style discriminant: a polygon racks up N sharp bends, a smooth/wobbly
+ *  curve racks up ~0 (its turning is spread thin across every sample, never
+ *  concentrated). `cyclic` wraps the window for a closed loop. */
+function sharpBendCount(pts: FitPoint[], cyclic: boolean): number {
+  const n = pts.length;
+  const w = CORNERED_TURN_WINDOW;
+  if (n < 2 * w + 1) return 0;
+  const lo = cyclic ? 0 : w;
+  const hi = cyclic ? n : n - w;
+  let count = 0;
+  let inRun = false;
+  for (let i = lo; i < hi; i++) {
+    const turn = interiorTurnDeg(pts, cyclic ? (i % n) : i, w, cyclic);
+    if (turn >= CORNERED_SHARP_TURN_DEG) {
+      if (!inRun) {
+        count++;
+        inRun = true;
+      }
+    } else {
+      inRun = false;
+    }
+  }
+  return count;
 }
 
 function segmentsCross(a1: FitPoint, a2: FitPoint, b1: FitPoint, b2: FitPoint): boolean {
@@ -422,19 +570,65 @@ function computeSignals(raw: StrokeInputPoint[]): SnapSignals {
 
   const crossings = anchors.length >= 4 ? selfIntersections(anchors) : 0;
 
+  // Centroid winding (wobble-robust round signal — MED-1). Angle swept around the
+  // resampled cloud's centroid; near ±2π for any closed loop (round OR cornered),
+  // well under for an open stroke, and IMMUNE to per-sample radial wobble (which
+  // corrupts the per-sample turnSum). Rescues the heavily-shaken-circle round gate.
+  let windingSum = 0;
+  if (resampled.length >= 3) {
+    let mx = 0, my = 0;
+    for (const [x, y] of resampled) { mx += x; my += y; }
+    mx /= resampled.length; my /= resampled.length;
+    let prevAng = Math.atan2(resampled[0][1] - my, resampled[0][0] - mx);
+    for (let i = 1; i < resampled.length; i++) {
+      const ang = Math.atan2(resampled[i][1] - my, resampled[i][0] - mx);
+      let d = ang - prevAng;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      windingSum += d;
+      prevAng = ang;
+    }
+  }
+
+  // CORNEREDNESS (DCR-style) — computed on the drawn (open) path so it's
+  // available BEFORE the closure decision below. A polygon-intent stroke has ≥3
+  // well-spread sharp bends; a rounded one has ~0. A partially-open polygon may
+  // show only 2 (the missing-edge seam hides the last corner) — closure uses the
+  // lower CLOSURE_CORNERED_MIN_SHARP, the `cornered` flag stays at the stricter ≥3.
+  const sharpBends = sharpBendCount(resampled, false);
+  const cornered = sharpBends >= CORNERED_MIN_SHARP;
+  const closureCornered = sharpBends >= CLOSURE_CORNERED_MIN_SHARP;
+
   const closure = closureStateOf(raw);
   // Forgiving snap closure (explicit act): honest 'closed'/'treated-as-closed'
   // always qualify; an 'open' stroke still qualifies when its endpoints land
-  // within SNAP_CLOSE_GAP_DIAG_RATIO of the bbox diagonal OR it turns ≈ one
-  // full loop (the rough-square / lifted-pen case that read 'open' on the strict
-  // shared threshold). bboxDiag floor guards the divide.
+  // within the close gap ratio of the bbox diagonal OR it turns ≈ one full loop
+  // (the rough-square / lifted-pen case that read 'open' on the strict shared
+  // threshold). bboxDiag floor guards the divide.
+  //
+  // SHAPE-AWARE (LOW-1): a CORNERED stroke uses the more forgiving cornered gap
+  // ratio + turnSum fraction, because a cornered shape with one edge missing
+  // legitimately leaves a whole-edge gap and turns fewer total radians than a
+  // rounded shape at the same open fraction. A rounded stroke keeps the original
+  // (tighter) ratios — its turning accumulates fast, so it doesn't need the
+  // relaxation, and we don't want to weld a genuinely-open arc. The honest
+  // closure value still rides in `closure` for the log.
   let snapClosed = closure !== 'open';
   if (!snapClosed && resampled.length >= 3 && bboxDiag > 1e-6) {
     const first = resampled[0];
     const last = resampled[resampled.length - 1];
     const gap = Math.hypot(last[0] - first[0], last[1] - first[1]);
-    const gapClosed = gap <= bboxDiag * SNAP_CLOSE_GAP_DIAG_RATIO;
-    const loopClosed = Math.abs(turnSum) >= SNAP_CLOSE_TURNSUM_FRAC * 2 * Math.PI;
+    const gapRatio = closureCornered ? SNAP_CLOSE_CORNERED_GAP_DIAG_RATIO : SNAP_CLOSE_GAP_DIAG_RATIO;
+    const turnFrac = closureCornered ? SNAP_CLOSE_CORNERED_TURNSUM_FRAC : SNAP_CLOSE_TURNSUM_FRAC;
+    const gapClosed = gap <= bboxDiag * gapRatio;
+    const loopClosed = Math.abs(turnSum) >= turnFrac * 2 * Math.PI;
+    // OR-gate both families: closure intent is satisfied by EITHER a small-enough
+    // endpoint gap OR enough total turning. A cornered shape gets the wider gap
+    // ratio + the higher (full-loop-ish) turn fraction — wide enough to weld a
+    // triangle with one edge un-met, but the high turn fraction means an OPEN
+    // zigzag/W (whose turning oscillates in sign and nets well below a loop) and
+    // an open L (tiny net turn, huge gap) never trip it. A rounded shape keeps
+    // the original (tighter gap, lower turn — its turning accumulates fast).
     snapClosed = gapClosed || loopClosed;
   }
 
@@ -449,6 +643,9 @@ function computeSignals(raw: StrokeInputPoint[]): SnapSignals {
     reversalFreq: reversals * per100,
     selfIsectDensity: crossings * per100,
     turnSum,
+    windingSum,
+    sharpBends,
+    cornered,
   };
 }
 
@@ -1177,8 +1374,14 @@ function fitCircle(sig: SnapSignals): ShapeCandidate | null {
   const r2 = cx * cx + cy * cy - F;
   if (!(r2 > 0)) return null;
   const r = Math.sqrt(r2);
-  // Geometric corroboration [PaleoSketch]: a closed round form turns ≈ 2π.
-  const turnOk = Math.abs(Math.abs(sig.turnSum) - 2 * Math.PI) < ROUND_TURNSUM_TOL;
+  // Geometric corroboration [PaleoSketch]: a closed round form turns ≈ 2π. Accept
+  // EITHER the per-sample turnSum OR the wobble-robust centroid winding near 2π
+  // (MED-1: an ultra-wobbly circle's per-sample turnSum is corrupted into noise,
+  // but it still winds ≈ ±2π around its centre — that rescues the round read the
+  // turnSum-only gate was rejecting outright).
+  const turnOk =
+    Math.abs(Math.abs(sig.turnSum) - 2 * Math.PI) < ROUND_TURNSUM_TOL ||
+    Math.abs(Math.abs(sig.windingSum) - 2 * Math.PI) < ROUND_TURNSUM_TOL;
   if (!turnOk) return null;
   const residuals = pts.map((p) => Math.abs(dist(p, [cx, cy]) - r));
   const normErr = normRms(residuals, sig.bboxDiag);
@@ -1202,7 +1405,11 @@ function fitCircle(sig: SnapSignals): ShapeCandidate | null {
 function fitEllipse(sig: SnapSignals): ShapeCandidate | null {
   const pts = sig.resampled;
   if (pts.length < 6) return null;
-  const turnOk = Math.abs(Math.abs(sig.turnSum) - 2 * Math.PI) < ROUND_TURNSUM_TOL;
+  // Same wobble-robust round corroboration as fitCircle (turnSum OR centroid
+  // winding near 2π) — MED-1.
+  const turnOk =
+    Math.abs(Math.abs(sig.turnSum) - 2 * Math.PI) < ROUND_TURNSUM_TOL ||
+    Math.abs(Math.abs(sig.windingSum) - 2 * Math.PI) < ROUND_TURNSUM_TOL;
   if (!turnOk) return null;
   const conic = fitConicEllipse(pts);
   if (!conic) return null;
@@ -1345,6 +1552,68 @@ function dominantLoopVertices(sig: SnapSignals, corners: number[], k: number): F
   return picked.map((c) => pts[c]);
 }
 
+/** REGULAR-POLYGON RECOVERY (MED-2 robustness): a SECOND, finer-epsilon corner
+ *  pass that recovers soft n-gon vertices the primary pipeline smeared, then a
+ *  hard regularity gate (equal edges + consistent convex turning). Returns the
+ *  recovered loop vertices only when the stroke really is a regular 5-8-gon; else
+ *  null. Purely additive — the caller offers fitPolygon on these as an EXTRA
+ *  candidate. Never disturbs the primary corner pipeline or the shipped reads. */
+function regularPolygonHypothesis(sig: SnapSignals): FitPoint[] | null {
+  const pts = sig.resampled;
+  const n = pts.length;
+  if (n < 8 || !sig.snapClosed) return null;
+  // Finer cyclic epsilon than the primary pipeline (recovers soft vertices).
+  const eb = bboxOf(pts);
+  const minDim = Math.max(1, Math.min(eb.maxX - eb.minX, eb.maxY - eb.minY));
+  const eps = Math.max(NGON_RECOVERY_EPS_FLOOR, minDim * NGON_RECOVERY_MINDIM_RATIO);
+  const simplified = rdpPoints(pts as unknown as StrokeInputPoint[], eps).map(xy);
+  // Map simplified vertices to nearest resampled indices, dedupe the seam.
+  const idxs: number[] = [];
+  for (const a of simplified) {
+    let best = -1, bestD = Infinity;
+    for (let k = 0; k < n; k++) { const d = dist(pts[k], a); if (d < bestD) { bestD = d; best = k; } }
+    if (best >= 0 && !idxs.includes(best)) idxs.push(best);
+  }
+  idxs.sort((a, b) => a - b);
+  // Collapse a seam-duplicated first/last vertex (closed loop).
+  if (idxs.length >= 2 && dist(pts[idxs[0]], pts[idxs[idxs.length - 1]]) < INTENT_RESAMPLE_SPACING_PX * 2) {
+    idxs.pop();
+  }
+  // Merge any near-straight (collinear) corner so soft over-segmentation collapses
+  // to the true vertex count — same DCR merge as the primary pipeline, cyclic.
+  let loop = idxs.slice();
+  let changed = true;
+  while (changed && loop.length > NGON_RECOVERY_MIN_VERTS) {
+    changed = false;
+    const m = loop.length;
+    let flatIdx = -1, flatTurn = COLLINEAR_MERGE_TURN_DEG;
+    for (let k = 0; k < m; k++) {
+      const turn = cornerTurnDeg(pts, loop[(k - 1 + m) % m], loop[k], loop[(k + 1) % m]);
+      if (turn < flatTurn) { flatTurn = turn; flatIdx = k; }
+    }
+    if (flatIdx >= 0) { loop.splice(flatIdx, 1); changed = true; }
+  }
+  const m = loop.length;
+  if (m < NGON_RECOVERY_MIN_VERTS || m > NGON_RECOVERY_MAX_VERTS) return null;
+  const verts = loop.map((c) => pts[c]);
+  // REGULARITY GATE — equal edges + consistent convex turning.
+  const edges: number[] = [];
+  for (let i = 0; i < m; i++) edges.push(dist(verts[i], verts[(i + 1) % m]));
+  const meanEdge = edges.reduce((a, b) => a + b, 0) / m;
+  if (meanEdge < 1e-6) return null;
+  const edgeCv = Math.sqrt(edges.reduce((a, e) => a + (e - meanEdge) ** 2, 0) / m) / meanEdge;
+  if (edgeCv > NGON_EDGE_CV_MAX) return null;
+  const winding = Math.sign(sig.turnSum) || 1;
+  let convex = 0;
+  for (let i = 0; i < m; i++) {
+    const a = verts[(i - 1 + m) % m], b = verts[i], c = verts[(i + 1) % m];
+    const cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    if (Math.sign(cross) === winding) convex++;
+  }
+  if (convex / m < NGON_CONVEX_FRAC_MIN) return null; // a star / lumpy blob has concave notches
+  return verts;
+}
+
 /** Build the loop vertices for a closed/treated-as-closed stroke's corner
  *  chain (drops the duplicate endpoint, since the loop closes implicitly). */
 function closedLoopVertices(sig: SnapSignals, corners: number[]): FitPoint[] {
@@ -1485,7 +1754,14 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
       const star = fitStar(sig, loop); // closed alternating star (bug 2)
       const circle = fitCircle(sig);
       const ellipse = fitEllipse(sig);
-      const poly = fitPolygon(sig, loop);
+      // Polygon: best of the primary-pipeline corner loop AND the regular-polygon
+      // RECOVERY loop (a finer-epsilon pass that recovers soft n-gon vertices the
+      // primary pipeline smeared — MED-2 robustness). Purely additive: if the
+      // recovery yields a better-fitting regular n-gon, that polygon is used; the
+      // shipped triangle/rect/square reads are untouched (recovery only fires for
+      // 5-8-gons and only when the regularity gate passes).
+      const ngonLoop = regularPolygonHypothesis(sig);
+      const poly = bestOf(fitPolygon(sig, loop), ngonLoop ? fitPolygon(sig, ngonLoop) : null);
       if (circle) candidates.push(circle);
       if (ellipse) candidates.push(ellipse);
       if (star) candidates.push(star);
@@ -1554,6 +1830,91 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
     if (ell.score >= circ.score) ell.score = circ.score - COMPLEXITY_PRIOR;
   }
 
+  // CIRCLE ⟷ POLYGON ARBITRATION (MED-1 + MED-2): the decisive discriminant is
+  // the polygon-fit VERTEX COUNT (proven on the catalog — a clean n-gon's polygon
+  // fit has 3-8 corners; an ultra-wobbly circle's has 20+). [PaleoSketch NDDE/DCR
+  // + vertex-count, the same philosophy as TEMPLATE_VERTEX_EXCESS_GAIN.]
+  //
+  //  • MED-2  a LOW-vertex (≤ POLYGON_NGON_MAX_VERTS) polygon-family read (regular
+  //           polygon / rect / triangle / star) that fits markedly better than the
+  //           best circle/ellipse is the n-gon the user drew → it WINS over circle.
+  //  • MED-1  when a circle/ellipse fits well (round evidence) and the ONLY
+  //           competing polygon is a HIGH-vertex jitter polygon (the wobble case)
+  //           — or any worse-fitting template — the round read WINS over it,
+  //           mirroring TEMPLATE_OVER_POLYGON for the round family.
+  //
+  // The two are mutually exclusive by construction: a genuine n-gon's best
+  // polygon-family read is low-vertex (MED-2 fires, MED-1's promote-round skips
+  // because the competing read is a real n-gon); a wobbly circle's polygon is
+  // high-vertex (MED-2 skips, MED-1 fires). A real circle has no good polygon at
+  // all, so neither demotes it.
+  {
+    const roundCands = candidates.filter((c) => c.kind === 'circle' || c.kind === 'ellipse');
+    // STAR is excluded from this arbitration entirely — it cleared its own strict
+    // alternation / radial-swing / notch-depth gates, so it's a high-value read
+    // that neither a round promotion nor an n-gon promotion may disturb (a genuine
+    // star's circle fit is decent, ~0.066, which must NOT demote the star).
+    const jitterFamily = candidates.filter(
+      (c) => c.kind === 'polygon' || c.kind === 'rect' || c.kind === 'triangle',
+    );
+    const hasGoodStar = candidates.some((c) => c.kind === 'star' && c.normErr <= SNAP_MAX_NORM_ERR);
+    const vertsOf = (c: ShapeCandidate): number =>
+      c.kind === 'triangle' ? 3 : c.kind === 'rect' ? 4 : c.points.length;
+    let bestRound: ShapeCandidate | null = null;
+    for (const c of roundCands) if (!bestRound || c.normErr < bestRound.normErr) bestRound = c;
+    // The best LOW-vertex jitter-family read (a candidate regular polygon / rect /
+    // triangle). Pick the highest-SCORING one — this runs AFTER
+    // TEMPLATE_OVER_POLYGON, so for a rough SQUARE (where rect was already promoted
+    // above the jitter polygon) the winner is the RECT, not the 5-vert jitter
+    // polygon. We then promote THAT winning template over circle, so a rough square
+    // reads Rectangle (not Polygon) while still beating a circle. A min-area Rect
+    // ALWAYS fits a closed cloud (4 verts), so the presence of a low-vertex read
+    // alone is NOT n-gon evidence — it must also out-fit the round read by the
+    // MED-2 factor to count as a real n-gon.
+    let bestNgon: ShapeCandidate | null = null;
+    for (const c of jitterFamily) {
+      if (vertsOf(c) > POLYGON_NGON_MAX_VERTS) continue;
+      if (!bestNgon || c.score > bestNgon.score) bestNgon = c;
+    }
+    const ngonWins =
+      !!bestNgon &&
+      !!bestRound &&
+      bestNgon.normErr <= SNAP_MAX_NORM_ERR &&
+      bestNgon.normErr * POLYGON_OVER_CIRCLE_ERR_FACTOR <= bestRound.normErr;
+
+    // A low-vertex template is "competitive" with the round read when it fits at
+    // least as well as the circle — that means the shape really is a cornered
+    // square / n-gon (even a very rough one), NOT a wobbly circle, so MED-1 must
+    // NOT promote the round read. (A genuinely-round wobbly circle has only a
+    // HIGH-vertex jitter polygon — no competitive low-vertex template — so MED-1
+    // still fires for it.)
+    const roundBeatsTemplates = !bestNgon || !bestRound || bestRound.normErr < bestNgon.normErr;
+
+    if (ngonWins && bestNgon) {
+      // MED-2: the real n-gon out-fits the circle by the factor → it wins over
+      // every round read (the round reads stay in the chip to cycle to).
+      const maxRoundScore = Math.max(...roundCands.map((c) => c.score));
+      if (bestNgon.score <= maxRoundScore) bestNgon.score = maxRoundScore + COMPLEXITY_PRIOR;
+    } else if (
+      bestRound &&
+      bestRound.normErr <= ROUND_OVER_POLYGON_NORMERR &&
+      roundBeatsTemplates &&
+      !hasGoodStar
+    ) {
+      // MED-1: round evidence is good, NO competitive low-vertex template (the only
+      // competing jitter reads are a min-area Rect / wobble Polygon that merely
+      // bound the cloud, both fitting WORSE than the circle). Promote the round
+      // read above the jitter family so an ultra-wobbly circle defaults to Circle,
+      // not Rectangle/Polygon. Star is protected by the hasGoodStar guard; a rough
+      // square (whose rect fits as well as / better than the circle) is protected
+      // by roundBeatsTemplates.
+      const maxJitterScore = jitterFamily.length
+        ? Math.max(...jitterFamily.map((c) => c.score))
+        : -Infinity;
+      if (bestRound.score <= maxJitterScore) bestRound.score = maxJitterScore + COMPLEXITY_PRIOR;
+    }
+  }
+
   candidates.sort((a, b) => b.score - a.score);
 
   const best = candidates[0];
@@ -1562,6 +1923,21 @@ export function fitStroke(raw: StrokeInputPoint[], action: SnapAction = 'snap'):
   // Chip set: candidates within 2× the threshold, ranked, + original last.
   const chipCutoff = SNAP_MAX_NORM_ERR * CHIP_CANDIDATE_ERR_MULT;
   const chip = candidates.filter((c) => c.normErr <= chipCutoff);
+  // ROUND CHIP GUARANTEE (MED-1): the user must ALWAYS be able to recover a
+  // circle/ellipse when there's strong round evidence, even when a rect/polygon
+  // also fits and the round normErr would otherwise miss the 2× cutoff. Splice
+  // any strong-round candidate that the cutoff dropped back into the chip (ranked
+  // by score alongside the rest), so Circle never disappears from the cycle.
+  for (const c of candidates) {
+    if (
+      (c.kind === 'circle' || c.kind === 'ellipse') &&
+      c.normErr <= ROUND_CHIP_GUARANTEE_NORMERR &&
+      !chip.includes(c)
+    ) {
+      chip.push(c);
+    }
+  }
+  chip.sort((a, b) => b.score - a.score);
   const ranked = (accepted ? chip : []).slice();
   ranked.push(originalCandidate);
 
