@@ -450,6 +450,21 @@ function extractRegionPath(el: SVGElement): string | null {
       // Open paths can't be hachured (no closed area) — caller treats as outline
       return null;
 
+    case 'g': {
+      // U1: uploaded SVGs often wrap geometry in <g fill="#…"><path…/></g>. The
+      // <g> is classified as ONE region but has no own geometry → null → zero
+      // fill marks (fill-style a no-op on grouped uploads). Union the group's
+      // renderable LEAF geometry into one multi-subpath d so the <g> becomes a
+      // fillable region (rough.js clips fine to a compound path; nested <g>
+      // recurse). The <g>'s own fill (signals reads it directly) drives darkness.
+      const parts: string[] = [];
+      for (const child of Array.from(el.children)) {
+        const cd = extractRegionPath(child as unknown as SVGElement);
+        if (cd) parts.push(cd);
+      }
+      return parts.length ? parts.join(' ') : null;
+    }
+
     default:
       return null;
   }
