@@ -20,7 +20,7 @@ _Last full comb: 2026-06-13 (whole session + summary + memories + round plan + d
 
 ## 🐛 3D BUGS
 - 🟡 **svg-port 3D** ("all hella broken" → uniform hachure slab, drawing absent) → REBUILT + committed (2c23850): drawing now ON the form, surface-locked, carved (emissive ink + displacement + normal). STRUCTURE fixed. 🔵 CRAFT pending: marks read FAINT — needs bold-carve tuning + Sebs's eye. ← pushing now.
-- 🔴 **svg-port RETAIN 2D vibe** AND feel FULLY 3D (carved, not plopped on top) — main loop, in progress.
+- 🟡 **svg-port RETAIN 2D vibe** AND feel FULLY 3D (carved, not plopped) — STRUCTURAL FIX DONE + committed (ffab74b): svg-port always carves on a single mass cap, so marks show in ALL modes (auto no longer a dark blob — face carved + catches light, live-verified). 🔵 REMAINING = SEBS EYE: jagged-silhouette vs boldness tradeoff (displacement lever) + final boldness — present options in AM.
 - 🔴 **svg-port shading svg→3D** (no double-shade/wash of 2D tone) — design resolved (emissive ink + lit relief); verify in tuning.
 - 🟢 **Faceted/jagged silhouette rims** ("weird polygon artifacts in different 3d things") → FIXED + committed (186a1a4): corner-aware multi-pass Chaikin on the smoothed contour (circle rim 39.8°→3.8°, square corners pinned/sharp, watertight, 51/51 smoke, tsc, live-verified circle smooth + square sharp). 2D crisp-fill lane untouched.
 - 🟢 RC-2 solid buries hand → bas-relief. RC-5 wet-ink/charcoal dead → fixed. Arrow→rod default.
