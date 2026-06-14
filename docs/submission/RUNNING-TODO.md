@@ -60,6 +60,16 @@ Structure (Sebs, restated): the **full user flow** checked end-to-end once the s
 - METHOD = true OFAT (one object, one toggle, one change vs Clean) at SCALE via **parallel agents, one object each** (`feedback_parallel_agent_verification_and_feed`): parallelism = throughput, each agent = the rigorous paired-with-Clean read. Every result feeds the dataset. NOT fast pixel-triage — that's the per-stage pre-check, this is the eyeball cert.
 - DATASET adapters still TODO: `--from-ofat-manualdraw`, `--from-ofat-upload`, `--from-ofat-drawtools` (findings JSONs preserved on disk).
 
+## 🐛 BUG-HUNT FINDINGS (workflow wbtntkavw, 11 agents/3 rounds, 2026-06-14)
+- 🔴 **O1 (MED) — 2D→3D flip silently DROPS shade/tone regions** — only INK converts; tone vanishes, no in-frame note. SAME root cause as fill→3D (Bug 1). ← fixing now.
+- 🟡 **S1 — /playground "3D" toggle is a DEAD control** (button highlights, no canvas mounts, stays 2D). Workflow SAFE-FIXED in worktree (honesty-gate pattern) — HARVEST. `DeskDoodlesPlayground.tsx`.
+- 🔴 **U1 (LOW) — personalSpace READ helpers don't gate on isPersonalSpaceDbReady()** — flag-on-before-migrations fires 404/400 on every /desk mount (degrades gracefully, default-OFF clean). `personalSpace.ts` getMyProfile/listMyDrawer. Clean safe fix.
+- 🔴 **O5 (LOW) — single dot/tap → zero strokes, no feedback** (TAP_SLOP_PX=6, by-design but silent). Allow dot marks or micro-feedback. `DrawSurface.tsx`.
+- 🔴 **O6 (LOW) — off-canvas drag selects UI text** (no `user-select:none` on canvas chrome). `DrawSurface.tsx`/page chrome.
+- 🔵 **O3 (LOW) — no responsive/mobile layout** on /canvas + /desk (fixed chrome > viewport at ≤400px). Desktop-first scope gap → SEBS decision: in/out for makeathon?
+- 🔵 **O4 (LOW, informational) — OOB `?desk=999/abc/<script>` silently → desk 0** (safe, no XSS). Add not-found state or leave. SEBS decision.
+- O2 = svg-port absent@auto = already Bug 2 (don't double-count).
+
 ## 🔁 PROCESS / QUALITY (standing)
 - 🟡 **THE LOOP** — audit→fix→re-audit, multiple iterations until air-tight (iter-2 fires after fill+redraw+svg-port settle).
 - 🟡 **Keep feeding the smart/ML dataset** from every audit/sweep/pick.
