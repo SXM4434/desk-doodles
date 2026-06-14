@@ -257,14 +257,15 @@ export interface SvgPortTextureResult {
  *  on hairlines), so the heavy lifting of the "engraved" READ rides the steep-
  *  wall normalMap (geometry-free, never tears); 0.15 is the deep-but-safe pair.
  *  Boldness variants: subtle 0.13 · medium 0.15 · bold 0.17. */
-export const RELIEF_DISPLACEMENT_SCALE = 0.15;
+export const RELIEF_DISPLACEMENT_SCALE = 0.17;
 
 // ── ADAPTIVE-CARVE constants (craft pass 2026-06-13) ────────────────────────
 /** Min-filter half-width as a fraction of the long edge — the SPARSE-line
- *  fattener. SHRUNK 0.008→0.0045: still widens hairlines into legible grooves,
- *  but small enough that it no longer bridges adjacent hachure lines in dense
- *  fills (the bridging is what flooded dense regions to flat black). */
-const GROOVE_FRAC = 0.0045;
+ *  fattener. 0.0045→0.006 (sparse-legibility pass 2026-06-13): a thin pen line
+ *  on a near-white cap reads faint because the groove is too narrow to throw a
+ *  shadow; a slightly wider fatten gives isolated hairlines a channel the rake
+ *  catches, still below the dense-hachure spacing so it doesn't re-bridge fills. */
+const GROOVE_FRAC = 0.007;
 /** Neighborhood-luminance band that crossfades the carve from "fatten the
  *  groove" (open paper) to "keep the hachure grain, floor-lifted" (dense fill).
  *  Above DENSE_LO = sparse (full fatten); below DENSE_HI = dense (full grain).
@@ -275,15 +276,42 @@ const DENSE_HI = 0.42;
  *  A packed fill bottoms out at this dark-GREY value instead of pure black, so
  *  the displaced cap keeps a continuous wall the light rakes (texture), and the
  *  hachure stripe↔gap grain rides on top. The deep black is reserved for true
- *  isolated grooves where it reads as a crisp carved line, not a muddy pit. */
-const DENSE_FLOOR = 0.34;
+ *  isolated grooves where it reads as a crisp carved line, not a muddy pit.
+ *  0.34→0.30 (sparse pass): a touch deeper so dense fills carve a little harder
+ *  without flooding — verified still legible-not-black in the boldness board. */
+const DENSE_FLOOR = 0.28;
 /** Sobel normal z = 1/NORMAL_STRENGTH; LOWER = steeper groove walls = stronger
- *  carved read head-on. Hoisted to a module const so the calibration tune hook
- *  can reference it (was an inline const in the build fn). */
-const NORMAL_STRENGTH = 0.85;
+ *  carved read head-on. 0.85→0.6 (sparse pass): steeper walls so an isolated
+ *  groove throws a bolder bright-edge/shadow-edge under the grazing key — the
+ *  single biggest lever for "the marks read engraved head-on, not faint". */
+const NORMAL_STRENGTH = 0.5;
 /** Max bold-ink coverage — densest source ink lands at this grey, not pure ink,
- *  so emissive matches the floored carve (dark-grey, never flat black). */
-const BOLD_INK_MAX = 0.82;
+ *  so emissive matches the floored carve (dark-grey, never flat black). 0.82→
+ *  0.94 (sparse pass): the cap exists to stop a DENSE flood reading solid black;
+ *  it was also needlessly weakening isolated marks. Raised here, and the SPARSE-
+ *  INK-FLOOR below lifts isolated marks past it — dense stays grain, sparse goes
+ *  near-ink. */
+const BOLD_INK_MAX = 1.0;
+/** SPARSE marks (low local density = isolated lines on open paper) get their ink
+ *  coverage lifted to AT LEAST this, overriding BOLD_INK_MAX, so a thin face line
+ *  reads as near-solid ink (the contrast that makes it legible) while a dense
+ *  fill — where flooding-to-black is the risk — keeps the BOLD_INK_MAX cap and
+ *  its stripe↔gap grain. This is the core sparse-faint fix: bold the lonely
+ *  marks, cap the crowded ones. (0 = off → pure BOLD_INK_MAX everywhere.) */
+const SPARSE_INK_FLOOR = 0.62;
+/** Paper-substrate albedo dim (multiplies the paper fill of the emissive, NOT
+ *  the ink). A near-white paper cap under the studio rig is GLOSSY-bright and
+ *  washes shallow ink contrast (round-1 caveat). Dimming the paper to a warm
+ *  mid-light grey restores the ink↔paper contrast frame so engraved marks pop —
+ *  while the ink stays near-black, so the relief reads. 1 = no dim. */
+const PAPER_DARKEN = 0.72;
+/** AO / groove-shadow strength baked INTO the emissive. The carved relief has
+ *  only a Sobel normal (no aoMap — that needs a 2nd UV channel we don't plumb);
+ *  on a flat near-white cap the normal alone reads weak head-on. We darken the
+ *  emissive in/around a groove proportional to how recessed it is, so every
+ *  carved channel reads as a shadowed crevice even before the rake — the
+ *  texture-space AO research lever. 0 = off. */
+const AO_STRENGTH = 0.7;
 
 /** Build the svg-port channel textures from the REAL styled SvgStyleTransform
  *  markup, registered to the geometry's world front-face window. ASYNC — the
@@ -322,6 +350,10 @@ export async function buildSvgPortTexture(
   const grooveFrac = ct.grooveFrac ?? GROOVE_FRAC;
   const boldMaxT = ct.boldMax ?? BOLD_INK_MAX;
   const normalStrengthT = ct.normalStrength ?? NORMAL_STRENGTH;
+  // sparse-legibility levers (sparse pass 2026-06-13) — also tune-hook readable.
+  const sparseInkFloorT = ct.sparseInkFloor ?? SPARSE_INK_FLOOR;
+  const paperDarkenT = ct.paperDarken ?? PAPER_DARKEN;
+  const aoStrengthT = ct.aoStrength ?? AO_STRENGTH;
 
   const rawSpanX = bbox.maxX - bbox.minX;
   const rawSpanY = bbox.maxY - bbox.minY;
@@ -467,7 +499,7 @@ export async function buildSvgPortTexture(
   // Density radius — a few groove-widths so it averages OVER the hachure spacing
   // (reads "this neighborhood is a fill", not "this is one line").
   const DENS_R = Math.max(4, Math.round(longPx * 0.018));
-  const carve = (() => {
+  const carveAndDensity = (() => {
     // (1) separable min-filter → minF (the fattened-groove field).
     const tmp = new Float32Array(w * h);
     for (let y = 0; y < h; y++) {
@@ -544,8 +576,12 @@ export async function buildSvgPortTexture(
       // Sparse path: the deep fattened groove (hairlines read as bold channels).
       out[i] = minF[i] * (1 - denseW) + denseCarve * denseW;
     }
-    return out;
+    // Return density too — the bold-ink pass uses it to lift ISOLATED marks past
+    // the dense cap (SPARSE_INK_FLOOR) so sparse line-art reads near-ink.
+    return { carve: out, density };
   })();
+  const carve = carveAndDensity.carve;
+  const density = carveAndDensity.density;
 
   // ── BOLD INK (2026-06-13, craft pass 2): thin pen lines anti-alias to faint
   // gray at texture scale → the drawing reads washed-out on the 3D form. We bold
@@ -569,19 +605,56 @@ export async function buildSvgPortTexture(
       return { r: d[0], g: d[1], b: d[2] };
     } catch { return { r: 42, g: 38, b: 34 }; }
   })();
-  const BOLD_MAX = boldMaxT; // cap coverage so densest ink stays dark-grey, not solid
+  // SPARSE-INK-FLOOR + PAPER-DARKEN + AO (sparse-legibility pass 2026-06-13).
+  // The crux of "sparse line-art reads faint on a glossy white cap" is CONTRAST:
+  //   · sparse ink was capped at BOLD_INK_MAX (an anti-flood device meant for
+  //     DENSE fills) so isolated marks never reached deep ink → faint;
+  //   · the near-white paper substrate, lit bright by the studio rig, washed out
+  //     what little ink contrast remained (round-1 caveat: "glossy white cap");
+  //   · the shallow carve had only a Sobel normal — weak head-on on a flat cap.
+  // Fix, all per-pixel from the same source luminance + density + carve fields:
+  //   1. SPARSE marks (high local density = open paper) get their bold cap lifted
+  //      from BOLD_INK_MAX toward 1.0 (≥ SPARSE_INK_FLOOR coverage) so a lonely
+  //      face line goes near-solid ink. DENSE fills keep BOLD_INK_MAX + grain.
+  //   2. PAPER side (non-ink) is dimmed by PAPER_DARKEN so the substrate reads a
+  //      warm mid-light grey, not glossy white — restoring the ink↔paper frame.
+  //   3. AO: every pixel is darkened proportional to how RECESSED its carve is
+  //      (groove shadow baked in), so each channel reads as a shadowed crevice
+  //      even before the grazing rake — the texture-space AO research lever.
+  const BOLD_MAX = boldMaxT; // dense-fill cap (densest crowded ink stays dark-grey)
   for (let i = 0; i < w * h; i++) {
-    // coverage from the SOURCE pixel (preserves gaps): 1 at an ink core (lum≈0),
-    // 0 at paper (lum≥INK_EDGE). Per-pixel → dense hachure keeps its grain.
-    const INK_EDGE = 0.66;
-    let cov = (INK_EDGE - lum[i]) / INK_EDGE;
-    cov = cov < 0 ? 0 : cov > 1 ? 1 : cov;
-    cov *= BOLD_MAX;
-    if (cov <= 0) continue;
     const o = i * 4;
-    src.data[o]     = Math.round(src.data[o]     * (1 - cov) + inkRgb.r * cov);
-    src.data[o + 1] = Math.round(src.data[o + 1] * (1 - cov) + inkRgb.g * cov);
-    src.data[o + 2] = Math.round(src.data[o + 2] * (1 - cov) + inkRgb.b * cov);
+    // (1) ink coverage from the SOURCE pixel (preserves gaps): 1 at an ink core
+    // (lum≈0), 0 at paper (lum≥INK_EDGE). Per-pixel → dense hachure keeps grain.
+    const INK_EDGE = 0.66;
+    let covRaw = (INK_EDGE - lum[i]) / INK_EDGE;
+    covRaw = covRaw < 0 ? 0 : covRaw > 1 ? 1 : covRaw;
+    // sparseness: density 1 = open paper (isolated mark) → 0 = dense fill. The
+    // bold cap for THIS pixel slides from BOLD_MAX (dense) up to max(BOLD_MAX,
+    // SPARSE_INK_FLOOR-scaled-to-1) for an isolated mark, so sparse goes near-ink.
+    const sparseness = density[i] < 0 ? 0 : density[i] > 1 ? 1 : density[i];
+    const sparseCap = Math.max(BOLD_MAX, sparseInkFloorT + (1 - sparseInkFloorT) * sparseness);
+    const cov = covRaw * sparseCap;
+    if (cov > 0) {
+      src.data[o]     = Math.round(src.data[o]     * (1 - cov) + inkRgb.r * cov);
+      src.data[o + 1] = Math.round(src.data[o + 1] * (1 - cov) + inkRgb.g * cov);
+      src.data[o + 2] = Math.round(src.data[o + 2] * (1 - cov) + inkRgb.b * cov);
+    }
+    // (2) PAPER-DARKEN — dim the paper substrate, but NOT the ink (covRaw gates
+    // it). paperW = 1 on bare paper → 0 at an ink core, so ink stays deep and the
+    // surrounding paper drops to a warm mid grey (contrast frame restored).
+    const paperW = 1 - covRaw;
+    const paperMul = 1 - (1 - paperDarkenT) * paperW;
+    // (3) AO groove-shadow — darken by how recessed the carve is here (carve 1 =
+    // flat surface → no AO; carve 0 = deepest groove → full AO). Applies to ink
+    // AND the paper immediately around a groove, so the channel reads shadowed.
+    const aoMul = 1 - aoStrengthT * (1 - carve[i]);
+    const mul = paperMul * aoMul;
+    if (mul < 1) {
+      src.data[o]     = Math.round(src.data[o]     * mul);
+      src.data[o + 1] = Math.round(src.data[o + 1] * mul);
+      src.data[o + 2] = Math.round(src.data[o + 2] * mul);
+    }
   }
   emCtx.putImageData(src, 0, 0); // emissive now carries the BOLD inked drawing
 

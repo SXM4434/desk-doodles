@@ -146,7 +146,18 @@ export const STUDIO_ENV = {
  *  material battery renders through the EXACT product rig (the tier-2 board
  *  harness omitted the Environment bake, which is precisely the gap that let
  *  the env-reflection tan band ship unseen). */
-export function StudioRig() {
+export function StudioRig({ dimFill = false }: { dimFill?: boolean } = {}) {
+  // SVG-PORT FILL TRIM (sparse-legibility pass 2026-06-13, round-1's "cheapest
+  // next lever = trim the studio rig's fill"): the full ambient/hemisphere/near-
+  // point flood lights a near-white svg-port cap so evenly that SHALLOW carved
+  // relief catches no shadow — the marks wash out. When svg-port is the active
+  // style we drop the omnidirectional fills HARD so the form is shaped almost
+  // entirely by the grazing svg-port key (added in the scene) — that rake is what
+  // makes the grooves throw the highlight/shadow that reads as engraved. Native/
+  // Hatch keep the full rig (dimFill stays false → byte-identical for them).
+  const amb = dimFill ? 0.07 : 0.25;
+  const hemi = dimFill ? 0.16 : 0.55;
+  const pt = dimFill ? 14 : 75;
   return (
     <>
       {/* Studio rig — Free Stroke key+fill+rim structure (positions verbatim
@@ -155,16 +166,18 @@ export function StudioRig() {
           the ambient floor drops so form shading keeps its gradient range.
           The hatch/svg-port ShaderMaterial computes its own lambert from the
           same key/fill directions — the rig stays for Native + shadows. */}
-      <ambientLight intensity={0.25} />
-      <hemisphereLight args={['#fff7e8', '#cdbfa6', 0.55]} />
+      <ambientLight intensity={amb} />
+      <hemisphereLight args={['#fff7e8', '#cdbfa6', hemi]} />
       <directionalLight position={[5, 8, 5]} intensity={1.45} color="#fff3e0" />
       <directionalLight position={[-4, 2, -2]} intensity={0.5} color="#e3eaf2" />
       <directionalLight position={[0, -3, -5]} intensity={0.3} />
       {/* Soft near point light (white-paper adaptation): directionals shade a
           FLAT camera-facing extrude face perfectly uniformly (constant N·L) —
           a nearby point light varies with position, so flat faces get a real
-          brightness gradient instead of the blob read. decay 2 physical. */}
-      <pointLight position={[4, 5, 6.5]} intensity={75} decay={2} color="#fff6e6" />
+          brightness gradient instead of the blob read. decay 2 physical.
+          DROPPED for svg-port (dimFill): this broad near-fill is the main
+          shallow-relief washer. */}
+      <pointLight position={[4, 5, 6.5]} intensity={pt} decay={2} color="#fff6e6" />
       {/* Offline studio environment (no HDR fetch) — ported from Free Stroke:
           clearcoat/sheen need something to reflect or the physical material
           collapses to flat diffuse. resolution 256, frames={1} bakes it ONCE
@@ -784,19 +797,25 @@ function StrokeMeshes({
       displacementBias: -dispScale,
       emissive: new THREE.Color(0xffffff),
       emissiveMap: svgPortTex.emissive,    // partial self-lit → ink values resist shadow wash
-      // RAISED 0.22→0.30 (craft pass 2): the carve no longer floods dense ink to
-      // black, so a bit more self-lit makes the hand-drawn ink VALUES read true
-      // (the 2D vibe) while the relief still carries the 3D. Below ~0.35 the LIT
-      // carve still dominates the read so it looks engraved, not printed flat.
-      emissiveIntensity: tune.emissiveIntensity ?? 0.30,
+      // LOWERED 0.30→0.18 (sparse-legibility pass 2026-06-13): high emissive makes
+      // the WHOLE cap self-glow uniformly — that FLAT glow is what washed sparse
+      // marks out (the lit relief, which is what reads as "engraved", got drowned
+      // by the constant self-light). At 0.18 the emissive still keeps the ink
+      // VALUES from crushing to pure shadow (the 2D vibe), but the lit carve now
+      // DOMINATES the read so the marks look incised, not printed-flat. The carve-
+      // side AO + paper-darken (drawingTexture) do the contrast work that the high
+      // emissive used to fake. */
+      emissiveIntensity: tune.emissiveIntensity ?? 0.12,
       roughness: 1.0,                      // matte — no plastic highlight over the ink
       metalness: 0.0,
     });
-    // STRENGTHENED 1.6→2.6 (craft pass 2, sparse-carve read): the Sobel normal
-    // walls tilt harder so isolated thin grooves throw a bolder light/shadow edge
-    // head-on — sparse line-art reads as engraved channels, not ink printed on a
-    // glossy pillow. Y inverted (canvas y-down → world y-up).
-    const ns = tune.normalScale ?? 2.6;
+    // STRENGTHENED 2.6→3.4 (sparse-legibility pass 2026-06-13): the Sobel normal
+    // walls tilt harder still so an ISOLATED thin groove throws a bold light/
+    // shadow edge head-on — the single biggest "the mark reads engraved, not
+    // faint" lever on a flat near-white cap. Paired with the steeper carve-side
+    // NORMAL_STRENGTH (0.6) and the trimmed studio fill. Y inverted (canvas
+    // y-down → world y-up).
+    const ns = tune.normalScale ?? 4.0;
     m.normalScale = new THREE.Vector2(ns, -ns);
     m.needsUpdate = true;
     return m;
@@ -1113,7 +1132,9 @@ export function Stroke3DScene({
       style={{ width: '100%', height: '100%' }}
     >
       <color attach="background" args={[bg]} />
-      <StudioRig />
+      {/* svg-port trims the omnidirectional fill so shallow relief catches the
+          grazing carve key (sparse-legibility pass). Native/Hatch = full rig. */}
+      <StudioRig dimFill={style3d === 'svg-port'} />
       {/* svg-port carve light — a LOW grazing key so the drawing's carved
           grooves cast micro-shadow and read as engraved relief (the high studio
           key alone leaves shallow grooves flat). STRENGTHENED + lowered
