@@ -222,8 +222,19 @@ export const SOLID_MIN_LOOP_AREA = 2;
 /** RDP epsilon for contour simplification, in grid-cell units (< 1 cell).
  *  0.6 filters the marching-squares staircase (~0.25–0.35 cell deviation)
  *  while keeping curvature; one Chaikin pass then rounds the corners so a
- *  drawn circle reads as a circle, not a 14-gon. */
+ *  drawn circle reads as a circle, not a 14-gon. This GENTLE epsilon is what
+ *  the CRISP 2D-fill path needs (conform tightly to the drawn boundary). */
 export const SOLID_RDP_EPSILON_CELLS = 0.6;
+/** STAIRCASE-COLLAPSE epsilon (grid-cell units) for the SMOOTHED 3D-solid /
+ *  svg-port contour ONLY. The gentle 0.6 epsilon leaves the marching-squares
+ *  staircase intact on a circle (max per-vertex turn ~45° — the facet read
+ *  Sebs sees), and a single Chaikin pass barely dents it. Re-decimating the
+ *  contour at ~1.4 cells collapses the staircase steps (max turn → ~20°) so the
+ *  subsequent multi-pass corner-aware Chaikin can rebuild a TRUE smooth curve,
+ *  while a real corner's large deviation always survives RDP (it's the farthest
+ *  point on its segment). Cell-unit space, so it scales with grid resolution.
+ *  Crisp 2D fill keeps the gentle 0.6 (no staircase collapse). */
+export const SOLID_SMOOTH_DECIMATE_EPSILON_CELLS = 1.4;
 
 /** Tier-2 Solid edge family: 'eased' = today's rounded bevel band (the
  *  EXTRUDE_BEVEL_* constants, byte-identical default); 'crisp' = bevel off —
@@ -766,15 +777,27 @@ function isSlabEligible(world: THREE.Vector3[]): boolean {
   return !loopSelfIntersectsXY(loop);
 }
 
-/** 2D-parity outline dispatch on a deduped closed loop: ≤8 anchors =
- *  polygonal intent (straight edges, sharp corners, untouched); 9+ anchors =
- *  curve intent — sample a CLOSED centripetal Catmull-Rom through the anchors
- *  so the outline is the same smooth family the 2D render shows. Shared by
- *  the plain extrude AND the donut-parity holes so outer wall and hole rim
- *  keep the same shape family. May throw on pathological input — callers run
- *  it inside their honest-degradation try. */
+/** 2D-parity outline dispatch on a deduped closed loop:
+ *   • 9+ anchors = curve intent → CLOSED centripetal Catmull-Rom through the
+ *     anchors (the same smooth family the 2D render shows);
+ *   • ≤8 anchors = polygonal intent → corner-aware Chaikin smoothing, which
+ *     PINS sharp corners (a 4-anchor square keeps all four 90° corners verbatim
+ *     → byte-identical to the old untouched path) but ROUNDS the shallow turns
+ *     of a low-anchor circle/blob so its extruded RIM stops reading as flat
+ *     facets (the systemic faceted-silhouette fix — Sebs's "polygon artifacts").
+ *  Shared by the plain extrude AND the donut-parity holes so outer wall and
+ *  hole rim keep the same shape family. May throw on pathological input —
+ *  callers run it inside their honest-degradation try. */
 function smoothClosedOutline(pts: THREE.Vector3[]): THREE.Vector3[] {
-  if (pts.length < EXTRUDE_SMOOTH_MIN_ANCHORS) return pts;
+  if (pts.length < 3) return pts;
+  if (pts.length < EXTRUDE_SMOOTH_MIN_ANCHORS) {
+    // Polygonal intent: corner-aware smoothing on the 2D loop. Squares stay
+    // square (every corner pinned → input returned unchanged); a coarse
+    // low-poly circle rounds into a curve.
+    const flat = pts.map((v) => [v.x, v.y] as [number, number]);
+    const rounded = smoothClosedLoopCornerAware(flat);
+    return rounded.map(([x, y]) => new THREE.Vector3(x, y, 0));
+  }
   const loop = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.5);
   const divisions = Math.min(
     pts.length * EXTRUDE_SMOOTH_SAMPLES_PER_ANCHOR,
@@ -1333,6 +1356,144 @@ function chaikinClosed(loop: Array<[number, number]>): Array<[number, number]> {
   return out;
 }
 
+// ── Corner-aware contour smoothing (THE faceted-silhouette fix, 2026-06-13) ──
+// The marching-squares + RDP contour is a coarse polygon: a drawn circle reads
+// as a ~14-gon with visible flat facets on the extruded RIM (Sebs: "weird
+// polygon artifacts in different 3d things"). A SINGLE Chaikin pass only doubles
+// the vertex count — a 14-gon → 28-gon still catches the studio key light as
+// flats. The fix (research-backed — Chaikin's corner-cutting run in MULTIPLE
+// passes converges to a quadratic B-spline; angle-limited Chaikin from the
+// path-smoothing literature keeps straight runs straight and sharp corners
+// sharp): run several passes, but PIN any vertex whose turn exceeds a corner
+// threshold so a drawn SQUARE keeps its 90° corners while a circle's gentle
+// staircase rounds into a true curve. Watertightness is preserved — smoothing
+// only nudges existing boundary vertices toward their neighbours (the loop
+// never opens; each new point lies strictly inside an existing edge so no new
+// self-intersection, and the area only shrinks by sub-pixel corner-cuts).
+
+/** Turn angle (radians) at/above which a vertex is a REAL corner and is PINNED
+ *  (never corner-cut), so intentional sharp corners survive smoothing. A drawn
+ *  square turns ~90° (π/2 ≈ 1.571) at each corner; a circle/blob's per-vertex
+ *  turn on a ~14–28-gon contour is ≪ this. 1.05 rad ≈ 60° sits comfortably
+ *  between the two: anything sharper than a hexagon corner is treated as
+ *  deliberate. (Turn angle = π − interior angle: 0 = straight, π = full
+ *  reversal.) */
+export const CONTOUR_CORNER_PIN_RAD = 1.05;
+/** How many corner-aware Chaikin passes to run on a closed contour. 3 passes
+ *  takes a 14-gon to a smooth ~64-point curve on the rounded segments while
+ *  pinned corners stay crisp — the rim reads as a curve, not facets, without an
+ *  unbounded vertex blow-up (cap below keeps perf sane). */
+export const CONTOUR_SMOOTH_PASSES = 3;
+/** Hard ceiling on smoothed-contour vertex count (per loop) so a dense input
+ *  contour can't explode the mesh. A circle rim at ~96 points already reads
+ *  perfectly smooth; beyond that is wasted verts. */
+export const CONTOUR_SMOOTH_MAX_POINTS = 192;
+
+/** Turn angle (radians, 0..π) at vertex i of a CLOSED loop — the deviation of
+ *  the path from straight (0 = collinear, π/2 = right angle, π = doubles back).
+ *  Degenerate (coincident-neighbour) vertices report 0 (treated as smoothable
+ *  filler, never a corner). */
+function turnAngleAt(loop: Array<[number, number]>, i: number): number {
+  const n = loop.length;
+  const [px, py] = loop[(i - 1 + n) % n];
+  const [cx, cy] = loop[i];
+  const [nx, ny] = loop[(i + 1) % n];
+  const ax = cx - px, ay = cy - py;
+  const bx = nx - cx, by = ny - cy;
+  const magA = Math.hypot(ax, ay);
+  const magB = Math.hypot(bx, by);
+  if (magA < 1e-12 || magB < 1e-12) return 0;
+  const cos = Math.min(Math.max((ax * bx + ay * by) / (magA * magB), -1), 1);
+  return Math.acos(cos); // 0 = straight, π = reversal
+}
+
+/** Mark which vertices of a CLOSED loop are CORNERS to pin (never corner-cut).
+ *  Two ways to qualify, so BOTH a clean vector corner AND a raster-chamfered
+ *  one survive WITHOUT pinning a uniformly-curving circle/polygon:
+ *    (1) DIRECT — the vertex's own turn ≥ pinRad (a sharp single-vertex corner,
+ *        e.g. an Extrude/vector square's exact 90°).
+ *    (2) CONCENTRATED — marching-squares quantizes a 90° corner into a 2-step
+ *        ~45° chamfer (no single vertex clears pinRad). Such a corner is a
+ *        SHORT high-turn cluster bordered by STRAIGHT runs: the vertex + its
+ *        sharper neighbour sum ≥ pinRad WHILE the next ring out (±2) is nearly
+ *        flat (Σ < flatRad). A regular polygon / coarse circle turns UNIFORMLY
+ *        — the ±2 ring is just as bent as the centre — so it fails the
+ *        flatness test and rounds normally. Only the cluster PEAK pins (local
+ *        max) so the corner stays a single crisp vertex, never a flat chamfer.
+ *  This keeps a drawn square SQUARE through the raster→smooth path while an
+ *  octagon / circle rounds. */
+function markCorners(loop: Array<[number, number]>, pinRad: number): boolean[] {
+  const n = loop.length;
+  const turn = new Array<number>(n);
+  for (let i = 0; i < n; i++) turn[i] = turnAngleAt(loop, i);
+  const pinned = new Array<boolean>(n).fill(false);
+  // "Flat" = the outer ring carries little turn, marking the corner as isolated
+  // rather than part of a continuous curve. Half pinRad is a comfortable gap
+  // between a straight run (~0) and uniform curvature (each vertex ~pinRad/k).
+  const flatRad = pinRad * 0.5;
+  for (let i = 0; i < n; i++) {
+    const prev = turn[(i - 1 + n) % n];
+    const next = turn[(i + 1) % n];
+    if (turn[i] >= pinRad) {
+      pinned[i] = true; // direct sharp corner
+      continue;
+    }
+    const localMax = turn[i] >= prev && turn[i] >= next;
+    const concentrated = turn[i] + Math.max(prev, next) >= pinRad;
+    const outerFlat = turn[(i - 2 + n) % n] + turn[(i + 2) % n] < flatRad;
+    if (localMax && concentrated && outerFlat) pinned[i] = true;
+  }
+  return pinned;
+}
+
+/** ONE corner-aware Chaikin pass on a CLOSED loop. Pinned vertices (markCorners)
+ *  are emitted verbatim so corners stay sharp; every other vertex is corner-cut
+ *  (the standard ¼/¾ split) so the facet read disappears. The loop stays closed
+ *  and simple — each cut point lies strictly inside an existing edge, so no new
+ *  self-intersection. A pinned vertex emits only the edge endpoints that keep
+ *  the path leaving/arriving STRAIGHT at the corner; plain edges between two
+ *  non-corners emit both Chaikin points (the classic doubling on rounds). */
+function chaikinCornerAwarePass(
+  loop: Array<[number, number]>,
+  pinRad: number,
+): Array<[number, number]> {
+  const n = loop.length;
+  if (n < 3) return loop;
+  const pinned = markCorners(loop, pinRad);
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = loop[i];
+    const [bx, by] = loop[(i + 1) % n];
+    if (pinned[i]) out.push([ax, ay]); // keep the corner exactly
+    if (!pinned[i]) out.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25]);
+    if (!pinned[(i + 1) % n]) out.push([ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]);
+  }
+  return out;
+}
+
+/** Corner-aware multi-pass smoother for a CLOSED contour loop — THE shared
+ *  facet fix. Smooths the marching-squares/RDP staircase into a curve on
+ *  rounded stretches while PINNING genuine sharp corners (drawn squares stay
+ *  square). Watertight by construction (only repositions/duplicates existing
+ *  boundary vertices inside their edges) and capped so vert count stays sane.
+ *  `passes`/`pinRad` exposed for the smoke suite; callers use the tuned
+ *  defaults. */
+function smoothClosedLoopCornerAware(
+  loop: Array<[number, number]>,
+  passes: number = CONTOUR_SMOOTH_PASSES,
+  pinRad: number = CONTOUR_CORNER_PIN_RAD,
+): Array<[number, number]> {
+  if (loop.length < 3) return loop;
+  let cur = loop;
+  for (let p = 0; p < passes; p++) {
+    if (cur.length * 2 > CONTOUR_SMOOTH_MAX_POINTS) break;
+    const next = chaikinCornerAwarePass(cur, pinRad);
+    if (next.length < 3) break;
+    cur = next;
+  }
+  return cur;
+}
+
 /** Even-odd ray-cast point-in-polygon ([x, y] loops, any consistent units).
  *  Exported: the drawn-register conversion layer (convert.ts) runs the same
  *  containment tests on drawn loop polygons. */
@@ -1478,9 +1639,15 @@ export function buildSolidGeometry(
 
     const simplify = (loop: Array<[number, number]>): THREE.Vector2[] => {
       const open = [...loop, loop[0]] as Array<[number, number]>;
-      const simple = rdpPoints(open, SOLID_RDP_EPSILON_CELLS);
+      // Staircase-collapse decimation THEN corner-aware multi-pass smoothing
+      // (was: gentle RDP + a single Chaikin pass, which left the circle a
+      // faceted ~45°-step polygon). The harder RDP removes the marching-squares
+      // steps; multi-pass corner-aware Chaikin then rebuilds a TRUE smooth curve
+      // on the rounded stretches while pinning real sharp corners (a drawn
+      // square stays square — its corners are the farthest points RDP keeps).
+      const simple = rdpPoints(open, SOLID_SMOOTH_DECIMATE_EPSILON_CELLS);
       simple.pop(); // re-open (Shape/Path close implicitly)
-      const rounded = simple.length >= 3 ? chaikinClosed(simple) : simple;
+      const rounded = simple.length >= 3 ? smoothClosedLoopCornerAware(simple) : simple;
       return rounded.map(([x, y]) => new THREE.Vector2(originX + x * cell, originY + y * cell));
     };
 
@@ -1649,9 +1816,16 @@ export function extractPoolRegions(
   // boundary instead of rounding into a blob.
   const simplifyToWorld = (loop: Array<[number, number]>): Array<[number, number]> => {
     const open = [...loop, loop[0]] as Array<[number, number]>;
-    const simple = rdpPoints(open, SOLID_RDP_EPSILON_CELLS);
+    // CRISP (2D tone fill, another lane): gentle RDP + NO smoothing — conform
+    // tightly to the drawn boundary, keep sharp corners verbatim. SMOOTHED (3D
+    // solid / svg-port cap): staircase-collapse RDP + corner-aware multi-pass
+    // Chaikin so the contour rim reads as a curve (not a facet polygon) while
+    // real corners stay pinned.
+    const eps = opts.crisp ? SOLID_RDP_EPSILON_CELLS : SOLID_SMOOTH_DECIMATE_EPSILON_CELLS;
+    const simple = rdpPoints(open, eps);
     simple.pop();
-    const rounded = opts.crisp || simple.length < 3 ? simple : chaikinClosed(simple);
+    const rounded =
+      opts.crisp || simple.length < 3 ? simple : smoothClosedLoopCornerAware(simple);
     return rounded.map(([x, y]) => [originX + x * cell, originY + y * cell]);
   };
 
