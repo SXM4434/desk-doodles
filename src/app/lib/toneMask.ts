@@ -16,6 +16,28 @@
 // That determinism is what makes the record cacheable downstream
 // (conversion-semantics-addendum.md ch.2.2).
 
+// polygon-clipping ships its methods on a single default-exported object (both
+// its ESM build `export { index as default }` and its CJS `module.exports =
+// index`), while its .d.ts declares them as NAMED exports. A default import is
+// the only form correct at BOTH type-check and runtime under Vite — a named
+// import breaks at runtime because the ESM build exposes no named exports. We
+// re-type the default object via the named-export signatures the .d.ts gives.
+import polygonClippingDefault from 'polygon-clipping';
+import type {
+  MultiPolygon,
+  Polygon as PCPolygon,
+  Ring as PCRing,
+  intersection as PCIntersection,
+  union as PCUnion,
+  difference as PCDifference,
+} from 'polygon-clipping';
+const pc = polygonClippingDefault as unknown as {
+  union: typeof PCUnion;
+  intersection: typeof PCIntersection;
+  difference: typeof PCDifference;
+};
+const { union, intersection, difference } = pc;
+
 /** Bump when the grid/extraction algorithm changes — the golden-gate pattern
  *  applied to caches (addendum ch.2.2): conversion/render caches key on
  *  SHA-1(svg ∥ strokesJson ∥ toneFillsJson ∥ extractorVersion) — append THIS
@@ -1498,4 +1520,229 @@ export function extractToneFills(grid: ToneMaskGrid): ToneFill[] {
     }
   }
   return fills;
+}
+
+// ─── Vector smooth-edge refinement for FILL patches (2026-06-13 v3) ───────────
+// THE JAGGED-EDGE FIX. extractToneFills() re-contours the band grid with
+// marching squares, so a FILL patch's `points` follow the 2px GRID — an
+// inherently STAIR-STEPPED outline that (a) notches on curves/diagonals and (b)
+// pokes a grid cell PAST the smooth perfect-freehand ink at the notch points
+// ("grey going past the red line"). v2 conformed the grid MASK to the ink but
+// the EMITTED edge stayed the grid contour, so the steps survived.
+//
+// v3 replaces the visible OUTER edge of each region-FILL patch with the ink's
+// OWN smooth getStroke curve via boolean intersection (polygon-clipping, already
+// a dependency — the doc's §2.5 "exact-taper polish"):
+//
+//   coreInterior = LARGEST component of (patch − inkUnion)
+//                  = the patch's true interior, with the thin stepped slivers
+//                    that poke past the ink dropped (they're small components).
+//   target       = inkUnion ∪ coreInterior
+//                  → its OUTER boundary IS the ink's smooth outer curve, and its
+//                    interior is filled by the core.
+//   refined      = patch ∩ target
+//                  → interior kept, the stepped overshoot clipped EXACTLY to the
+//                    ink's smooth curve. The fill reaches UNDER the ink (no
+//                    sliver — ink draws on top) but never past it (no bleed).
+//
+// Corners stay SHARP: the ink outline (getStroke) carries true corners and
+// boolean intersection never rounds/erodes — the result corner = the ink corner.
+// Pure vector — no grid, no morphology, idempotent (re-intersecting a smooth
+// result with the same target reproduces it), so it's safe to re-run after every
+// brush/eraser re-extraction. Only `src:'fill'` patches are refined; LASSO (its
+// own loop is the edge, by spec) and BRUSH (soft by design) are passed through
+// untouched.
+
+/** A closed polygon ring as polygon-clipping wants it (auto-closed, winding-
+ *  agnostic). Drops degenerate rings. */
+function toPCRing(pts: [number, number][]): PCRing | null {
+  if (pts.length < 3) return null;
+  return pts.map(([x, y]) => [x, y] as [number, number]);
+}
+
+/** Patch (outer + holes) → a polygon-clipping Polygon (ring[0]=outer, rest=holes). */
+function patchToPolygon(points: [number, number][], holes?: [number, number][][]): PCPolygon | null {
+  const outer = toPCRing(points);
+  if (!outer) return null;
+  const poly: PCPolygon = [outer];
+  if (holes) {
+    for (const h of holes) {
+      const r = toPCRing(h);
+      if (r) poly.push(r);
+    }
+  }
+  return poly;
+}
+
+/** Absolute shoelace area of a ring. */
+function ringArea(ring: PCRing): number {
+  let a = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [x1, y1] = ring[i];
+    const [x2, y2] = ring[(i + 1) % ring.length];
+    a += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(a / 2);
+}
+
+/** Round a ring to 0.1px (the same compaction the extractor uses) and drop the
+ *  duplicate closing point polygon-clipping leaves off (it returns self-closing
+ *  rings; our record stores OPEN loops the renderer closes with Z). */
+function ringToRecord(ring: PCRing): [number, number][] {
+  const out: [number, number][] = ring.map(([x, y]) => [
+    Math.round(x * 10) / 10,
+    Math.round(y * 10) / 10,
+  ]);
+  // polygon-clipping closes the ring (last === first) — re-open it.
+  if (out.length > 1) {
+    const [fx, fy] = out[0];
+    const [lx, ly] = out[out.length - 1];
+    if (fx === lx && fy === ly) out.pop();
+  }
+  return out;
+}
+
+/** Pick the single largest-area Polygon of a MultiPolygon (region fill is one
+ *  connected component; intersection can leave tiny scraps at a taper). */
+function largestPolygon(mp: MultiPolygon): PCPolygon | null {
+  let best: PCPolygon | null = null;
+  let bestA = -1;
+  for (const poly of mp) {
+    if (poly.length === 0) continue;
+    const a = ringArea(poly[0]);
+    if (a > bestA) {
+      bestA = a;
+      best = poly;
+    }
+  }
+  return best;
+}
+
+/** Refine ONE fill patch's edge to the smooth ink curve. Returns the refined
+ *  {points, holes} or null to keep the original (no usable ink nearby, or the
+ *  boolean produced nothing sane — fail safe to the grid edge, never blank). */
+function refineOneFillEdge(
+  fill: ToneFill,
+  inkOutlines: [number, number][][],
+): { points: [number, number][]; holes?: [number, number][][] } | null {
+  const patch = patchToPolygon(fill.points, fill.holes);
+  if (!patch) return null;
+  // inkUnion = the merged smooth ink BODY (the visible getStroke outlines).
+  const inkPolys: PCPolygon[] = [];
+  for (const o of inkOutlines) {
+    const r = toPCRing(o);
+    if (r) inkPolys.push([r]);
+  }
+  if (inkPolys.length === 0) return null; // no bordering ink → leave the grid edge
+  let inkUnion: MultiPolygon;
+  try {
+    inkUnion = union(inkPolys[0], ...inkPolys.slice(1));
+  } catch {
+    return null;
+  }
+  if (inkUnion.length === 0) return null;
+  // coreInterior = LARGEST component of (patch − ink) = the true interior with
+  // the thin stepped slivers-past-the-ink dropped. (A region fill's interior is
+  // one big component; the bleed slivers are small thin components.)
+  let interior: MultiPolygon;
+  try {
+    interior = difference(patch, inkUnion);
+  } catch {
+    return null;
+  }
+  const core = largestPolygon(interior);
+  // target = ink ∪ core. Outer edge = the ink's smooth curve; interior filled.
+  // If the patch is so thin the interior vanished (tiny shape, all under-ink),
+  // fall back to ink alone — the intersection then keeps the under-ink reach,
+  // which IS the whole patch there.
+  let target: MultiPolygon;
+  try {
+    target = core ? union(inkUnion, core) : inkUnion;
+  } catch {
+    return null;
+  }
+  // refined = patch ∩ target — interior kept, stepped overshoot clipped to the
+  // smooth ink curve.
+  let refined: MultiPolygon;
+  try {
+    refined = intersection(patch, target);
+  } catch {
+    return null;
+  }
+  const poly = largestPolygon(refined);
+  if (!poly || poly.length === 0) return null;
+  const outer = ringToRecord(poly[0]);
+  if (outer.length < 3) return null;
+  // Sanity: the smooth edge must not have lost most of the patch (a bad boolean
+  // would shrink it). If the refined outer area is < 40% of the grid patch's,
+  // bail to the original — never silently eat the fill.
+  const origArea = ringArea(patch[0]);
+  const newArea = ringArea(poly[0]);
+  if (origArea > 0 && newArea < origArea * 0.4) return null;
+  const holes: [number, number][][] = [];
+  for (let i = 1; i < poly.length; i++) {
+    const h = ringToRecord(poly[i]);
+    if (h.length >= 3) holes.push(h);
+  }
+  return holes.length > 0 ? { points: outer, holes } : { points: outer };
+}
+
+/** Replace each region-FILL patch's stair-stepped grid edge with the smooth
+ *  perfect-freehand ink curve (boolean intersection — see the block comment
+ *  above). `inkOutlines` = the live getStroke ink outline polygons (DrawSurface
+ *  builds these; the caller passes the FULL set, this picks the ones each patch
+ *  actually borders by bbox). Idempotent and fail-safe: any patch with no
+ *  bordering ink, or a boolean that misbehaves, keeps its original grid edge.
+ *  LASSO + BRUSH patches are returned untouched (per the per-tool spec). */
+export function smoothFillEdges(
+  fills: ToneFill[],
+  inkOutlines: [number, number][][],
+): ToneFill[] {
+  if (inkOutlines.length === 0) return fills;
+  // Pre-bbox the ink outlines once so each patch only intersects against the ink
+  // it could plausibly touch (boolean clipping is the cost — keep n small).
+  const inkBB = inkOutlines.map((o) => {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const [x, y] of o) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return { o, minX, minY, maxX, maxY };
+  });
+  return fills.map((f) => {
+    if (f.src !== 'fill' || f.points.length < 3) return f;
+    // patch bbox grown by the ink half-width-ish margin (a few px) for overlap.
+    let pMinX = Infinity;
+    let pMinY = Infinity;
+    let pMaxX = -Infinity;
+    let pMaxY = -Infinity;
+    for (const [x, y] of f.points) {
+      if (x < pMinX) pMinX = x;
+      if (x > pMaxX) pMaxX = x;
+      if (y < pMinY) pMinY = y;
+      if (y > pMaxY) pMaxY = y;
+    }
+    const M = 4; // px overlap slack (ink ribbon half-width ~2 + margin)
+    const near: [number, number][][] = [];
+    for (const b of inkBB) {
+      if (
+        b.maxX < pMinX - M ||
+        b.minX > pMaxX + M ||
+        b.maxY < pMinY - M ||
+        b.minY > pMaxY + M
+      ) {
+        continue;
+      }
+      near.push(b.o);
+    }
+    if (near.length === 0) return f;
+    const refined = refineOneFillEdge(f, near);
+    if (!refined) return f;
+    return { ...f, points: refined.points, holes: refined.holes };
+  });
 }

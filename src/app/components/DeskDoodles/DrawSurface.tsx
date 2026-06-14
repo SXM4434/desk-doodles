@@ -12,6 +12,7 @@ import {
   extractToneFills,
   rasterizeToneFills,
   rasterizeFillPatch,
+  smoothFillEdges,
   type ToneMaskGrid,
   type ToneFill,
 } from '../../lib/toneMask';
@@ -1238,6 +1239,28 @@ export function DrawSurface({
     });
   }
 
+  /** Extract the band grid → tone patches, THEN replace every region-FILL
+   *  patch's stair-stepped 2px-grid edge with the smooth perfect-freehand ink
+   *  curve (smoothFillEdges — boolean intersection with the live getStroke ink
+   *  outlines). THE jagged-edge fix (v3, 2026-06-13): the grid stays the source
+   *  of truth + drives region detection, but the EMITTED fill edge is the ink's
+   *  own smooth vector, not the grid contour. Idempotent + fail-safe, so it runs
+   *  at EVERY re-extraction (fill / lasso / brush / eraser). Lasso + brush
+   *  patches pass through untouched. */
+  function extractSmoothFills(grid: ToneMaskGrid): ToneFill[] {
+    const raw = extractToneFills(grid);
+    // Live ink outlines = the EXACT visible perfect-freehand ribbons (the same
+    // getStroke the renderer draws) for every committed stroke — the smooth
+    // target the fill edge snaps to.
+    const inkOutlines: [number, number][][] = [];
+    for (const s of strokes) {
+      if (s.points.length < 2) continue;
+      const outline = getStroke(s.points, STROKE_OPTS);
+      if (outline.length >= 3) inkOutlines.push(outline.map(([x, y]) => [x, y] as [number, number]));
+    }
+    return inkOutlines.length > 0 ? smoothFillEdges(raw, inkOutlines) : raw;
+  }
+
   /** Commit one region as a ToneFill band patch: rasterize into the band
    *  grid (REPLACE semantics, src/gapTol provenance, dilation tucks tone
    *  under the visible ink) and re-extract the record. */
@@ -1273,7 +1296,7 @@ export function DrawSurface({
       inkOutlines: inkOutlines.length > 0 ? inkOutlines : undefined,
       inkCenterlines: inkCenterlines.length > 0 ? inkCenterlines : undefined,
     });
-    setToneFills(extractToneFills(grid));
+    setToneFills(extractSmoothFills(grid));
     lastMissRef.current = false;
     logShadeFill('fill', gesture, gapMult, r, 'committed', regions.length);
   }
@@ -1337,7 +1360,11 @@ export function DrawSurface({
     }
     const band = shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3;
     rasterizeFillPatch(grid, decimateLoop(pts), [], band, 'lasso', {});
-    setToneFills(extractToneFills(grid));
+    // extractSmoothFills (not raw extract): lasso patches pass through untouched
+    // (smoothFillEdges only refines src:'fill'), and any pre-existing FILL patch
+    // keeps its smooth ink edge re-asserted (idempotent) rather than reverting to
+    // the grid contour.
+    setToneFills(extractSmoothFills(grid));
     const outcome = lastMissRef.current ? 'lasso-after-miss' : 'committed';
     lastMissRef.current = false;
     logShadeFill('lasso', 'lasso', gapMult, null, outcome, regionCount);
@@ -1507,7 +1534,9 @@ export function DrawSurface({
    *  same gestures → same grid → byte-identical record. */
   function commitToneStroke() {
     const grid = toneGridRef.current;
-    if (grid) setToneFills(extractToneFills(grid));
+    // extractSmoothFills: brush patches pass through (smoothFillEdges only
+    // refines src:'fill'); a pre-existing FILL keeps its smooth ink edge.
+    if (grid) setToneFills(extractSmoothFills(grid));
     toneGestureRef.current = false;
     setToneBrush(null);
     lastTonePtRef.current = null;
