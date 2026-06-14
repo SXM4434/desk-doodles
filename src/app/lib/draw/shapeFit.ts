@@ -921,6 +921,33 @@ function fitPolyline(sig: SnapSignals, corners: number[]): ShapeCandidate {
   };
 }
 
+/** Turn-angle below which a corner is "near-straight" and collapses into its
+ *  edge — soft over-segmentation (a hand-drawn 5-gon can yield extra mid-edge
+ *  corners). ~15°. [PaleoSketch merge-collinear / DCR]. */
+const COLLINEAR_TURN_TOL = 0.26;
+
+/** True SIDE count of a closed corner loop: count only real corners (collapse
+ *  near-collinear + duplicate vertices). Fixes Sebs's "5-gon labeled Polygon(8)"
+ *  — the label must report the SHAPE's sides, not the raw vertex count. */
+export function countTrueSides(loop: FitPoint[]): number {
+  const n = loop.length;
+  if (n < 3) return n;
+  let sides = 0;
+  for (let i = 0; i < n; i++) {
+    const a = loop[(i - 1 + n) % n];
+    const b = loop[i];
+    const c = loop[(i + 1) % n];
+    const ux = b[0] - a[0], uy = b[1] - a[1];
+    const vx = c[0] - b[0], vy = c[1] - b[1];
+    const lu = Math.hypot(ux, uy), lv = Math.hypot(vx, vy);
+    if (lu < 1e-6 || lv < 1e-6) continue; // duplicate vertex — not a real corner
+    const cos = (ux * vx + uy * vy) / (lu * lv);
+    const turn = Math.acos(Math.max(-1, Math.min(1, cos))); // 0 = straight
+    if (turn > COLLINEAR_TURN_TOL) sides++;
+  }
+  return Math.max(3, sides);
+}
+
 /** Closed corner-chain polygon (Straighten closed) — residual measured to the
  *  closed loop's segments (last vertex → first). */
 function fitPolygon(sig: SnapSignals, loopVerts: FitPoint[]): ShapeCandidate | null {
@@ -934,7 +961,7 @@ function fitPolygon(sig: SnapSignals, loopVerts: FitPoint[]): ShapeCandidate | n
     normErr,
     score: 1 - normErr,
     closed: true,
-    label: `Polygon (${loopVerts.length})`,
+    label: `Polygon (${countTrueSides(loopVerts)})`,
   };
 }
 

@@ -192,6 +192,37 @@ const RULE_dark_enclosing_body: Rule = {
   },
 };
 
+// Cluster F+ — ENCLOSING TONAL WASH: a fill-only (stroke=none) region with
+// darkness >= 0.10 that ENCLOSES line-art siblings (the shade-brush tone patch,
+// and any uploaded fill-only wash that contains line art). The enclosure locks
+// it out of RULE_root_tonal_* (need enclosesSiblingCount===0) and the inner-*
+// rules (need containedInZIndex); at Light/Mid darkness the dark-body rules
+// don't reach (>=0.55) and the wash-frame rule needs a stroke — so it fires
+// NOTHING and falls to the `paper` default → no marks (the "tone fills ignore
+// fillStyle" bug, I-2 violation: a 0.2-0.5 region must read as filled tonal).
+// Band by darkness EXACTLY as RULE_root_tonal_* (09-LOCKED-MODEL I-2) so the
+// fillStyle override (index.ts) then swaps mark grammar (I-1). Object-AGNOSTIC:
+// keys on signals, never on tone-patch identity. Confidence 0.7 ties root-tonal;
+// accumulative scoring means it only ADDS weight on regions that should be tonal
+// and can never flip a stroke-only or contained region.
+const RULE_enclosing_tonal_wash: Rule = {
+  id: 'enclosing-tonal-wash',
+  description:
+    'Fill-only (stroke=none) region, darkness >= 0.10, encloses siblings → ' +
+    'banded tonal role (sparse/mid/dense). Rescues the shade-brush tone patch ' +
+    'and any enclosing fill-only wash that root-tonal locks out via encloses>0.',
+  evaluate: (s) => {
+    if (s.fill === null || s.fill === 'none' || s.fill === 'transparent') return null;
+    if (s.stroke !== null && s.stroke !== 'none' && s.stroke !== 'transparent') return null;
+    if (s.enclosesSiblingCount < 1) return null; // root-tonal handles non-enclosing
+    if (s.containedInZIndex !== null) return null; // inner-* handles contained
+    if (s.darknessL < 0.1) return null; // Paper band stays paper (I-2)
+    const role =
+      s.darknessL < 0.3 ? 'sparse-tonal' : s.darknessL < 0.55 ? 'mid-tonal' : 'dense-tonal';
+    return { role, confidence: 0.7 };
+  },
+};
+
 const RULE_outer_frame_bordered_wash: Rule = {
   id: 'outer-frame-bordered-wash',
   description:
@@ -421,6 +452,7 @@ const ALL_RULES: Rule[] = [
   RULE_root_tonal_sparse,
   RULE_root_tonal_mid,
   RULE_root_tonal_dense,
+  RULE_enclosing_tonal_wash, // rescue enclosing fill-only tonal washes (shade-brush tone)
   // G. paper fallback
   RULE_paper_near_zero,
 ];
