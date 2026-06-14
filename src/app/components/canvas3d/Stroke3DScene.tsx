@@ -766,28 +766,38 @@ function StrokeMeshes({
 
   const svgPortMaterial = useMemo<THREE.Material | null>(() => {
     if (!svgPortTex) return null;
+    // TUNE HOOK (calibration only): the catalog harness driver may set
+    // window.__svgPortTune to sweep material params live without a rebuild. Inert
+    // in the product (the global is never set there). Final values are the
+    // literals below; the lead applies those, not this hook.
+    const tune = (typeof window !== 'undefined'
+      ? (window as unknown as { __svgPortTune?: Record<string, number> }).__svgPortTune
+      : undefined) ?? {};
+    const dispScale = tune.displacementScale ?? RELIEF_DISPLACEMENT_SCALE;
     const m = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       map: svgPortTex.emissive,            // the drawing as lit albedo (relief shades it)
       normalMap: svgPortTex.normal,        // crisp groove walls (head-on relief)
       displacementMap: svgPortTex.height,  // REAL carved geometry on the tessellated cap
-      displacementScale: RELIEF_DISPLACEMENT_SCALE,
+      displacementScale: dispScale,
       // white(paper)=1 → flat at surface; black(ink)=0 → recessed groove.
-      displacementBias: -RELIEF_DISPLACEMENT_SCALE,
+      displacementBias: -dispScale,
       emissive: new THREE.Color(0xffffff),
       emissiveMap: svgPortTex.emissive,    // partial self-lit → ink values resist shadow wash
-      // LOWERED 0.3→0.22 (deep-carve pass): less flat self-lit so the LIT carve
-      // (raking key on the displaced/normal-mapped grooves) dominates the read —
-      // the drawing looks engraved into the form, not printed flat on it. Still
-      // enough emissive that the ink values never wash to pure shadow.
-      emissiveIntensity: 0.22,
+      // RAISED 0.22→0.30 (craft pass 2): the carve no longer floods dense ink to
+      // black, so a bit more self-lit makes the hand-drawn ink VALUES read true
+      // (the 2D vibe) while the relief still carries the 3D. Below ~0.35 the LIT
+      // carve still dominates the read so it looks engraved, not printed flat.
+      emissiveIntensity: tune.emissiveIntensity ?? 0.30,
       roughness: 1.0,                      // matte — no plastic highlight over the ink
       metalness: 0.0,
     });
-    // STRENGTHENED 1→1.6 (deep-carve pass, Sebs "deep enough to be seen"): the
-    // Sobel normal walls tilt harder, so the grooves catch a bolder light/shadow
-    // edge head-on. Y inverted (canvas y-down → world y-up).
-    m.normalScale = new THREE.Vector2(1.6, -1.6);
+    // STRENGTHENED 1.6→2.6 (craft pass 2, sparse-carve read): the Sobel normal
+    // walls tilt harder so isolated thin grooves throw a bolder light/shadow edge
+    // head-on — sparse line-art reads as engraved channels, not ink printed on a
+    // glossy pillow. Y inverted (canvas y-down → world y-up).
+    const ns = tune.normalScale ?? 2.6;
+    m.normalScale = new THREE.Vector2(ns, -ns);
     m.needsUpdate = true;
     return m;
   }, [svgPortTex]);

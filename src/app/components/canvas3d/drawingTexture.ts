@@ -251,14 +251,39 @@ export interface SvgPortTextureResult {
 /** Displacement depth (world units) for the carved svg-port relief — how far
  *  ink grooves sink below the paper surface. Pair with displacementBias =
  *  −RELIEF_DISPLACEMENT_SCALE so WHITE(paper)=at-surface, BLACK(ink)=recessed.
- *  Eyeball-tunable. RAISED 0.08→0.13 (Sebs 2026-06-13: "engraved, DEEP enough
- *  to be seen"): at 0.08 the carve read like a printed decal. 0.18 was clearly
- *  deep but tore THIN line-art (the single-step cap tessellates too coarsely for
- *  that much push → faceting/dashing on hairline strokes). 0.13 keeps a real,
- *  obviously-carved channel the orbit reveals while the heavy lifting of the
- *  "engraved" READ rides the steep-wall normalMap (geometry-free, never tears).
- *  Both together = deep AND legible. */
-export const RELIEF_DISPLACEMENT_SCALE = 0.13;
+ *  Eyeball-tunable. 0.13→0.15 (craft pass 2): with the adaptive carve no longer
+ *  flooding dense fills, a slightly deeper push reads as a real carved channel on
+ *  orbit. 0.18 still tears THIN line-art on the single-step cap (faceting/dashing
+ *  on hairlines), so the heavy lifting of the "engraved" READ rides the steep-
+ *  wall normalMap (geometry-free, never tears); 0.15 is the deep-but-safe pair.
+ *  Boldness variants: subtle 0.13 · medium 0.15 · bold 0.17. */
+export const RELIEF_DISPLACEMENT_SCALE = 0.15;
+
+// ── ADAPTIVE-CARVE constants (craft pass 2026-06-13) ────────────────────────
+/** Min-filter half-width as a fraction of the long edge — the SPARSE-line
+ *  fattener. SHRUNK 0.008→0.0045: still widens hairlines into legible grooves,
+ *  but small enough that it no longer bridges adjacent hachure lines in dense
+ *  fills (the bridging is what flooded dense regions to flat black). */
+const GROOVE_FRAC = 0.0045;
+/** Neighborhood-luminance band that crossfades the carve from "fatten the
+ *  groove" (open paper) to "keep the hachure grain, floor-lifted" (dense fill).
+ *  Above DENSE_LO = sparse (full fatten); below DENSE_HI = dense (full grain).
+ *  Tuned so a real hachure FILL (avg luminance ~0.4–0.6) lands inside the band. */
+const DENSE_LO = 0.72;
+const DENSE_HI = 0.42;
+/** Darkest the carve may sink in a DENSE neighborhood (height 0=deepest…1=flat).
+ *  A packed fill bottoms out at this dark-GREY value instead of pure black, so
+ *  the displaced cap keeps a continuous wall the light rakes (texture), and the
+ *  hachure stripe↔gap grain rides on top. The deep black is reserved for true
+ *  isolated grooves where it reads as a crisp carved line, not a muddy pit. */
+const DENSE_FLOOR = 0.34;
+/** Sobel normal z = 1/NORMAL_STRENGTH; LOWER = steeper groove walls = stronger
+ *  carved read head-on. Hoisted to a module const so the calibration tune hook
+ *  can reference it (was an inline const in the build fn). */
+const NORMAL_STRENGTH = 0.85;
+/** Max bold-ink coverage — densest source ink lands at this grey, not pure ink,
+ *  so emissive matches the floored carve (dark-grey, never flat black). */
+const BOLD_INK_MAX = 0.82;
 
 /** Build the svg-port channel textures from the REAL styled SvgStyleTransform
  *  markup, registered to the geometry's world front-face window. ASYNC — the
@@ -284,6 +309,19 @@ export async function buildSvgPortTexture(
   if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
   const pool = strokes.filter((s) => s.length > 0);
   if (pool.length === 0 || !svgString) return null;
+
+  // CALIBRATION-only tune (the catalog harness sets window.__svgPortCarveTune to
+  // sweep the carve constants live without a rebuild; inert in the product where
+  // the global is never set). Final values are the module constants above; the
+  // lead applies those literals, not this hook.
+  const ct =
+    (typeof window !== 'undefined'
+      ? (window as unknown as { __svgPortCarveTune?: Record<string, number> }).__svgPortCarveTune
+      : undefined) ?? {};
+  const denseFloor = ct.denseFloor ?? DENSE_FLOOR;
+  const grooveFrac = ct.grooveFrac ?? GROOVE_FRAC;
+  const boldMaxT = ct.boldMax ?? BOLD_INK_MAX;
+  const normalStrengthT = ct.normalStrength ?? NORMAL_STRENGTH;
 
   const rawSpanX = bbox.maxX - bbox.minX;
   const rawSpanY = bbox.maxY - bbox.minY;
@@ -401,16 +439,36 @@ export async function buildSvgPortTexture(
     const r = src.data[i * 4], g = src.data[i * 4 + 1], b = src.data[i * 4 + 2];
     lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255; // 0 ink … 1 paper
   }
-  // CARVE channel = the luminance with its DARK ink FATTENED (separable min-
-  // filter). Thin pen lines anti-alias to faint gray as flat color, but as a
-  // WIDER groove they catch the raking light and read as a bold engraved
-  // channel — the ink color (emissive/map, kept thin) then sits IN the groove.
-  // This is what makes line-art "actually carved in" instead of a faint decal.
-  // Groove half-width (min-filter radius). WIDENED 0.005→0.008 (deep-carve pass)
-  // so thin pen lines fatten into channels broad enough to hold a visible
-  // displacement well + bevelled walls — a 1px-thin mark can't read as carved.
-  const GROOVE_R = Math.max(2, Math.round(longPx * 0.008));
+  // ── CARVE channel — ADAPTIVE so DENSE fills read as carved TEXTURE, not a
+  // flooded flat-black pit, while SPARSE thin lines still fatten into legible
+  // grooves. (Craft pass 2026-06-13, Sebs: dense→"dark CARVED texture grooves
+  // catching light, not flat black mud"; sparse→"crisp legible carved grooves".)
+  //
+  // ROOT BUG (texture-dump diagnosed): the old carve was a pure separable MIN-
+  // filter over GROOVE_R. For sparse marks that helpfully fattens. But for dense
+  // hachure (line spacing ≈ GROOVE_R) the min-filter floods every gap → the whole
+  // region collapses to the single darkest value = a FLAT-bottomed pit. No height
+  // variation → displacement makes a flat recessed slab, the Sobel normal is
+  // uniform → the raking light catches nothing → flat black mud (pitchDeckCover
+  // measured spread=4). The hachure gaps the eye reads as texture were erased.
+  //
+  // FIX — three pieces, all derived from the SAME source luminance:
+  //   1. minF  = separable min-filter (the fattener) over GROOVE_R, but SMALLER
+  //      now (0.008→0.0045) so it widens hairlines without bridging dense lines.
+  //   2. density = local box-average of lum over a wider radius (0 = dark/dense
+  //      neighborhood … 1 = paper). Tells dense regions apart from sparse marks.
+  //   3. carve = the FATTENED groove in SPARSE areas, but in DENSE areas we keep
+  //      the RAW per-pixel luminance (preserves the hachure stripe↔gap structure
+  //      = the texture the light catches) AND lift it off the black floor by
+  //      DENSE_FLOOR so a dense fill becomes dark-GREY carved texture, never pure
+  //      black. The fatten→raw crossover is driven by `density`, so a hairline in
+  //      open paper gets the full deep groove while a dense field keeps its grain.
+  const GROOVE_R = Math.max(2, Math.round(longPx * grooveFrac));
+  // Density radius — a few groove-widths so it averages OVER the hachure spacing
+  // (reads "this neighborhood is a fill", not "this is one line").
+  const DENS_R = Math.max(4, Math.round(longPx * 0.018));
   const carve = (() => {
+    // (1) separable min-filter → minF (the fattened-groove field).
     const tmp = new Float32Array(w * h);
     for (let y = 0; y < h; y++) {
       const row = y * w;
@@ -424,7 +482,7 @@ export async function buildSvgPortTexture(
         tmp[row + x] = m;
       }
     }
-    const out = new Float32Array(w * h);
+    const minF = new Float32Array(w * h);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         let m = 1;
@@ -433,17 +491,72 @@ export async function buildSvgPortTexture(
           const v = tmp[yy * w + x];
           if (v < m) m = v;
         }
-        out[y * w + x] = m;
+        minF[y * w + x] = m;
       }
+    }
+    // (2) separable box-average of lum over DENS_R → density (running-sum, O(n)).
+    const colAvg = new Float32Array(w * h);
+    for (let x = 0; x < w; x++) {
+      let acc = 0;
+      const win = DENS_R * 2 + 1;
+      for (let dy = -DENS_R; dy <= DENS_R; dy++) {
+        const yy = dy < 0 ? 0 : dy >= h ? h - 1 : dy;
+        acc += lum[yy * w + x];
+      }
+      colAvg[x] = acc / win;
+      for (let y = 1; y < h; y++) {
+        const add = (y + DENS_R < h ? y + DENS_R : h - 1) * w + x;
+        const sub = (y - DENS_R - 1 >= 0 ? y - DENS_R - 1 : 0) * w + x;
+        acc += lum[add] - lum[sub];
+        colAvg[y * w + x] = acc / win;
+      }
+    }
+    const density = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      let acc = 0;
+      const win = DENS_R * 2 + 1;
+      for (let dx = -DENS_R; dx <= DENS_R; dx++) {
+        const xx = dx < 0 ? 0 : dx >= w ? w - 1 : dx;
+        acc += colAvg[row + xx];
+      }
+      density[row] = acc / win;
+      for (let x = 1; x < w; x++) {
+        const add = row + (x + DENS_R < w ? x + DENS_R : w - 1);
+        const sub = row + (x - DENS_R - 1 >= 0 ? x - DENS_R - 1 : 0);
+        acc += colAvg[add] - colAvg[sub];
+        density[row + x] = acc / win;
+      }
+    }
+    // (3) combine. denseW: 0 in open paper (use the deep fattened groove) → 1 in a
+    // dense fill (use the raw hachure grain, floor-lifted). Smoothstep over the
+    // band [DENSE_LO, DENSE_HI] of neighborhood luminance.
+    const out = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const d = density[i];
+      let t = (DENSE_LO - d) / (DENSE_LO - DENSE_HI); // d<HI→1 (dense), d>LO→0
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const denseW = t * t * (3 - 2 * t); // smoothstep
+      // Dense path: raw luminance grain, lifted off the floor so the darkest a
+      // packed fill can carve is DENSE_FLOOR (dark-grey, not 0=black). The
+      // stripe↔gap variation rides on top → real catch-the-light texture.
+      const denseCarve = denseFloor + lum[i] * (1 - denseFloor);
+      // Sparse path: the deep fattened groove (hairlines read as bold channels).
+      out[i] = minF[i] * (1 - denseW) + denseCarve * denseW;
     }
     return out;
   })();
 
-  // ── BOLD INK (2026-06-13): thin pen lines anti-alias to faint gray at texture
-  // scale → the drawing read washed-out on the 3D form. Overpaint the FATTENED
-  // mark mask (carve) as SOLID resolved ink over the emissive canvas, with a
-  // soft coverage edge, so the marks read crisp + bold (the carve also drives
-  // displacement+normal, so the same bold marks are physically engraved). ──
+  // ── BOLD INK (2026-06-13, craft pass 2): thin pen lines anti-alias to faint
+  // gray at texture scale → the drawing reads washed-out on the 3D form. We bold
+  // up the ink — BUT driven by the PER-PIXEL source luminance (`lum`), NOT the
+  // fattened `carve`. The old version painted solid ink wherever `carve` was dark;
+  // since the min-filter flooded dense fills, that turned every dense hachure into
+  // a solid black slab in the emissive (the muddy-black read). Using `lum` keeps
+  // the hachure STRIPE↔GAP grain: dark ink pixels go bold, the paper gaps between
+  // stay paper → a dense fill reads as crisp dark hatching, not a flat mass. We
+  // also stop short of pure ink (BOLD_MAX) so the darkest fills stay dark-grey,
+  // matching the floored carve, so emissive and relief tell the same story. ──
   const inkRgb = (() => {
     try {
       const c = document.createElement('canvas'); c.width = 1; c.height = 1;
@@ -456,9 +569,14 @@ export async function buildSvgPortTexture(
       return { r: d[0], g: d[1], b: d[2] };
     } catch { return { r: 42, g: 38, b: 34 }; }
   })();
+  const BOLD_MAX = boldMaxT; // cap coverage so densest ink stays dark-grey, not solid
   for (let i = 0; i < w * h; i++) {
-    // coverage: 1 where carve is darkest (ink core), fading to 0 by paper.
-    const cov = Math.min(1, Math.max(0, (0.62 - carve[i]) / 0.22));
+    // coverage from the SOURCE pixel (preserves gaps): 1 at an ink core (lum≈0),
+    // 0 at paper (lum≥INK_EDGE). Per-pixel → dense hachure keeps its grain.
+    const INK_EDGE = 0.66;
+    let cov = (INK_EDGE - lum[i]) / INK_EDGE;
+    cov = cov < 0 ? 0 : cov > 1 ? 1 : cov;
+    cov *= BOLD_MAX;
     if (cov <= 0) continue;
     const o = i * 4;
     src.data[o]     = Math.round(src.data[o]     * (1 - cov) + inkRgb.r * cov);
@@ -485,7 +603,7 @@ export async function buildSvgPortTexture(
   // normals harder away from the surface, so the raking key catches a bold
   // bright-edge / shadow-edge on every channel — the carve reads even head-on,
   // before any orbit. (Paired with the higher material normalScale below.)
-  const NORMAL_STRENGTH = 0.85; // lower = steeper walls = stronger carved read
+  const normalStrength = normalStrengthT; // lower = steeper walls = stronger carved read (module const / tune)
   const nmCanvas = document.createElement('canvas');
   nmCanvas.width = w;
   nmCanvas.height = h;
@@ -501,7 +619,7 @@ export async function buildSvgPortTexture(
       const dx = (tr + 2 * r + br) - (tl + 2 * l + bl);
       const dy = (bl + 2 * bb + br) - (tl + 2 * t + tr);
       // height ∝ luminance (paper high), so a groove (dark) dips → invert grad.
-      let nx = -dx, ny = -dy, nz = 1 / NORMAL_STRENGTH;
+      let nx = -dx, ny = -dy, nz = 1 / normalStrength;
       const len = Math.hypot(nx, ny, nz) || 1;
       nx /= len; ny /= len; nz /= len;
       const i = (y * w + x) * 4;
