@@ -614,11 +614,17 @@ function StrokeMeshes({
     // Pool bbox center (NOT per-stroke) keeps the strokes' relative layout
     // and centers the whole doodle at the origin (plan §1.2).
     const center = poolCenter(pool, viewBox);
-    if (geometryMode === 'solid') {
+    if (geometryMode === 'solid' || isSvgPort) {
       // Solid is pool-level by nature: ALL strokes rasterize into ONE
       // watertight mass — a single mesh, not per-stroke. Holes + edge are
       // REAL engine options now (rock X) — the chrome toggle drives the
       // builder directly.
+      // SVG-PORT always routes here regardless of geometryMode: the style is
+      // "the 2D drawing WORN on a dimensional surface", which needs ONE flat
+      // front cap to carry the rasterized render (emissive ink + normal carve).
+      // Without this, auto/rod/inflate gave svg-port no cap → the marks were
+      // absent (Sebs's "dark blob"); per-stroke extrude also jittered the
+      // silhouette. One mass cap fixes both (Bug 2 structural).
       return [
         buildPoolSolidGeometry(pool, {
           viewBox,
@@ -643,7 +649,7 @@ function StrokeMeshes({
     );
     // `key`/`paramsKey` stand in for array/object identity (cheap deterministic keys).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, paramsKey, geometryMode, viewBox.w, viewBox.h]);
+  }, [key, paramsKey, geometryMode, isSvgPort, viewBox.w, viewBox.h]);
 
   useEffect(() => {
     return () => {
@@ -783,7 +789,10 @@ function StrokeMeshes({
   // the 2D tone: the drawing is the (matte) surface albedo + a partial emissive
   // that resists shadow-wash; the relief gives the carved 3D read. solid/extrude
   // only (flat cap where planar UVs behave); rod/inflate keep the lit body. ──
-  const svgPortBody = !!isSvgPort && (geometryMode === 'solid' || geometryMode === 'extrude');
+  // svg-port now ALWAYS builds a single pool-solid mass (see builds useMemo), so
+  // the carved-cap treatment applies in every geometryMode — the marks are never
+  // absent again (Bug 2: was gated to solid/extrude → blob at auto/rod/inflate).
+  const svgPortBody = !!isSvgPort;
   const [svgPortTex, setSvgPortTex] = useState<SvgPortTextureResult | null>(null);
   // The TESSELLATED front cap the svg-port body renders — a CLONE of the mass
   // (so the shared builds geometry is never mutated/double-disposed), subdivided
