@@ -124,6 +124,16 @@ export const STROKE_OPTS = {
   simulatePressure: true,
 };
 
+/** Reduced-size stroke opts used ONLY to build the fill-CLIP ink outline (not
+ *  the visible ink). The visible ink renders at STROKE_OPTS (size 4); clipping
+ *  the tone to a thinner outline lands the grey at ~the ink centerline — clearly
+ *  UNDER the visible black band, not touching its outer edge (Sebs caught grey
+ *  reading "slightly past the line" on straight edges/corners at zoom). Grey
+ *  still reaches under the ink (no sliver — black covers centerline→outer) but
+ *  never near the visible outer edge (no past-the-line). getStroke inset, not
+ *  erosion, so corners stay sharp. */
+export const FILL_CLIP_STROKE_OPTS = { ...STROKE_OPTS, size: STROKE_OPTS.size * 0.7 };
+
 /** Convert raw stroke points to a perfect-freehand polygon d-string.
  *  Used for the FOREGROUND live-stroke and CLEAN-style background render —
  *  produces the variable-width inked-stroke look. */
@@ -608,7 +618,7 @@ function inkOutlinesNear(
     // The EXACT visible ink boundary — same getStroke call strokeToPolygonPath
     // uses for the live ink polygon (STROKE_OPTS: size 4, thinning/smoothing/
     // streamline 0.5). getStroke returns a closed outline ring (one loop).
-    const outline = getStroke(s.points, STROKE_OPTS);
+    const outline = getStroke(s.points, FILL_CLIP_STROKE_OPTS);
     if (outline.length >= 3) {
       outlines.push(outline.map(([x, y]) => [x, y] as [number, number]));
     }
@@ -1255,7 +1265,7 @@ export function DrawSurface({
     const inkOutlines: [number, number][][] = [];
     for (const s of strokes) {
       if (s.points.length < 2) continue;
-      const outline = getStroke(s.points, STROKE_OPTS);
+      const outline = getStroke(s.points, FILL_CLIP_STROKE_OPTS);
       if (outline.length >= 3) inkOutlines.push(outline.map(([x, y]) => [x, y] as [number, number]));
     }
     return inkOutlines.length > 0 ? smoothFillEdges(raw, inkOutlines) : raw;
