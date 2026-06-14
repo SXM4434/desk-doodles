@@ -1651,7 +1651,11 @@ function closedLoopVertices(sig: SnapSignals, corners: number[]): FitPoint[] {
   if (idxs.length >= 2) {
     const first = pts[idxs[0]];
     const last = pts[idxs[idxs.length - 1]];
-    if (dist(first, last) < INTENT_RESAMPLE_SPACING_PX * 2) idxs = idxs.slice(0, -1);
+    // D4: collapse a doubled/OVERSHOT seam vertex with a PROPORTIONAL tolerance
+    // (was a fixed 8px) so a larger overshoot near the start folds into the first
+    // vertex instead of surviving as a visible tail past the closing edge.
+    const seamTol = Math.max(INTENT_RESAMPLE_SPACING_PX * 2, 0.04 * sig.bboxDiag);
+    if (dist(first, last) < seamTol) idxs = idxs.slice(0, -1);
   }
   return idxs.map((c) => pts[c]);
 }
