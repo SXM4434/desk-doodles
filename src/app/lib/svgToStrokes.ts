@@ -76,6 +76,21 @@ function fitOf(
   return { scale, offX, offY };
 }
 
+/** Max path `d` chars to sample (a ~2MB single path freezes getTotalLength). */
+const MAX_PATH_DATA_CHARS = 64 * 1024;
+
+/** Split a path `d` into sub-path `d` strings, one per M/m, so a compound path —
+ *  e.g. the rose's 112 filled loops — is sampled as SEPARATE loops instead of one
+ *  arc-length parameterization that bridges disjoint subpaths with bogus
+ *  connectors (the 3D "bird's-nest" rod). Mirrors simplifyToSketch.splitSubpaths. */
+function splitSubpaths(d: string): string[] {
+  const out: string[] = [];
+  const re = /[Mm][^Mm]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(d)) !== null) out.push(m[0].trim());
+  return out.length ? out : [d];
+}
+
 /** Sample one geometry element into a target-space polyline. Returns [] on any
  *  failure (degenerate length, non-finite point, browser refusal) — never throws. */
 function sampleElement(
@@ -151,10 +166,31 @@ export function svgMarkupToStrokes(markup: string, options: SvgToStrokesOptions 
   const strokes: StrokePoint[][] = [];
   try {
     const els = Array.from(mountSvg.querySelectorAll(GEOM_SELECTOR)) as SVGGeometryElement[];
+    const SVG_NS = 'http://www.w3.org/2000/svg';
     for (const el of els) {
       if (strokes.length >= opts.maxElements) break;
-      const pts = sampleElement(el, fit, opts);
-      if (pts.length >= 2) strokes.push(pts);
+      // SUBPATH SPLIT (rose fix): a compound <path> (M…M…) sampled as ONE element
+      // parameterizes every subpath as a single arc length → one polyline that
+      // bridges disjoint loops (the rose's 112 filled loops → a giant tangled rod
+      // in 3D). Split a multi-subpath <path> and sample EACH subpath as its own
+      // loop. Single-subpath paths + other geometry sample exactly as before.
+      const d = el.tagName.toLowerCase() === 'path' ? el.getAttribute('d') : null;
+      const subs = d ? splitSubpaths(d) : null;
+      if (subs && subs.length > 1) {
+        for (const sd of subs) {
+          if (strokes.length >= opts.maxElements) break;
+          if (!sd || sd.length > MAX_PATH_DATA_CHARS) continue;
+          const tmp = document.createElementNS(SVG_NS, 'path') as SVGGeometryElement;
+          tmp.setAttribute('d', sd);
+          mountSvg.appendChild(tmp);
+          const pts = sampleElement(tmp, fit, opts);
+          mountSvg.removeChild(tmp);
+          if (pts.length >= 2) strokes.push(pts);
+        }
+      } else {
+        const pts = sampleElement(el, fit, opts);
+        if (pts.length >= 2) strokes.push(pts);
+      }
     }
   } finally {
     document.body.removeChild(host);
