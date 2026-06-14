@@ -472,36 +472,89 @@ export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegi
   if (raw.length === 0) return [];
   const viewBox = { w: VIEWBOX_W, h: VIEWBOX_H };
   const simplified = raw.map((s) => rdpPoints(s, RDP_EPSILON));
-  const center = poolCenter(simplified, viewBox);
-  const world = simplified.map((s) => normalizeStrokePoints(s, viewBox, WORLD_SCALE, center));
-  const extraction = extractPoolRegions(world, {
-    inkRadius: SOLID_INK_RADIUS * gapMult,
-    // INK-ONLY TOPOLOGY (see the header comment): enclosure comes from the
-    // stamped ink alone — the gap slider is the only thing that closes gaps.
-    closedFlags: world.map(() => false),
-    // FILL-CONFORM (2026-06-13): crisp = keep the drawn shape's SHARP corners
-    // (no Chaikin rounding -> a rectangle fills as a rectangle, not a blob);
-    // max resolution = the finest grid so the boundary staircases the least and
-    // the fill hugs the drawn line (Sebs: "fill doesn't conform, edges dirty").
-    crisp: true,
-    // REVERTED 2026-06-13: a 420 grid broke region enclosure (partial fill /
-    // white band — exceeded the grid budget). Back to the proven 200 cap; the
-    // corner-notch gets a different fix (not via global resolution).
-    resolution: SOLID_MAX_GRID_RESOLUTION,
+
+  // MULTI-SHAPE FIX (Sebs: fill "doesn't detect which region with multiple
+  // shapes"): extractPoolRegions' grid cell = max(span)/resolution over the bbox
+  // it is handed, so feeding ALL strokes sizes ONE grid to the union bbox of
+  // every shape on the canvas — two shapes far apart each get only a fraction of
+  // the resolution and their enclosures starve. Cluster strokes into spatially-
+  // disjoint connected components (union-find on bboxes grown by the ink gap) and
+  // extract EACH cluster at full resolution over its own tight bbox, then merge
+  // the region trees. Disjoint clusters can never contain one another, so
+  // parentIndex stays in-cluster, offset by the running region count. A single
+  // shape = one cluster = identical to the old path (zero regression). Nested
+  // shapes share a cluster and so its full local resolution.
+  const bbs = simplified.map((s) => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of s) {
+      if (p[0] < minX) minX = p[0];
+      if (p[0] > maxX) maxX = p[0];
+      if (p[1] < minY) minY = p[1];
+      if (p[1] > maxY) maxY = p[1];
+    }
+    return [minX, minY, maxX, maxY] as [number, number, number, number];
   });
-  // The world→viewBox inverse adapter: normalizeStrokePoints is
-  //   wx = (x − cx)·s,  wy = −(y − cy)·s   →   x = wx/s + cx,  y = cy − wy/s.
-  const toVb = ([wx, wy]: [number, number]): [number, number] => [
-    Math.round((wx / WORLD_SCALE + center.x) * 10) / 10,
-    Math.round((center.y - wy / WORLD_SCALE) * 10) / 10,
-  ];
-  return extraction.regions.map((r) => ({
-    outline: r.outline.map(toVb),
-    depth: r.depth,
-    role: r.role,
-    parentIndex: r.parentIndex,
-    areaWorld: r.areaWorld,
-  }));
+  const gapPx = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE + 8;
+  const parent = simplified.map((_, i) => i);
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+  for (let i = 0; i < bbs.length; i++) {
+    for (let j = i + 1; j < bbs.length; j++) {
+      const a = bbs[i], b = bbs[j];
+      // bboxes (grown by gapPx) overlap → same shape/cluster.
+      if (a[2] + gapPx >= b[0] && b[2] + gapPx >= a[0] && a[3] + gapPx >= b[1] && b[3] + gapPx >= a[1]) {
+        parent[find(i)] = find(j);
+      }
+    }
+  }
+  const clusters = new Map<number, number[]>();
+  for (let i = 0; i < simplified.length; i++) {
+    const r = find(i);
+    const g = clusters.get(r);
+    if (g) g.push(i);
+    else clusters.set(r, [i]);
+  }
+
+  const out: FillRegion[] = [];
+  for (const idxs of clusters.values()) {
+    const cs = idxs.map((i) => simplified[i]);
+    const center = poolCenter(cs, viewBox);
+    const world = cs.map((s) => normalizeStrokePoints(s, viewBox, WORLD_SCALE, center));
+    const extraction = extractPoolRegions(world, {
+      inkRadius: SOLID_INK_RADIUS * gapMult,
+      // INK-ONLY TOPOLOGY: enclosure comes from the stamped ink alone — the gap
+      // slider is the only thing that closes gaps.
+      closedFlags: world.map(() => false),
+      // FILL-CONFORM (2026-06-13): crisp = keep the drawn shape's SHARP corners
+      // so a rectangle fills as a rectangle, not a blob.
+      crisp: true,
+      // Per-cluster bbox now gives each shape the full grid budget; keep the
+      // proven 200 cap (a global 420 broke enclosure — the nested-small fix is a
+      // separate careful change, not a global resolution bump).
+      resolution: SOLID_MAX_GRID_RESOLUTION,
+    });
+    // world→viewBox inverse (per this cluster's center): x = wx/s + cx, y = cy − wy/s.
+    const toVb = ([wx, wy]: [number, number]): [number, number] => [
+      Math.round((wx / WORLD_SCALE + center.x) * 10) / 10,
+      Math.round((center.y - wy / WORLD_SCALE) * 10) / 10,
+    ];
+    const base = out.length;
+    for (const r of extraction.regions) {
+      out.push({
+        outline: r.outline.map(toVb),
+        depth: r.depth,
+        role: r.role,
+        parentIndex: r.parentIndex === null ? null : r.parentIndex + base,
+        areaWorld: r.areaWorld,
+      });
+    }
+  }
+  return out;
 }
 
 /** Ink CENTERLINE polylines (raw stroke points, viewBox px) of the strokes
