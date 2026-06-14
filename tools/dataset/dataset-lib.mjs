@@ -72,6 +72,11 @@ export const KNOWN_SOURCES = new Set([
   // level) cell here is its own example so the toggle axis survives dedupe.
   'ofat-2d', // ofat-2d-live-findings.json rows (live /audit OFAT cell matrix)
   'ofat-3d', // ofat-3d-toggle-findings.json rows (3D conversion OFAT matrix)
+  // Full-pipeline OFATs on the REAL user input paths — vision-read by the agent
+  // (the Vision/LLM layer Sebs asked us to keep feeding). Distinct from the
+  // catalog-render OFATs above: these exercise hand-drawn + uploaded input.
+  'ofat-manualdraw', // ofat-manualdraw-findings.json (hand-drawn draw→2D→3D path)
+  'ofat-upload', // ofat-upload-findings.json (svg-upload→2D→3D pipeline)
 ]);
 
 const KNOWN_LABEL_KINDS = new Set(['role', 'correct-or-not', 'treatment', 'fidelity']);
@@ -531,6 +536,82 @@ export function ofat3dRecordToExample(r, idx, { assertCanonical = false } = {}) 
       // the per-view measured stats the verdict was read against.
       front: r.stats?.front ?? null,
       q35: r.stats?.q35 ?? null,
+    },
+    regime: resolveOfatRegime(r, assertCanonical),
+  };
+}
+
+/** Manual-draw full-pipeline OFAT cell → toggle-aware 'fidelity' example. This is
+ *  the REAL user path: a catalog object hand-drawn through the live tools, checked
+ *  draw→2D→3D-convert→OFAT. Row shape: {object,cls,drawnVia,stage,mode,toggle,
+ *  level,verdict,note,screenshot}. The verdict was READ BACK with vision by the
+ *  agent (the Vision/LLM layer), so classifiedBy:'vision-read'. ONE example per
+ *  (object × stage × mode × toggle × level) — the exampleId carries the full
+ *  coordinate so nothing collapses on dedupe / re-feed. */
+export function ofatManualdrawRecordToExample(r, idx, { assertCanonical = false } = {}) {
+  const object = r.object ?? `idx${idx}`;
+  const stage = r.stage ?? 'convert';
+  const mode = r.mode ?? 'na';
+  const toggle = r.toggle ?? '(baseline)';
+  const level = r.level ?? 'default';
+  return {
+    exampleId: `ofat-manualdraw:${object}:${stage}:${mode}:${toggle}:${level}`,
+    source: 'ofat-manualdraw',
+    labelKind: 'fidelity',
+    label: normalizeOfatVerdict(r.verdict),
+    confidence: null,
+    rawScore: null,
+    margin: null,
+    firedRules: [],
+    classifiedBy: 'vision-read', // agent read every frame with vision (Vision/LLM layer)
+    isGroundTruth: false, // vision-read, not Sebs-blessed
+    svgHash: null,
+    regionPath: object,
+    renderSurface: stage === '2d' ? 'canvas-2d' : stage === 'convert' || stage === '3d' ? 'canvas-3d' : null,
+    features: {
+      object,
+      cls: r.cls ?? null,
+      drawnVia: r.drawnVia ?? null, // INK/SNAP/SHADE/STRAIGHTEN — how it was hand-made
+      stage,
+      mode,
+      toggle,
+      level,
+      note: typeof r.note === 'string' ? r.note : null,
+    },
+    regime: resolveOfatRegime(r, assertCanonical),
+  };
+}
+
+/** SVG-upload full-pipeline OFAT cell → toggle-aware 'fidelity' example. The real
+ *  upload path: an SVG fed through the live file input, checked upload→2D→
+ *  (2D-style OFAT)→3D + guard torture. Row shape: {svg,stage,toggle,level,verdict,
+ *  note,screenshot}. Vision-read verdict. ONE example per (svg × stage × toggle ×
+ *  level). */
+export function ofatUploadRecordToExample(r, idx, { assertCanonical = false } = {}) {
+  const svg = r.svg ?? `idx${idx}`;
+  const stage = r.stage ?? 'upload';
+  const toggle = r.toggle ?? '(baseline)';
+  const level = r.level ?? 'default';
+  return {
+    exampleId: `ofat-upload:${svg}:${stage}:${toggle}:${level}`,
+    source: 'ofat-upload',
+    labelKind: 'fidelity',
+    label: normalizeOfatVerdict(r.verdict),
+    confidence: null,
+    rawScore: null,
+    margin: null,
+    firedRules: [],
+    classifiedBy: 'vision-read',
+    isGroundTruth: false,
+    svgHash: null,
+    regionPath: svg,
+    renderSurface: stage === '2d' || stage.startsWith('2d') ? 'canvas-2d' : stage === '3d-convert' || stage === '3d' ? 'canvas-3d' : 'upload',
+    features: {
+      svg,
+      stage,
+      toggle,
+      level,
+      note: typeof r.note === 'string' ? r.note : null,
     },
     regime: resolveOfatRegime(r, assertCanonical),
   };

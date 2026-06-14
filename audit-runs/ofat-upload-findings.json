@@ -1,0 +1,1008 @@
+{
+  "run": "svg-upload-full-pipeline-ofat",
+  "date": "2026-06-13",
+  "server": "http://localhost:5311 (isolated /canvas, real upload input)",
+  "inputPath": "upload-svg (third input path)",
+  "svgsUploaded": [
+    "01-simple-icon.svg",
+    "02-multipath-currentcolor.svg",
+    "03-handdrawn.svg",
+    "04-nested-svg.svg",
+    "05-catalog-framedSketch.svg",
+    "06-catalog-processPrint.svg",
+    "07-catalog-stackedSketchbooks.svg"
+  ],
+  "guardsTested": [
+    "guardA-2mb-single-path",
+    "guardB-13k-elements",
+    "guardC-dual-svg-script",
+    "guardD-junk-around",
+    "guardE-normal-valid",
+    "guardF-doctype-entity",
+    "guardG-onclick-attr"
+  ],
+  "schema": "{svg, stage:upload|2d|3d|guard, toggle, level, verdict, note, screenshot}",
+  "rows": [
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "upload",
+      "toggle": "sanitize",
+      "level": "-",
+      "verdict": "RENDERED",
+      "note": "hasUploadSvg=true childEls=2 hasScript=false hasOnAttr=false responsive=true err=none consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-default.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "clean",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-clean.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "outline-only",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-outline-only.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "rough-handdrawn",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-rough-handdrawn.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "sketchy",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-sketchy.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "bold-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-bold-ink.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wet-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-wet-ink.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-stipple.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "charcoal",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-charcoal.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "risograph",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-risograph.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "newsprint",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-newsprint.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wireframe",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-wireframe.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "3d",
+      "toggle": "flip-to-3d",
+      "level": "-",
+      "verdict": "NO-CONVERT",
+      "note": "frameNote=\"Nothing to convert yet\" responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "3d",
+      "toggle": "matrix",
+      "level": "-",
+      "verdict": "SKIPPED",
+      "note": "no <canvas> in main → upload did not convert to 3D (frameNote=\"Nothing to convert yet\")",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "upload",
+      "toggle": "sanitize",
+      "level": "-",
+      "verdict": "RENDERED",
+      "note": "hasUploadSvg=true childEls=6 hasScript=false hasOnAttr=false responsive=true err=none consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-default.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "clean",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-clean.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "outline-only",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-outline-only.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "rough-handdrawn",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-rough-handdrawn.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "sketchy",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-sketchy.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "bold-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-bold-ink.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wet-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-wet-ink.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-stipple.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "charcoal",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-charcoal.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "risograph",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-risograph.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "newsprint",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-newsprint.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wireframe",
+      "verdict": "RENDERED",
+      "note": "childEls=6 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__2d-wireframe.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "3d",
+      "toggle": "flip-to-3d",
+      "level": "-",
+      "verdict": "NO-CONVERT",
+      "note": "frameNote=\"Nothing to convert yet\" responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "02-multipath-currentcolor.svg",
+      "stage": "3d",
+      "toggle": "matrix",
+      "level": "-",
+      "verdict": "SKIPPED",
+      "note": "no <canvas> in main → upload did not convert to 3D (frameNote=\"Nothing to convert yet\")",
+      "screenshot": "/tmp/dd-uploadofat-out/02-multipath-currentcolor.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "upload",
+      "toggle": "sanitize",
+      "level": "-",
+      "verdict": "RENDERED",
+      "note": "hasUploadSvg=true childEls=4 hasScript=false hasOnAttr=false responsive=true err=none consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-default.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "clean",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-clean.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "outline-only",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-outline-only.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "rough-handdrawn",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-rough-handdrawn.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "sketchy",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-sketchy.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "bold-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-bold-ink.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wet-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-wet-ink.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-stipple.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "charcoal",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-charcoal.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "risograph",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-risograph.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "newsprint",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-newsprint.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wireframe",
+      "verdict": "RENDERED",
+      "note": "childEls=4 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-wireframe.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "3d",
+      "toggle": "flip-to-3d",
+      "level": "-",
+      "verdict": "NO-CONVERT",
+      "note": "frameNote=\"Nothing to convert yet\" responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "3d",
+      "toggle": "matrix",
+      "level": "-",
+      "verdict": "SKIPPED",
+      "note": "no <canvas> in main → upload did not convert to 3D (frameNote=\"Nothing to convert yet\")",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "upload",
+      "toggle": "sanitize",
+      "level": "-",
+      "verdict": "RENDERED",
+      "note": "hasUploadSvg=true childEls=5 hasScript=false hasOnAttr=false responsive=true err=none consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-default.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "clean",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-clean.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "outline-only",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-outline-only.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "rough-handdrawn",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-rough-handdrawn.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "sketchy",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-sketchy.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "bold-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-bold-ink.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wet-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-wet-ink.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-stipple.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "charcoal",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-charcoal.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "risograph",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-risograph.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "newsprint",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-newsprint.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wireframe",
+      "verdict": "RENDERED",
+      "note": "childEls=5 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__2d-wireframe.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "3d",
+      "toggle": "flip-to-3d",
+      "level": "-",
+      "verdict": "NO-CONVERT",
+      "note": "frameNote=\"Nothing to convert yet\" responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "04-nested-svg.svg",
+      "stage": "3d",
+      "toggle": "matrix",
+      "level": "-",
+      "verdict": "SKIPPED",
+      "note": "no <canvas> in main → upload did not convert to 3D (frameNote=\"Nothing to convert yet\")",
+      "screenshot": "/tmp/dd-uploadofat-out/04-nested-svg.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "upload",
+      "toggle": "sanitize",
+      "level": "-",
+      "verdict": "RENDERED",
+      "note": "hasUploadSvg=true childEls=2 hasScript=false hasOnAttr=false responsive=true err=none consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-default.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "clean",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-clean.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "outline-only",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-outline-only.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "rough-handdrawn",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-rough-handdrawn.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "sketchy",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-sketchy.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "bold-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-bold-ink.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wet-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-wet-ink.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-stipple.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "charcoal",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-charcoal.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "risograph",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-risograph.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "newsprint",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-newsprint.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wireframe",
+      "verdict": "RENDERED",
+      "note": "childEls=2 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__2d-wireframe.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "3d",
+      "toggle": "flip-to-3d",
+      "level": "-",
+      "verdict": "NO-CONVERT",
+      "note": "frameNote=\"Nothing to convert yet\" responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "05-catalog-framedSketch.svg",
+      "stage": "3d",
+      "toggle": "matrix",
+      "level": "-",
+      "verdict": "SKIPPED",
+      "note": "no <canvas> in main → upload did not convert to 3D (frameNote=\"Nothing to convert yet\")",
+      "screenshot": "/tmp/dd-uploadofat-out/05-catalog-framedSketch.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "upload",
+      "toggle": "sanitize",
+      "level": "-",
+      "verdict": "RENDERED",
+      "note": "hasUploadSvg=true childEls=11 hasScript=false hasOnAttr=false responsive=true err=none consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-default.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "clean",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-clean.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "outline-only",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-outline-only.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "rough-handdrawn",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-rough-handdrawn.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "sketchy",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-sketchy.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "bold-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-bold-ink.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wet-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-wet-ink.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-stipple.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "charcoal",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-charcoal.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "risograph",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-risograph.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "newsprint",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-newsprint.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wireframe",
+      "verdict": "RENDERED",
+      "note": "childEls=11 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-wireframe.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "3d",
+      "toggle": "flip-to-3d",
+      "level": "-",
+      "verdict": "NO-CONVERT",
+      "note": "frameNote=\"Nothing to convert yet\" responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "3d",
+      "toggle": "matrix",
+      "level": "-",
+      "verdict": "SKIPPED",
+      "note": "no <canvas> in main → upload did not convert to 3D (frameNote=\"Nothing to convert yet\")",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "upload",
+      "toggle": "sanitize",
+      "level": "-",
+      "verdict": "RENDERED",
+      "note": "hasUploadSvg=true childEls=12 hasScript=false hasOnAttr=false responsive=true err=none consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-default.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "clean",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-clean.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "outline-only",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-outline-only.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "rough-handdrawn",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-rough-handdrawn.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "sketchy",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-sketchy.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "bold-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-bold-ink.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wet-ink",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-wet-ink.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-stipple.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "charcoal",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-charcoal.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "risograph",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-risograph.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "newsprint",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-newsprint.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "wireframe",
+      "verdict": "RENDERED",
+      "note": "childEls=12 responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-wireframe.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "3d",
+      "toggle": "flip-to-3d",
+      "level": "-",
+      "verdict": "NO-CONVERT",
+      "note": "frameNote=\"Nothing to convert yet\" responsive=true consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "3d",
+      "toggle": "matrix",
+      "level": "-",
+      "verdict": "SKIPPED",
+      "note": "no <canvas> in main → upload did not convert to 3D (frameNote=\"Nothing to convert yet\")",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__3d-flip-default.png"
+    },
+    {
+      "svg": "guardA-2mb-single-path.svg",
+      "stage": "guard",
+      "toggle": "REJECT",
+      "level": "single ~2MB d-attr path → path-data cap",
+      "verdict": "PASS-REJECTED",
+      "note": "responsive(before/during/after)=true/true/true uploadMs=7 uploadThrew=no err=\"SVG has an oversized path (1.9MB of path data in one element). Max 64KB per path.\" rendered=false svgCount=1 hasScript=false hasOnAttr=false xssGlobal=false xssAttr=false fills=[] consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/guard__guardA-2mb-single-path.svg.png"
+    },
+    {
+      "svg": "guardB-13k-elements.svg",
+      "stage": "guard",
+      "toggle": "REJECT",
+      "level": "13k elements → element cap (12000)",
+      "verdict": "PASS-REJECTED",
+      "note": "responsive(before/during/after)=true/true/true uploadMs=4 uploadThrew=no err=\"SVG too complex (13,001 elements). Max 12,000.\" rendered=false svgCount=1 hasScript=false hasOnAttr=false xssGlobal=false xssAttr=false fills=[] consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/guard__guardB-13k-elements.svg.png"
+    },
+    {
+      "svg": "guardC-dual-svg-script.svg",
+      "stage": "guard",
+      "toggle": "ACCEPT-FIRST-ROOT",
+      "level": "take FIRST root, drop script + 2nd root",
+      "verdict": "PASS-ACCEPTED-SAFE",
+      "note": "responsive(before/during/after)=true/true/true uploadMs=4 uploadThrew=no err=\"none\" rendered=true svgCount=3 hasScript=false hasOnAttr=false xssGlobal=false xssAttr=false fills=[#c0392b,none,none,none,none] consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/guard__guardC-dual-svg-script.svg.png"
+    },
+    {
+      "svg": "guardD-junk-around.svg",
+      "stage": "guard",
+      "toggle": "ACCEPT-CLEAN",
+      "level": "junk before/after → clean root only",
+      "verdict": "PASS-ACCEPTED-SAFE",
+      "note": "responsive(before/during/after)=true/true/true uploadMs=6 uploadThrew=no err=\"none\" rendered=true svgCount=3 hasScript=false hasOnAttr=false xssGlobal=false xssAttr=false fills=[#27ae60,none,none,none] consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/guard__guardD-junk-around.svg.png"
+    },
+    {
+      "svg": "guardE-normal-valid.svg",
+      "stage": "guard",
+      "toggle": "ACCEPT",
+      "level": "normal valid svg → accepted (no regression)",
+      "verdict": "PASS-ACCEPTED-SAFE",
+      "note": "responsive(before/during/after)=true/true/true uploadMs=5 uploadThrew=no err=\"none\" rendered=true svgCount=3 hasScript=false hasOnAttr=false xssGlobal=false xssAttr=false fills=[#8e44ad,#fff,#8e44ad,none,none,#fff,none,none] consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/guard__guardE-normal-valid.svg.png"
+    },
+    {
+      "svg": "guardF-doctype-entity.svg",
+      "stage": "guard",
+      "toggle": "REJECT",
+      "level": "DOCTYPE/ENTITY → billion-laughs guard",
+      "verdict": "PASS-REJECTED",
+      "note": "responsive(before/during/after)=true/true/true uploadMs=5 uploadThrew=no err=\"SVG contains a DOCTYPE/entity declaration and was rejected.\" rendered=false svgCount=1 hasScript=false hasOnAttr=false xssGlobal=false xssAttr=false fills=[] consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/guard__guardF-doctype-entity.svg.png"
+    },
+    {
+      "svg": "guardG-onclick-attr.svg",
+      "stage": "guard",
+      "toggle": "ACCEPT-NO-XSS",
+      "level": "on* attrs stripped by DOMPurify, shape kept",
+      "verdict": "PASS-ACCEPTED-SAFE",
+      "note": "responsive(before/during/after)=true/true/true uploadMs=11 uploadThrew=no err=\"none\" rendered=true svgCount=3 hasScript=false hasOnAttr=false xssGlobal=false xssAttr=false fills=[#e67e22,none,none,none] consoleErrs=0",
+      "screenshot": "/tmp/dd-uploadofat-out/guard__guardG-onclick-attr.svg.png"
+    },
+    {
+      "svg": "01-simple-icon.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "DIVERGENCE",
+      "note": "stipple renders BYTE-IDENTICAL to rough-handdrawn (md5+size match) — the stipple dot/pointillist fill (preset fillStyle:dots) is NOT applied on the upload path; switching style id alone does not push the preset into live modifiers (STYLE_PRESETS comment: \"Live render uses raw state values, not these\"). User-visible: selecting Stipple = no change. Other 8 non-default styles render distinctly. READ-confirmed on 01-simple-icon stipple vs rough-handdrawn screenshots + hash compare across 4 uploads.",
+      "screenshot": "/tmp/dd-uploadofat-out/01-simple-icon.svg__2d-stipple.png"
+    },
+    {
+      "svg": "03-handdrawn.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "DIVERGENCE",
+      "note": "stipple renders BYTE-IDENTICAL to rough-handdrawn (md5+size match) — the stipple dot/pointillist fill (preset fillStyle:dots) is NOT applied on the upload path; switching style id alone does not push the preset into live modifiers (STYLE_PRESETS comment: \"Live render uses raw state values, not these\"). User-visible: selecting Stipple = no change. Other 8 non-default styles render distinctly. READ-confirmed on 01-simple-icon stipple vs rough-handdrawn screenshots + hash compare across 4 uploads.",
+      "screenshot": "/tmp/dd-uploadofat-out/03-handdrawn.svg__2d-stipple.png"
+    },
+    {
+      "svg": "06-catalog-processPrint.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "DIVERGENCE",
+      "note": "stipple renders BYTE-IDENTICAL to rough-handdrawn (md5+size match) — the stipple dot/pointillist fill (preset fillStyle:dots) is NOT applied on the upload path; switching style id alone does not push the preset into live modifiers (STYLE_PRESETS comment: \"Live render uses raw state values, not these\"). User-visible: selecting Stipple = no change. Other 8 non-default styles render distinctly. READ-confirmed on 01-simple-icon stipple vs rough-handdrawn screenshots + hash compare across 4 uploads.",
+      "screenshot": "/tmp/dd-uploadofat-out/06-catalog-processPrint.svg__2d-stipple.png"
+    },
+    {
+      "svg": "07-catalog-stackedSketchbooks.svg",
+      "stage": "2d",
+      "toggle": "svgStyle",
+      "level": "stipple",
+      "verdict": "DIVERGENCE",
+      "note": "stipple renders BYTE-IDENTICAL to rough-handdrawn (md5+size match) — the stipple dot/pointillist fill (preset fillStyle:dots) is NOT applied on the upload path; switching style id alone does not push the preset into live modifiers (STYLE_PRESETS comment: \"Live render uses raw state values, not these\"). User-visible: selecting Stipple = no change. Other 8 non-default styles render distinctly. READ-confirmed on 01-simple-icon stipple vs rough-handdrawn screenshots + hash compare across 4 uploads.",
+      "screenshot": "/tmp/dd-uploadofat-out/07-catalog-stackedSketchbooks.svg__2d-stipple.png"
+    }
+  ]
+}

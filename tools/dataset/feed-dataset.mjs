@@ -73,6 +73,8 @@ import {
   fidelity3dRecordToExample,
   ofat2dRecordToExample,
   ofat3dRecordToExample,
+  ofatManualdrawRecordToExample,
+  ofatUploadRecordToExample,
   shadeFillEntryToExample,
   shapeSnapEntryToExample,
   deskPerfReportToExamples,
@@ -110,6 +112,8 @@ function parseArgs(argv) {
     else if (k === '--from-fidelity-3d') a.fromFidelity3d = argv[++i];
     else if (k === '--from-ofat-2d') a.fromOfat2d = argv[++i];
     else if (k === '--from-ofat-3d') a.fromOfat3d = argv[++i];
+    else if (k === '--from-ofat-manualdraw') a.fromOfatManualdraw = argv[++i];
+    else if (k === '--from-ofat-upload') a.fromOfatUpload = argv[++i];
     else if (k === '--ofat-2d-regime') a.ofat2dRegime = argv[++i];
     else if (k === '--ofat-3d-regime') a.ofat3dRegime = argv[++i];
     else if (k === '--from-shade-fill') a.fromShadeFill = argv[++i];
@@ -269,6 +273,22 @@ function pullOfat3d(p, regimeFlag) {
   return rows.map((r, i) => ofat3dRecordToExample(r, i, opts));
 }
 
+function pullOfatManualdraw(p, regimeFlag) {
+  const j = readJson(p);
+  const rows = Array.isArray(j) ? j : (j.rows ?? j.cells ?? j.findings ?? j.results ?? []);
+  const opts = resolveOfatRegimeFlag(regimeFlag);
+  console.log(`  ofat-manualdraw: ${rows.length} cells (real hand-drawn draw→2D→3D path, vision-read)`);
+  return rows.map((r, i) => ofatManualdrawRecordToExample(r, i, opts));
+}
+
+function pullOfatUpload(p, regimeFlag) {
+  const j = readJson(p);
+  const rows = Array.isArray(j) ? j : (j.rows ?? j.cells ?? j.findings ?? j.results ?? []);
+  const opts = resolveOfatRegimeFlag(regimeFlag);
+  console.log(`  ofat-upload: ${rows.length} cells (real svg-upload pipeline, vision-read)`);
+  return rows.map((r, i) => ofatUploadRecordToExample(r, i, opts));
+}
+
 // A __dd_shadeFillLog / __dd_shapeSnapLog export is a raw array (the get()
 // snapshot), or wrapped {entries|log:[...]}. Both pullers tolerate either, and
 // also a unified __dd_decisionLog export — they filter by entryType so a single
@@ -307,6 +327,7 @@ async function main() {
     !!args.fromGolden || args.fromAudit || !!args.fromConversion ||
     !!args.fromInputPick || !!args.fromFidelity2d || !!args.fromFidelity3d ||
     !!args.fromOfat2d || !!args.fromOfat3d ||
+    !!args.fromOfatManualdraw || !!args.fromOfatUpload ||
     !!args.fromShadeFill || !!args.fromShapeSnap || !!args.fromDeskPerf;
   if (!requested) {
     console.error('No source flag given. See header for --from-* options.');
@@ -329,6 +350,8 @@ async function main() {
   if (args.fromFidelity3d) { batch = batch.concat(pullFidelity3d(args.fromFidelity3d)); feedingSources.push('fidelity-3d'); }
   if (args.fromOfat2d) { batch = batch.concat(pullOfat2d(args.fromOfat2d, args.ofat2dRegime)); feedingSources.push('ofat-2d'); }
   if (args.fromOfat3d) { batch = batch.concat(pullOfat3d(args.fromOfat3d, args.ofat3dRegime)); feedingSources.push('ofat-3d'); }
+  if (args.fromOfatManualdraw) { batch = batch.concat(pullOfatManualdraw(args.fromOfatManualdraw, args.ofat3dRegime)); feedingSources.push('ofat-manualdraw'); }
+  if (args.fromOfatUpload) { batch = batch.concat(pullOfatUpload(args.fromOfatUpload, args.ofat3dRegime)); feedingSources.push('ofat-upload'); }
   if (args.fromShadeFill) { batch = batch.concat(pullShadeFill(args.fromShadeFill)); feedingSources.push('shade-fill'); }
   if (args.fromShapeSnap) { batch = batch.concat(pullShapeSnap(args.fromShapeSnap)); feedingSources.push('shape-snap'); }
   if (args.fromDeskPerf) { batch = batch.concat(pullDeskPerf(args.fromDeskPerf)); feedingSources.push('desk-perf'); }
