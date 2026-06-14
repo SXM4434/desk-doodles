@@ -1679,6 +1679,13 @@ function refineOneFillEdge(
   const origArea = ringArea(patch[0]);
   const newArea = ringArea(poly[0]);
   if (origArea > 0 && newArea < origArea * 0.4) return null;
+  // Only a fill that ORIGINALLY had holes (a real donut) may keep inner rings.
+  // On a SOLID fill, any inner ring the boolean produced is a spurious inset
+  // artifact — under fill-rule="evenodd" it punches a hole and the fill renders
+  // hollow (the snapped-240px-square hollow bug, OFAT-drawtools 2026-06-14).
+  // Drop them: a solid fill stays solid.
+  const hadHoles = !!(fill.holes && fill.holes.length > 0);
+  if (!hadHoles) return { points: outer };
   const holes: [number, number][][] = [];
   for (let i = 1; i < poly.length; i++) {
     const h = ringToRecord(poly[i]);
