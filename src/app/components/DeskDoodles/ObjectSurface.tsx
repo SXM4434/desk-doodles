@@ -39,7 +39,23 @@ import {
 } from '../../state/F3RoughModifiersContext';
 import { applyStylePreset } from '../canvas/SvgStyleTransform';
 import { findDoodleBySvg, updateDoodleConfig, updateDoodleSvg } from '../../lib/publish';
-import { DrawSurface, strokesToObjectMarkup, capStrokes, fitStrokesToFrame, type Stroke, type StrokePoint } from './DrawSurface';
+import {
+  DrawSurface,
+  strokesToObjectMarkup,
+  capStrokes,
+  capToneFills,
+  fitStrokesToFrame,
+  SHADE_TOOL_DEFAULT,
+  type Stroke,
+  type StrokePoint,
+  type ToneFill,
+  type ShadeToolState,
+  type ShapeSnapApi,
+} from './DrawSurface';
+import { DrawToolbar } from './DrawToolbar';
+import { type ShapeCandidate, type ShapeFitResult, type SnapAction } from '../../lib/draw/shapeFit';
+import { pushShapeSnapEntry, type ShapeSnapOutcome } from '../../lib/shapeSnapLog';
+import { COVERAGE_BANDS } from '../../lib/smart/coverage';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
 import { exportCardSvg, exportCardPng } from '../../lib/exportCard';
 
@@ -688,6 +704,124 @@ export function ObjectSurface({
   const [redrawMode, setRedrawMode] = useState<'draw' | 'style'>('draw');
   const redrawStrokesRef = useRef<Stroke[]>([]);
   const [redrawCount, setRedrawCount] = useState(0);
+
+  // ── RE-DRAW draw-tool state (Phase 0: RE-DRAW becomes a third host of the
+  // shared DrawToolbar — the Ink|Shade register, tone cluster, and Snap/
+  // Straighten shape-assist that the create flow + /canvas already have).
+  const [redrawRegister, setRedrawRegister] = useState<'ink' | 'shade'>('ink');
+  const [redrawShadeTool, setRedrawShadeTool] = useState<ShadeToolState>(SHADE_TOOL_DEFAULT);
+  // Live tone-patch mirror — preloaded from the object's stored toneFills (so a
+  // re-draw of a toned doodle keeps its tone) and re-captured at Done.
+  const redrawToneRef = useRef<ToneFill[]>([]);
+  const redrawInitialTone = useMemo<ToneFill[] | undefined>(() => {
+    const raw = (baseline as Record<string, unknown>).toneFills;
+    return Array.isArray(raw) ? (raw as ToneFill[]) : undefined;
+  }, [baseline]);
+  // The shape-snap API the redraw DrawSurface hands up (same contract as the
+  // other two hosts — fit/apply/cycle the last stroke imperatively).
+  const redrawSnapApiRef = useRef<ShapeSnapApi | null>(null);
+  const [redrawSnapChip, setRedrawSnapChip] = useState<{
+    strokeId: string;
+    action: SnapAction;
+    candidates: ShapeCandidate[];
+    index: number;
+    originalPoints: StrokePoint[];
+    margin: number;
+  } | null>(null);
+  // Honest-miss caption channel for the redraw toolbar.
+  const [redrawFillNote, setRedrawFillNote] = useState<string | null>(null);
+  const redrawFillNoteTimer = useRef<number | null>(null);
+  const showRedrawFillNote = (note: string) => {
+    setRedrawFillNote(note);
+    if (redrawFillNoteTimer.current) window.clearTimeout(redrawFillNoteTimer.current);
+    redrawFillNoteTimer.current = window.setTimeout(() => {
+      setRedrawFillNote(null);
+      redrawFillNoteTimer.current = null;
+    }, 3200);
+  };
+
+  /** Log one redraw shape-snap act into the unified decision log (training
+   *  flywheel — identical to the create flow's logSnap). */
+  const logRedrawSnap = (
+    action: SnapAction,
+    outcome: ShapeSnapOutcome,
+    strokeId: string,
+    result: ShapeFitResult,
+    chosen: ShapeCandidate['kind'],
+    margin: number,
+  ) => {
+    pushShapeSnapEntry({
+      entryType: 'shape-snap',
+      surface: 'shape-snap',
+      action,
+      outcome,
+      strokeId,
+      accepted: result.accepted,
+      refusedReason: result.refusedReason,
+      candidates: result.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
+      chosen,
+      margin,
+    });
+  };
+
+  /** Tap SNAP / STRAIGHTEN in the redraw toolbar: fit the last stroke, apply the
+   *  best candidate (or refuse honestly), raise the chip. */
+  const runRedrawSnap = (action: SnapAction) => {
+    const api = redrawSnapApiRef.current;
+    if (!api) return;
+    const last = api.lastStroke();
+    if (!last) {
+      showRedrawFillNote('nothing to snap — draw a stroke first');
+      return;
+    }
+    const fit = api.fitLast(action);
+    if (!fit) {
+      showRedrawFillNote('that stroke is too small to snap');
+      return;
+    }
+    const { strokeId, result } = fit;
+    const real = result.candidates.filter((c) => c.kind !== 'original');
+    const margin = real.length >= 2 ? real[0].score - real[1].score : real.length === 1 ? 1 : 0;
+    if (!result.accepted) {
+      logRedrawSnap(action, 'evaluate', strokeId, result, 'original', 0);
+      showRedrawFillNote(
+        action === 'snap'
+          ? "didn't read as one clean shape — try Straighten"
+          : "couldn't straighten that — it reads as a scribble",
+      );
+      return;
+    }
+    const best = result.candidates[0];
+    api.applyToStroke(strokeId, best, last.points);
+    logRedrawSnap(action, 'evaluate', strokeId, result, best.kind, margin);
+    setRedrawSnapChip({ strokeId, action, candidates: result.candidates, index: 0, originalPoints: last.points, margin });
+  };
+
+  /** Chip tap: cycle to the next ranked candidate (incl. 'original'), apply it
+   *  live, log the cycle/revert. */
+  const cycleRedrawSnapChip = () => {
+    setRedrawSnapChip((chip) => {
+      if (!chip) return chip;
+      const api = redrawSnapApiRef.current;
+      if (!api) return chip;
+      const nextIndex = (chip.index + 1) % chip.candidates.length;
+      const cand = chip.candidates[nextIndex];
+      api.applyToStroke(chip.strokeId, cand, chip.originalPoints);
+      pushShapeSnapEntry({
+        entryType: 'shape-snap',
+        surface: 'shape-snap',
+        action: chip.action,
+        outcome: cand.kind === 'original' ? 'revert' : 'cycle',
+        strokeId: chip.strokeId,
+        accepted: true,
+        refusedReason: null,
+        candidates: chip.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
+        chosen: cand.kind,
+        margin: chip.margin,
+      });
+      return { ...chip, index: nextIndex };
+    });
+  };
   // Local art override so the card refreshes instantly after a re-draw save.
   const [artMarkup, setArtMarkup] = useState(object.svgMarkup);
   const storedStrokes = useMemo<StrokePoint[][] | null>(() => {
@@ -711,12 +845,16 @@ export function ObjectSurface({
   const handleRedrawDone = async () => {
     const drawn = redrawStrokesRef.current;
     if (drawn.length === 0) return;
-    const markup = normalizeSvgSize(strokesToObjectMarkup(drawn), 180);
+    // Carry any tone painted (or preloaded) during the re-draw, mirroring the
+    // create flow's strokesToObjectMarkup(strokes, tone) + render_config.toneFills.
+    const tone = redrawToneRef.current;
+    const markup = normalizeSvgSize(strokesToObjectMarkup(drawn, tone), 180);
     const config: SurfaceRenderConfig = {
       ...baseline,
       svgStyle: surfStyle,
       modifiers: surfMods,
       strokes: capStrokes(drawn),
+      toneFills: tone.length > 0 ? capToneFills(tone) : undefined,
     };
     // Optimistic everywhere: the card + the desk object update immediately.
     setArtMarkup(markup);
@@ -1033,6 +1171,59 @@ export function ObjectSurface({
                 </button>
               ))}
             </div>
+            {/* DRAW-TOOL ROW — RE-DRAW is the third host of the shared
+                DrawToolbar (Phase 0). Brings the Ink|Shade register, tone
+                cluster, and Snap|Straighten shape-assist the create flow +
+                /canvas already had — the "RE-DRAW missing tools" gap. */}
+            <DrawToolbar
+              variant="redraw"
+              register={redrawRegister}
+              onRegisterChange={setRedrawRegister}
+              registerDisabled={redrawMode === 'style'}
+              registerDisabledTitle="Flip back to Sketch to keep working"
+              shadeTool={redrawShadeTool}
+              onShadeToolChange={setRedrawShadeTool}
+              showSnap={redrawMode === 'draw'}
+              snapEnabled={redrawRegister === 'ink' && redrawCount > 0}
+              onSnapAction={runRedrawSnap}
+              snapTitle={(act) =>
+                redrawRegister === 'shade'
+                  ? 'Snap works on ink — flip to Ink'
+                  : redrawCount === 0
+                    ? 'Draw a stroke first'
+                    : act === 'snap'
+                      ? 'Snap the last stroke to a clean shape'
+                      : 'Crisp the last stroke’s edges (keeps your proportions)'
+              }
+              snapChip={
+                redrawSnapChip
+                  ? {
+                      label: redrawSnapChip.candidates[redrawSnapChip.index]?.label ?? 'Shape',
+                      hasAlternatives: redrawSnapChip.candidates.length > 1,
+                      onCycle: cycleRedrawSnapChip,
+                    }
+                  : null
+              }
+              captionAlert={!!redrawFillNote}
+              captionText={
+                redrawFillNote ??
+                (redrawMode === 'draw'
+                  ? redrawRegister === 'shade'
+                    ? redrawShadeTool.tool === 'fill'
+                      ? redrawShadeTool.erase
+                        ? 'erase fill — tap a region to lift its tone'
+                        : 'tap inside a region to fill it — hold, then drag sideways to scrub Gap'
+                      : redrawShadeTool.tool === 'lasso'
+                        ? redrawShadeTool.erase
+                          ? 'lasso erase — loop an area to lift its tone'
+                          : 'lasso — draw a loop, it closes on release and fills'
+                        : redrawShadeTool.erase
+                          ? 'erasing tone — brush carves it back to paper'
+                          : `brushing ${COVERAGE_BANDS[redrawShadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
+                    : 'raw ink — keep sketching'
+                  : 'styled — play with the pen, flip back to keep drawing')
+              }
+            />
             <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
               <F3SvgStyleProvider>
                 <F3RoughModifiersProvider>
@@ -1044,7 +1235,20 @@ export function ObjectSurface({
                       fill
                       styled={redrawMode === 'style'}
                       initialStrokes={storedStrokes}
+                      initialToneFills={redrawInitialTone}
                       onStrokesChange={(st) => { redrawStrokesRef.current = st; setRedrawCount(st.length); }}
+                      onToneFillsChange={(tf) => { redrawToneRef.current = tf; }}
+                      shade={{
+                        active: redrawMode === 'draw' && redrawRegister === 'shade',
+                        tool: redrawShadeTool.tool,
+                        band: redrawShadeTool.band,
+                        radius: redrawShadeTool.radius,
+                        erase: redrawShadeTool.erase,
+                        gap: redrawShadeTool.gap,
+                      }}
+                      onGapChange={(gap) => setRedrawShadeTool((prev) => (prev.gap === gap ? prev : { ...prev, gap }))}
+                      onFillNote={showRedrawFillNote}
+                      onSnapApi={(api) => { redrawSnapApiRef.current = api; }}
                     />
                   </SurfaceRenderScope>
                 </F3RoughModifiersProvider>
@@ -1132,7 +1336,20 @@ export function ObjectSurface({
                 </button>
                 {storedStrokes ? (
                   <button
-                    onClick={() => { redrawStrokesRef.current = []; setRedrawCount(0); setRedrawMode('draw'); setRedrawing(true); }}
+                    onClick={() => {
+                      redrawStrokesRef.current = [];
+                      setRedrawCount(0);
+                      setRedrawMode('draw');
+                      // Reset the shared-toolbar tool state for a clean re-draw
+                      // session (register/snap/tone start fresh; tone reseeds
+                      // from the object's stored fills via initialToneFills).
+                      setRedrawRegister('ink');
+                      setRedrawShadeTool(SHADE_TOOL_DEFAULT);
+                      setRedrawSnapChip(null);
+                      setRedrawFillNote(null);
+                      redrawToneRef.current = redrawInitialTone ?? [];
+                      setRedrawing(true);
+                    }}
                     disabled={saving}
                     title="Reopen the drawing with your original strokes"
                     style={PILL}

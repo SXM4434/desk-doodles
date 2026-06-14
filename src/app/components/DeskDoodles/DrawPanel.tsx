@@ -9,7 +9,6 @@ import {
   capToneFills,
   prepareBackdrop,
   composeBackdropAndStrokes,
-  ToneShadeCluster,
   SHADE_TOOL_DEFAULT,
   type ShadeToolState,
   type ToneFill,
@@ -18,6 +17,7 @@ import {
   type StrokePoint,
   type ShapeSnapApi,
 } from './DrawSurface';
+import { DrawToolbar } from './DrawToolbar';
 import { type ShapeCandidate, type ShapeFitResult, type SnapAction } from '../../lib/draw/shapeFit';
 import { pushShapeSnapEntry, type ShapeSnapOutcome } from '../../lib/shapeSnapLog';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
@@ -157,53 +157,7 @@ function SmartPickChip({
   );
 }
 
-// ─── SnapChip — the shape-assist receipt (Rock F3) ───────────────────────────
-// "Circle ▸" — tap to cycle the ranked candidates (incl. Original). Same chip
-// grammar as SmartPickChip (accent dot = a system act; no accent-ink bg per
-// system rules; fully rounded pill). Lives by the SNAP/STRAIGHTEN pills.
-function SnapChip({
-  label,
-  hasAlternatives,
-  onCycle,
-}: {
-  label: string;
-  hasAlternatives: boolean;
-  onCycle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      data-snap-chip
-      onClick={onCycle}
-      disabled={!hasAlternatives}
-      title={hasAlternatives ? 'Tap to try another shape' : 'Only one reading — nothing to cycle'}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        borderRadius: 999,
-        border: '1px solid var(--dir-border)',
-        background: 'var(--dir-bg)',
-        padding: '6px 12px',
-        minWidth: 0,
-        flexShrink: 0,
-        cursor: hasAlternatives ? 'pointer' : 'default',
-        fontFamily: IS,
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)', flexShrink: 0 }}
-      />
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--dir-text-primary)' }}>{label}</span>
-      {hasAlternatives && (
-        <span aria-hidden="true" style={{ fontSize: 11, color: 'var(--dir-text-secondary)' }}>
-          ▸
-        </span>
-      )}
-    </button>
-  );
-}
+// (SnapChip moved into the shared DrawToolbar — Phase 0 extraction.)
 
 // ─── Size-cap honesty ─────────────────────────────────────────────────────────
 // The server INSERT path enforces char_length(svg) ≤ 65536 (publish_to_open_desk
@@ -1156,182 +1110,106 @@ export function DrawPanel({
                 line, ellipsized, full text on hover via title. flexWrap only
                 ever moves the upload cluster to a second line at narrow
                 widths (the caption's flex-basis 0 keeps it on line one). */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                rowGap: 6,
-                marginBottom: 8,
-                flexWrap: 'wrap',
-              }}
-            >
-              {(['draw', 'style'] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setComposeMode(m)}
-                  aria-pressed={composeMode === m}
-                  style={{
-                    ...PILL,
-                    padding: '6px 14px',
-                    flexShrink: 0,
-                    background: composeMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
-                    color: composeMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
-                  }}
-                >
-                  {m === 'draw' ? 'Sketch' : 'Style'}
-                </button>
-              ))}
-              <span
-                aria-hidden
-                style={{ width: 1, alignSelf: 'stretch', background: 'var(--dir-border)', flexShrink: 0 }}
-              />
-              {(['ink', 'shade'] as const).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => setPenRegister(r)}
-                  aria-pressed={penRegister === r}
-                  disabled={composeMode === 'style'}
-                  title={
-                    composeMode === 'style'
-                      ? 'Flip back to Sketch to keep working'
-                      : r === 'ink'
-                        ? 'Draw ink strokes'
-                        : 'Brush flat tone bands under your ink'
-                  }
-                  style={{
-                    ...PILL,
-                    padding: '6px 14px',
-                    flexShrink: 0,
-                    opacity: composeMode === 'style' ? 0.45 : 1,
-                    cursor: composeMode === 'style' ? 'default' : 'pointer',
-                    background: penRegister === r ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
-                    color: penRegister === r ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
-                  }}
-                >
-                  {r === 'ink' ? 'Ink' : 'Shade'}
-                </button>
-              ))}
-              {/* SHAPE ASSIST (Rock F3) — Snap + Straighten action pills. Ink
-                  register only (snap is ink-only: tone patches don't snap, the
-                  pills are honestly disabled under Shade per SA item 6).
-                  Disabled until ≥1 stroke exists. The chip cycles ranked
-                  candidates and rides in this same row by the pills. */}
-              {composeMode === 'draw' && (
+            <DrawToolbar
+              variant="panel"
+              register={penRegister}
+              onRegisterChange={setPenRegister}
+              registerDisabled={composeMode === 'style'}
+              registerDisabledTitle="Flip back to Sketch to keep working"
+              shadeTool={shadeTool}
+              onShadeToolChange={setShadeTool}
+              showSnap={composeMode === 'draw'}
+              snapEnabled={penRegister === 'ink' && strokes.length > 0}
+              onSnapAction={runSnap}
+              snapTitle={(act) =>
+                penRegister === 'shade'
+                  ? 'Snap works on ink — flip to Ink'
+                  : strokes.length === 0
+                    ? 'Draw a stroke first'
+                    : act === 'snap'
+                      ? 'Snap the last stroke to a clean shape'
+                      : 'Crisp the last stroke’s edges (keeps your proportions)'
+              }
+              snapChip={
+                snapChip
+                  ? {
+                      label: snapChip.candidates[snapChip.index]?.label ?? 'Shape',
+                      hasAlternatives: snapChip.candidates.length > 1,
+                      onCycle: cycleSnapChip,
+                    }
+                  : null
+              }
+              captionText={captionText}
+              captionAlert={!!(removeNote || fillNote)}
+              // Sketch | Style — the canvas's own render-axis pills. They stay
+              // OWNED by this host (DrawToolbar never owns the render axis); the
+              // leading slot just keeps them inline + adds the separator before
+              // the register pair, byte-identical to the old row.
+              leading={
                 <>
+                  {(['draw', 'style'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setComposeMode(m)}
+                      aria-pressed={composeMode === m}
+                      style={{
+                        ...PILL,
+                        padding: '6px 14px',
+                        flexShrink: 0,
+                        background: composeMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+                        color: composeMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+                      }}
+                    >
+                      {m === 'draw' ? 'Sketch' : 'Style'}
+                    </button>
+                  ))}
                   <span
                     aria-hidden
                     style={{ width: 1, alignSelf: 'stretch', background: 'var(--dir-border)', flexShrink: 0 }}
                   />
-                  {(['snap', 'straighten'] as const).map((act) => {
-                    const enabled = penRegister === 'ink' && strokes.length > 0;
-                    return (
-                      <button
-                        key={act}
-                        data-snap-pill={act}
-                        onClick={() => runSnap(act)}
-                        disabled={!enabled}
-                        title={
-                          penRegister === 'shade'
-                            ? 'Snap works on ink — flip to Ink'
-                            : strokes.length === 0
-                              ? 'Draw a stroke first'
-                              : act === 'snap'
-                                ? 'Snap the last stroke to a clean shape'
-                                : 'Crisp the last stroke’s edges (keeps your proportions)'
-                        }
-                        style={{
-                          ...PILL,
-                          padding: '6px 14px',
-                          flexShrink: 0,
-                          opacity: enabled ? 1 : 0.45,
-                          cursor: enabled ? 'pointer' : 'default',
-                          background: 'var(--dir-bg)',
-                          color: 'var(--dir-text-primary)',
-                        }}
-                      >
-                        {act === 'snap' ? 'Snap' : 'Straighten'}
-                      </button>
-                    );
-                  })}
-                  {snapChip && (
-                    <SnapChip
-                      label={snapChip.candidates[snapChip.index]?.label ?? 'Shape'}
-                      hasAlternatives={snapChip.candidates.length > 1}
-                      onCycle={cycleSnapChip}
-                    />
-                  )}
                 </>
-              )}
-              <span
-                role={removeNote || fillNote ? 'status' : undefined}
-                title={captionText}
-                style={{
-                  fontFamily: IS,
-                  fontSize: 10,
-                  fontStyle: 'italic',
-                  color: removeNote || fillNote ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)',
-                  flex: '1 1 0%',
-                  minWidth: 0,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {captionText}
-              </span>
-              {input === 'upload-svg' && upload && (
-                <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
-                  <button
-                    onClick={() => fileRef.current?.click()}
-                    style={{ ...PILL, padding: '5px 12px', background: 'var(--dir-bg)' }}
-                  >
-                    Replace file
-                  </button>
-                  <button
-                    onClick={() => {
-                      // UPLOAD-REMOVAL STRANDING fix: strokes/tone drawn over
-                      // the file are KEPT (DrawSurface never unmounts) — the
-                      // input register auto-switches to Draw so Done works on
-                      // them alone, with the honest one-line note. The chip's
-                      // pick described the removed file — no longer the
-                      // active truth; quiet fade, logged as overridden.
-                      const keepWork = strokes.length > 0 || tone.length > 0;
-                      setUpload(null);
-                      setUploadError(null);
-                      dismissSmartPick();
-                      if (keepWork) {
-                        setInput('draw');
-                        showRemoveNote();
-                      }
-                    }}
-                    title="Remove the file — your strokes stay"
-                    style={{
-                      ...PILL,
-                      padding: '5px 12px',
-                      background: 'transparent',
-                      color: 'var(--dir-text-body-soft)',
-                    }}
-                  >
-                    Remove
-                  </button>
-                </span>
-              )}
-            </div>
-
-            {/* SHADE TOOL CLUSTER — visible only while the shade register is
-                in hand: the full 8-band ladder (7 paint swatches + Erase =
-                band 0/paper) + brush size. Lives with the canvas (tool
-                chrome), not in the pen column (mark styling). */}
-            {composeMode === 'draw' && penRegister === 'shade' && (
-              <div
-                data-shade-cluster
-                style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, minWidth: 0 }}
-              >
-                <span style={{ ...SECTION_LABEL, flexShrink: 0 }}>Tone</span>
-                <ToneShadeCluster value={shadeTool} onChange={setShadeTool} />
-              </div>
-            )}
+              }
+              // Upload Replace / Remove cluster — only with a file picked.
+              trailing={
+                input === 'upload-svg' && upload ? (
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button
+                      onClick={() => fileRef.current?.click()}
+                      style={{ ...PILL, padding: '5px 12px', background: 'var(--dir-bg)' }}
+                    >
+                      Replace file
+                    </button>
+                    <button
+                      onClick={() => {
+                        // UPLOAD-REMOVAL STRANDING fix: strokes/tone drawn over
+                        // the file are KEPT (DrawSurface never unmounts) — the
+                        // input register auto-switches to Draw so Done works on
+                        // them alone, with the honest one-line note. The chip's
+                        // pick described the removed file — no longer the
+                        // active truth; quiet fade, logged as overridden.
+                        const keepWork = strokes.length > 0 || tone.length > 0;
+                        setUpload(null);
+                        setUploadError(null);
+                        dismissSmartPick();
+                        if (keepWork) {
+                          setInput('draw');
+                          showRemoveNote();
+                        }
+                      }}
+                      title="Remove the file — your strokes stay"
+                      style={{
+                        ...PILL,
+                        padding: '5px 12px',
+                        background: 'transparent',
+                        color: 'var(--dir-text-body-soft)',
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </span>
+                ) : null
+              }
+            />
 
             {/* THE PANE — DrawSurface stays mounted across ALL input modes
                 (switching input never destroys a sketch); upload states sit

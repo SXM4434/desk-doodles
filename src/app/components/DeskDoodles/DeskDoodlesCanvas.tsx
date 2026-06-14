@@ -27,7 +27,6 @@ import {
 import {
   DrawSurface,
   strokesToObjectMarkup,
-  ToneShadeCluster,
   SHADE_TOOL_DEFAULT,
   type CanvasMode,
   type InputMode,
@@ -37,6 +36,7 @@ import {
   type ShadeToolState,
   type ShapeSnapApi,
 } from './DrawSurface';
+import { DrawToolbar } from './DrawToolbar';
 import { type ShapeCandidate, type ShapeFitResult, type SnapAction } from '../../lib/draw/shapeFit';
 import { pushShapeSnapEntry, type ShapeSnapOutcome } from '../../lib/shapeSnapLog';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
@@ -81,54 +81,7 @@ function FrameNote({ title, body }: { title: string; body: ReactNode }) {
   );
 }
 
-// ─── SnapChip — the shape-assist receipt (Rock F3) ───────────────────────────
-// Mirrors DrawPanel.tsx's SnapChip (not exported there — that file belongs to
-// another work lane). "Circle ▸" — tap to cycle the ranked candidates (incl.
-// Original). Accent dot = a system act; fully rounded pill; no accent-ink bg
-// per system rules. Lives by the SNAP/STRAIGHTEN pills.
-function SnapChip({
-  label,
-  hasAlternatives,
-  onCycle,
-}: {
-  label: string;
-  hasAlternatives: boolean;
-  onCycle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      data-snap-chip
-      onClick={onCycle}
-      disabled={!hasAlternatives}
-      title={hasAlternatives ? 'Tap to try another shape' : 'Only one reading — nothing to cycle'}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        borderRadius: 999,
-        border: '1px solid var(--dir-border)',
-        background: 'var(--dir-bg)',
-        padding: '6px 12px',
-        minWidth: 0,
-        flexShrink: 0,
-        cursor: hasAlternatives ? 'pointer' : 'default',
-        fontFamily: IS,
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)', flexShrink: 0 }}
-      />
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--dir-text-primary)' }}>{label}</span>
-      {hasAlternatives && (
-        <span aria-hidden="true" style={{ fontSize: 11, color: 'var(--dir-text-secondary)' }}>
-          ▸
-        </span>
-      )}
-    </button>
-  );
-}
+// (SnapChip moved into the shared DrawToolbar — Phase 0 extraction.)
 
 /** Provider shell — the 3D control state lives page-wide so the header pills
  *  (chrome) and the canvas overlay read the same values, and so DrawSurface
@@ -633,145 +586,50 @@ function DeskDoodlesCanvasPage() {
               (920) so the toolbar lines up over the frame. */}
           {drawToolsActive && (
             <div style={{ width: '100%', maxWidth: 920, marginBottom: 12, flexShrink: 0 }}>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  rowGap: 6,
-                  flexWrap: 'wrap',
-                }}
-              >
-                {/* INK | SHADE register — which tool the pointer wields while
-                    sketching (round 7). Shade puts down tone bands; Ink draws
-                    strokes. Pill grammar mirrors DrawPanel's register pair. */}
-                {(['ink', 'shade'] as const).map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setPenRegister(r)}
-                    aria-pressed={penRegister === r}
-                    title={r === 'ink' ? 'Draw ink strokes' : 'Brush flat tone bands under your ink'}
-                    style={{
-                      ...PILL,
-                      padding: '6px 14px',
-                      flexShrink: 0,
-                      background: penRegister === r ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
-                      color: penRegister === r ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
-                    }}
-                  >
-                    {r === 'ink' ? 'Ink' : 'Shade'}
-                  </button>
-                ))}
-                {/* SHAPE ASSIST — Snap + Straighten action pills. Ink register
-                    only (tone patches don't snap); disabled until ≥1 stroke
-                    exists. The chip cycles ranked candidates in this same row. */}
-                <span
-                  aria-hidden
-                  style={{ width: 1, alignSelf: 'stretch', background: 'var(--dir-border)', flexShrink: 0 }}
-                />
-                {(['snap', 'straighten'] as const).map((act) => {
-                  const enabled = penRegister === 'ink' && strokes3d.length > 0;
-                  return (
-                    <button
-                      key={act}
-                      data-snap-pill={act}
-                      onClick={() => runSnap(act)}
-                      disabled={!enabled}
-                      title={
-                        penRegister === 'shade'
-                          ? 'Snap works on ink — flip to Ink'
-                          : strokes3d.length === 0
-                            ? 'Draw a stroke first'
-                            : act === 'snap'
-                              ? 'Snap the last stroke to a clean shape'
-                              : 'Crisp the last stroke’s edges (keeps your proportions)'
+              <DrawToolbar
+                variant="canvas"
+                register={penRegister}
+                onRegisterChange={setPenRegister}
+                shadeTool={shadeTool}
+                onShadeToolChange={setShadeTool}
+                snapEnabled={penRegister === 'ink' && strokes3d.length > 0}
+                onSnapAction={runSnap}
+                snapTitle={(act) =>
+                  penRegister === 'shade'
+                    ? 'Snap works on ink — flip to Ink'
+                    : strokes3d.length === 0
+                      ? 'Draw a stroke first'
+                      : act === 'snap'
+                        ? 'Snap the last stroke to a clean shape'
+                        : 'Crisp the last stroke’s edges (keeps your proportions)'
+                }
+                snapChip={
+                  snapChip
+                    ? {
+                        label: snapChip.candidates[snapChip.index]?.label ?? 'Shape',
+                        hasAlternatives: snapChip.candidates.length > 1,
+                        onCycle: cycleSnapChip,
                       }
-                      style={{
-                        ...PILL,
-                        padding: '6px 14px',
-                        flexShrink: 0,
-                        opacity: enabled ? 1 : 0.45,
-                        cursor: enabled ? 'pointer' : 'default',
-                        background: 'var(--dir-bg)',
-                        color: 'var(--dir-text-primary)',
-                      }}
-                    >
-                      {act === 'snap' ? 'Snap' : 'Straighten'}
-                    </button>
-                  );
-                })}
-                {snapChip && (
-                  <SnapChip
-                    label={snapChip.candidates[snapChip.index]?.label ?? 'Shape'}
-                    hasAlternatives={snapChip.candidates.length > 1}
-                    onCycle={cycleSnapChip}
-                  />
-                )}
-                {/* Caption — the honest-miss one-liner takes the slot when it
-                    fires, else the current register's hint. Single line,
-                    ellipsized, full text on hover via title. */}
-                <span
-                  role={fillNote ? 'status' : undefined}
-                  title={
-                    fillNote ??
-                    (penRegister === 'shade'
-                      ? shadeTool.tool === 'fill'
+                    : null
+                }
+                captionAlert={!!fillNote}
+                captionText={
+                  fillNote ??
+                  (penRegister === 'shade'
+                    ? shadeTool.tool === 'fill'
+                      ? shadeTool.erase
+                        ? 'erase fill — tap a region to lift its tone'
+                        : 'tap inside a region to fill it — hold, then drag sideways to scrub Gap'
+                      : shadeTool.tool === 'lasso'
                         ? shadeTool.erase
-                          ? 'erase fill — tap a region to lift its tone'
-                          : 'tap inside a region to fill it — hold, then drag sideways to scrub Gap'
-                        : shadeTool.tool === 'lasso'
-                          ? shadeTool.erase
-                            ? 'lasso erase — loop an area to lift its tone'
-                            : 'lasso — draw a loop, it closes on release and fills'
-                          : shadeTool.erase
-                            ? 'erasing tone — brush carves it back to paper'
-                            : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
-                      : 'raw ink — keep sketching')
-                  }
-                  style={{
-                    fontFamily: IS,
-                    fontSize: 10,
-                    fontStyle: 'italic',
-                    color: fillNote ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)',
-                    flex: '1 1 0%',
-                    minWidth: 0,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {fillNote ??
-                    (penRegister === 'shade'
-                      ? shadeTool.tool === 'fill'
-                        ? shadeTool.erase
-                          ? 'erase fill — tap a region to lift its tone'
-                          : 'tap inside a region to fill it — hold, then drag sideways to scrub Gap'
-                        : shadeTool.tool === 'lasso'
-                          ? shadeTool.erase
-                            ? 'lasso erase — loop an area to lift its tone'
-                            : 'lasso — draw a loop, it closes on release and fills'
-                          : shadeTool.erase
-                            ? 'erasing tone — brush carves it back to paper'
-                            : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
-                      : 'raw ink — keep sketching')}
-                </span>
-              </div>
-
-              {/* SHADE TOOL CLUSTER — visible only while the shade register is
-                  in hand: the full 8-band ladder (7 paint swatches + Erase =
-                  band 0/paper), the Brush|Fill|Lasso tools, the per-tool slider
-                  (Brush radius / Fill GAP), and the FULL FILL pill. The whole
-                  cluster comes from DrawSurface's exported ToneShadeCluster
-                  (the same one DrawPanel mounts). */}
-              {penRegister === 'shade' && (
-                <div
-                  data-shade-cluster
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, minWidth: 0 }}
-                >
-                  <span style={{ ...SECTION_LABEL, flexShrink: 0 }}>Tone</span>
-                  <ToneShadeCluster value={shadeTool} onChange={setShadeTool} />
-                </div>
-              )}
+                          ? 'lasso erase — loop an area to lift its tone'
+                          : 'lasso — draw a loop, it closes on release and fills'
+                        : shadeTool.erase
+                          ? 'erasing tone — brush carves it back to paper'
+                          : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
+                    : 'raw ink — keep sketching')
+                }
+              />
             </div>
           )}
 
