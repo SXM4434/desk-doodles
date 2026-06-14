@@ -61,7 +61,7 @@ Structure (Sebs, restated): the **full user flow** checked end-to-end once the s
 - DATASET adapters still TODO: `--from-ofat-manualdraw`, `--from-ofat-upload`, `--from-ofat-drawtools` (findings JSONs preserved on disk).
 
 ## 🐛 BUG-HUNT FINDINGS (workflow wbtntkavw, 11 agents/3 rounds, 2026-06-14)
-- 🔴 **O1 (MED) — 2D→3D flip silently DROPS shade/tone regions** — only INK converts; tone vanishes, no in-frame note. SAME root cause as fill→3D (Bug 1). ← fixing now.
+- 🟢 **O1 (MED) — 2D→3D flip dropped shade/tone regions** = fill→3D-hollow (Bug 1) → FIXED + committed (2fdfbd8): toneFills threaded into Stroke3DScene, each fill builds a band-grey slab via buildExtrudeGeometryWithHoles. Live-verified macbook (was hollow → now solid tone slab).
 - 🟡 **S1 — /playground "3D" toggle is a DEAD control** (button highlights, no canvas mounts, stays 2D). Workflow SAFE-FIXED in worktree (honesty-gate pattern) — HARVEST. `DeskDoodlesPlayground.tsx`.
 - 🔴 **U1 (LOW) — personalSpace READ helpers don't gate on isPersonalSpaceDbReady()** — flag-on-before-migrations fires 404/400 on every /desk mount (degrades gracefully, default-OFF clean). `personalSpace.ts` getMyProfile/listMyDrawer. Clean safe fix.
 - 🔴 **O5 (LOW) — single dot/tap → zero strokes, no feedback** (TAP_SLOP_PX=6, by-design but silent). Allow dot marks or micro-feedback. `DrawSurface.tsx`.
