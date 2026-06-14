@@ -699,6 +699,7 @@ function DeskDoodlesCanvasPage() {
                   <Suspense fallback={<FrameNote title="Loading 3D" body="Fetching the geometry engine…" />}>
                     <Stroke3DSceneLazy
                       strokes={strokePoints}
+                      toneFills={tone}
                       geometryMode={geometryMode}
                       style3d={style3d}
                       materialPreset={materialPreset}

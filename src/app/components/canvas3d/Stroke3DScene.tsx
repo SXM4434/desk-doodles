@@ -20,6 +20,7 @@ import {
   TREATED_AS_CLOSED_DEFAULT,
   WORLD_SCALE,
   buildExtrudeGeometry,
+  buildExtrudeGeometryWithHoles,
   buildInflateGeometry,
   buildPoolSolidGeometry,
   buildRodGeometry,
@@ -39,6 +40,8 @@ import {
   type ViewBoxSize,
 } from '../../lib/geometry3d/strokeTo3d';
 import { pushClosureCorrection } from '../../lib/smart/conversionMap';
+import { COVERAGE_BANDS } from '../../lib/smart/coverage';
+import type { ToneFill } from '../../lib/toneMask';
 import {
   DEFAULT_MODE3D_PARAMS,
   INFLATE_PROFILE_FAMILY_PRESETS,
@@ -352,6 +355,11 @@ function CameraFramer({ bounds }: { bounds: PoolBounds | null }) {
  *  user-facing "too many strokes" messaging. */
 const MAX_STROKES_3D = 60;
 
+/** Depth (world units) of a tone/fill slab — a low tone PLATE, thinner than an
+ *  ink extrude so the fill reads as the region's shaded body, not a tall block.
+ *  (fill→3D-hollow fix.) */
+const TONE_FILL_DEPTH = 0.4;
+
 /** Resolve the paper CSS var ONCE at mount (plan §2.1). WebGL cannot consume
  *  `var(--dir-bg)` strings — passing them to three fails silently to black
  *  (same family as feedback_media_overlay_ink_doesnt_flip). Hex fallback keeps
@@ -465,6 +473,12 @@ export interface Stroke3DSceneProps {
   /** Raw strokes in viewBox coords (y-down). Points are [x, y] or
    *  [x, y, pressure] — DrawSurface's `stroke.points` pass through unchanged. */
   strokes: StrokeInputPoint[][];
+  /** Painted TONE/FILL regions (toneMask.ts ToneFill, band 1–7) in the SAME
+   *  viewBox space as `strokes`. Each becomes a band-greyscale extruded slab so
+   *  a filled region carries its tone into 3D instead of vanishing (the
+   *  fill→3D-hollow fix). Empty/undefined = no fill bodies (byte-identical old
+   *  render). */
+  toneFills?: ToneFill[];
   /** ARROW RULE: seed chip overrides (strokeSignature → treat-as-closed).
    *  The chip mutates scene-local state from here; harness boards use it to
    *  show the 'solid' variant without flipping the constant. */
@@ -554,6 +568,7 @@ function disposeSvgPortTex(t: SvgPortTextureResult | null | undefined): void {
  *  don't auto-dispose (plan §5 risk 2). */
 function StrokeMeshes({
   strokes,
+  toneFills,
   viewBox,
   geometryMode,
   material,
@@ -568,6 +583,7 @@ function StrokeMeshes({
   treatAsClosedBySig,
 }: {
   strokes: StrokeInputPoint[][];
+  toneFills?: ToneFill[];
   viewBox: ViewBoxSize;
   geometryMode: GeometryModeSetting;
   material: THREE.Material;
@@ -634,6 +650,63 @@ function StrokeMeshes({
       for (const b of builds) b.geometry.dispose();
     };
   }, [builds]);
+
+  // ── TONE/FILL BODIES (fill→3D-hollow fix, researched 2026-06-14) ──────────
+  // A painted tone region (toneMask ToneFill, band 1–7) used to vanish on the
+  // 2D→3D flip — only ink strokes converted, so a filled mass arrived as just
+  // its outline (hollow), and the band VALUE was lost. Each ToneFill now builds
+  // a band-greyscale extruded SLAB via the existing buildExtrudeGeometryWithHoles
+  // (so holes are real, the slab is z-centered to the same plane as the ink),
+  // colored by the band's source-darkness (band-5 vs band-7 read distinctly —
+  // the tone carries into 3D). Aligned to the SAME pool center as the strokes so
+  // fill + ink sit together. Empty fills → [] → byte-identical old render.
+  const toneFillsKey = useMemo(
+    () => (toneFills ?? []).map((f) => `${f.id}:${f.band}:${f.points?.length ?? 0}:${f.holes?.length ?? 0}`).join('|'),
+    [toneFills],
+  );
+  const fillBodies = useMemo<{ geometry: THREE.BufferGeometry; material: THREE.Material }[]>(() => {
+    if (!toneFills || toneFills.length === 0) return [];
+    const pool = strokes.filter((s) => s.length > 0).slice(0, MAX_STROKES_3D);
+    // Co-center with the ink pool so fill + strokes share the origin; if there
+    // are no strokes (pure tone), center on the fills' own outlines.
+    const centerSrc = pool.length > 0 ? pool : toneFills.map((f) => f.points);
+    const center = poolCenter(centerSrc as StrokeInputPoint[][], viewBox);
+    const out: { geometry: THREE.BufferGeometry; material: THREE.Material }[] = [];
+    for (const f of toneFills) {
+      if (!f.points || f.points.length < 3) continue;
+      try {
+        const outer = normalizeStrokePoints(f.points as StrokeInputPoint[], viewBox, WORLD_SCALE, center);
+        const holeWorlds = (f.holes ?? [])
+          .map((h) => normalizeStrokePoints(h as StrokeInputPoint[], viewBox, WORLD_SCALE, center))
+          .filter((h) => h.length >= 3);
+        const build = buildExtrudeGeometryWithHoles(outer, holeWorlds, { depth: TONE_FILL_DEPTH });
+        const bandIdx = Math.min(Math.max(Math.round(f.band), 0), COVERAGE_BANDS.length - 1);
+        const cb = COVERAGE_BANDS[bandIdx];
+        const darkness = (cb.darknessMin + cb.darknessMax) / 2;
+        const grey = Math.max(0.03, Math.min(1, 1 - darkness));
+        out.push({
+          geometry: build.geometry,
+          material: new THREE.MeshStandardMaterial({
+            color: new THREE.Color(grey, grey, grey),
+            roughness: 1,
+            metalness: 0,
+          }),
+        });
+      } catch {
+        // degenerate fill region (collinear / self-intersecting) → skip honestly.
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toneFillsKey, key, viewBox.w, viewBox.h]);
+  useEffect(() => {
+    return () => {
+      for (const f of fillBodies) {
+        f.geometry.dispose();
+        f.material.dispose();
+      }
+    };
+  }, [fillBodies]);
 
   // ── BAS-RELIEF FACE (RC-2 fix, replaces the raised-tube overlay) ───────────
   // The pool-raster Solid (and the closed-loop Extrude) merge the drawing into
@@ -998,6 +1071,13 @@ function StrokeMeshes({
           ))}
         </group>
       ))}
+      {/* TONE/FILL bodies — each painted region as a band-greyscale slab so the
+          fill (and its band value) carries into 3D instead of vanishing on the
+          flip (fill→3D-hollow fix). Sits slightly behind z=0 so coplanar ink
+          edges read on top without z-fighting. */}
+      {fillBodies.map((f, i) => (
+        <mesh key={`fill${i}`} geometry={f.geometry} material={f.material} position={[0, 0, -0.03]} />
+      ))}
       {/* (RC-2 fix: the buried-hand problem is now solved by the bas-relief
           bumpMap on the body itself — applied above — so there is no separate
           face-ink overlay group. The drawing IS the surface.) */}
@@ -1024,6 +1104,7 @@ function StrokeMeshes({
 
 export function Stroke3DScene({
   strokes,
+  toneFills,
   initialTreatAsClosed,
   viewBox = DEFAULT_VIEWBOX,
   geometryMode = 'auto',
@@ -1172,6 +1253,7 @@ export function Stroke3DScene({
       )}
       <StrokeMeshes
         strokes={strokes}
+        toneFills={toneFills}
         viewBox={viewBox}
         geometryMode={geometryMode}
         material={material}
