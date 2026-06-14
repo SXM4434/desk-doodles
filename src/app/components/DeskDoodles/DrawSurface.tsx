@@ -468,6 +468,13 @@ export type FillRegion = {
   areaWorld: number;
 };
 
+/** 2D FILL lane grid resolution — finer than the 3D/solid 200 cap so small
+ *  NESTED features (two triangles inside a circle) survive as distinct fill
+ *  regions (D1/D2). SAFE because extractFillRegions runs the extractor PER
+ *  spatially-disjoint cluster, sizing the grid to ONE shape's bbox — not the
+ *  whole-canvas union (the union is what the old global 420 overflowed). */
+const FILL_GRID_RESOLUTION = 400;
+
 /** Run the pool-raster extractor over the stroke pool at a gap multiplier and
  *  map the region tree back into viewBox px. Deterministic; cache by
  *  (strokesKey, gapIdx) — per ladder STEP, never per pointermove (spec §6). */
@@ -537,10 +544,13 @@ export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegi
       // FILL-CONFORM (2026-06-13): crisp = keep the drawn shape's SHARP corners
       // so a rectangle fills as a rectangle, not a blob.
       crisp: true,
-      // Per-cluster bbox now gives each shape the full grid budget; keep the
-      // proven 200 cap (a global 420 broke enclosure — the nested-small fix is a
-      // separate careful change, not a global resolution bump).
-      resolution: SOLID_MAX_GRID_RESOLUTION,
+      // Per-cluster bbox sizes the grid to THIS shape, so a FINER grid is safe
+      // (the old global 420 broke enclosure because it spanned the whole canvas;
+      // per-cluster it doesn't). The finer FILL grid lets small NESTED features —
+      // two triangles inside a circle — survive as distinct regions (D1/D2) so a
+      // tap fills the region you picked, inner shapes knocked out.
+      resolution: FILL_GRID_RESOLUTION,
+      maxResolution: FILL_GRID_RESOLUTION,
     });
     // world→viewBox inverse (per this cluster's center): x = wx/s + cx, y = cy − wy/s.
     const toVb = ([wx, wy]: [number, number]): [number, number] => [
