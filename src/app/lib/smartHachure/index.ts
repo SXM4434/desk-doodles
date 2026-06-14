@@ -399,6 +399,10 @@ export function renderSmartHachure(
       // it IS the outline, not a base fill. Dropping it blanked every stroke
       // on any pen-tip change (2026-06-11). transformElement tags it.
       if (el.getAttribute('data-pen-tip-ink') === '1') return true;
+      // U5: url() pattern/gradient fills aren't hachurable — keep the source so
+      // the pattern/gradient renders (beneath the hand-feel outline) instead of
+      // blanking out (resolveUrlFillDarkness maps them to paper → no marks).
+      if (/^\s*url\(/i.test(f)) return true;
       // Paper / structural-frame knockouts keep their source fill (see above).
       if (keepsSourceFill) return true;
       return false;
