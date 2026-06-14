@@ -1029,6 +1029,7 @@ export function DrawSurface({
   onGapChange,
   onFillNote,
   onSnapApi,
+  onUploadedSvgChange,
 }: {
   mode: CanvasMode;
   input: InputMode;
@@ -1109,6 +1110,10 @@ export function DrawSurface({
    *  so the host can fit/apply/cycle the last stroke on demand. /canvas leaves
    *  this unset — zero behavior change, freehand stays the only path. */
   onSnapApi?: (api: ShapeSnapApi) => void;
+  /** Live mirror of the FITTED uploaded-SVG markup (or null when cleared) so the
+   *  host can flatten it into strokes for the 3D engine (the easy svg→3D bridge,
+   *  svgToStrokes). Same onStrokesChange idiom — fired from an effect. */
+  onUploadedSvgChange?: (markup: string | null) => void;
 }) {
   // PREVIEW strokes — gestures the user has finished pen-up on but hasn't
   // committed yet. While in this state they render as raw perfect-freehand
@@ -1397,6 +1402,12 @@ export function DrawSurface({
   useEffect(() => {
     onStrokesChange?.(strokes);
   }, [strokes, onStrokesChange]);
+
+  // Mirror the FITTED uploaded-SVG markup out so the host can flatten it into
+  // strokes for the 3D engine (svgToStrokes). Same stable-callback idiom.
+  useEffect(() => {
+    onUploadedSvgChange?.(uploadedSvg?.markup ?? null);
+  }, [uploadedSvg, onUploadedSvgChange]);
 
   // Mirror the tone pool out too — same stable-callback contract.
   useEffect(() => {

@@ -40,6 +40,7 @@ import { DrawToolbar } from './DrawToolbar';
 import { type ShapeCandidate, type ShapeFitResult, type SnapAction } from '../../lib/draw/shapeFit';
 import { pushShapeSnapEntry, type ShapeSnapOutcome } from '../../lib/shapeSnapLog';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
+import { svgMarkupToStrokes } from '../../lib/svgToStrokes';
 // svg-port 3D: the offscreen REAL 2D render whose styled <svg> the form wears.
 // Already in the main chunk (DrawSurface imports it) — no extra cost.
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
@@ -99,6 +100,9 @@ export function DeskDoodlesCanvas() {
 function DeskDoodlesCanvasPage() {
   const [mode, setMode] = useState<CanvasMode>('svg');
   const [input, setInput] = useState<InputMode>('draw');
+  // FITTED uploaded-SVG markup, mirrored up from DrawSurface, flattened into
+  // strokes for the easy svg→3D bridge (svgToStrokes).
+  const [uploadedSvgMarkup, setUploadedSvgMarkup] = useState<string | null>(null);
   // CURRENT stroke pool, lifted out of DrawSurface via its onStrokesChange
   // mirror (DrawSurface keeps ownership of capture; this is a read-only copy
   // — the 3D scene is fed the SAME strokes the 2D surface holds, so flipping
@@ -335,7 +339,19 @@ function DeskDoodlesCanvasPage() {
       setMode, setStyle3d, setGeometryMode, setSvgStyle,
     };
   }, [setStyle3d, setGeometryMode, setSvgStyle]);
-  const strokePoints = useMemo(() => strokes3d.map((s) => s.points), [strokes3d]);
+  // EASY svg→3D bridge: an uploaded SVG never enters the stroke pool (it renders
+  // as 2D-only markup), so 3D used to say "nothing to convert". Flatten the
+  // FITTED upload markup into strokes (svgToStrokes) and use them when there are
+  // no drawn strokes — the SAME strokeTo3d engine then converts them (rod /
+  // extrude / solid). Complex raster→GLB stays the R10 hard path.
+  const uploadStrokes = useMemo(
+    () => (uploadedSvgMarkup ? svgMarkupToStrokes(uploadedSvgMarkup) : []),
+    [uploadedSvgMarkup],
+  );
+  const drawnStrokePoints = useMemo(() => strokes3d.map((s) => s.points), [strokes3d]);
+  // Drawn strokes win; uploaded-SVG strokes are the fallback so a pure upload
+  // still converts to 3D.
+  const strokePoints = drawnStrokePoints.length > 0 ? drawnStrokePoints : uploadStrokes;
 
   // ── svg-port 3D: feed the scene the REAL styled 2D render ──────────────────
   // When style3d is svg-port, mount the actual SvgStyleTransform OFFSCREEN on
@@ -666,6 +682,7 @@ function DeskDoodlesCanvasPage() {
               onGapChange={handleGapChange}
               onFillNote={showFillNote}
               onSnapApi={handleSnapApi}
+              onUploadedSvgChange={setUploadedSvgMarkup}
             />
             {mode === '3d' && (
               <div
@@ -696,11 +713,21 @@ function DeskDoodlesCanvasPage() {
                   <FrameNote
                     title="Nothing to convert yet"
                     body={
-                      <>
-                        Draw strokes in 2D first — then flip back to 3D.
-                        <br />
-                        Upload→3D is the hard path (vision router) — drawn strokes only for now.
-                      </>
+                      input === 'upload-svg' ? (
+                        <>
+                          Upload an SVG — its paths convert straight to 3D.
+                          <br />
+                          (If nothing appears, the SVG had no usable vector shapes.)
+                        </>
+                      ) : input === 'upload-image' ? (
+                        <>
+                          Image→3D is the hard path (vision router) — coming soon.
+                          <br />
+                          Draw strokes or upload an SVG to convert now.
+                        </>
+                      ) : (
+                        <>Draw strokes in 2D first — then flip back to 3D.</>
+                      )
                     }
                   />
                 )}
