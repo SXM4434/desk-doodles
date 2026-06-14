@@ -74,6 +74,25 @@ export function renderRegion(
 // generate hachure / cross-hatch / dots / zigzag marks via rough.js, clipped to
 // the region's geometry.
 
+/** Rough bbox area of a path `d` (min/max over its coordinate numbers). Not
+ *  geometry-exact — only a magnitude estimate to size the dot-count safety cap. */
+function pathBBoxArea(d: string): number {
+  const nums = d.match(/-?\d*\.?\d+(?:e-?\d+)?/gi);
+  if (!nums || nums.length < 4) return 0;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const x = parseFloat(nums[i]);
+    const y = parseFloat(nums[i + 1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  if (!Number.isFinite(minX)) return 0;
+  return Math.max(0, maxX - minX) * Math.max(0, maxY - minY);
+}
+
 function renderHachureFamily(
   region: SVGElement,
   treatment: Treatment,
@@ -86,6 +105,19 @@ function renderHachureFamily(
   // Density math routes through the shared coverage module (smart Phase A —
   // one math, two renderers). See resolveDensity below.
   const density = resolveDensity(treatment, ctx);
+
+  // U3: 'dots' renders as ONE <path> of per-dot arc commands; dotCount ≈
+  // area/gap²·layers, so a large dark region can emit a ~20M-char path that
+  // freezes the tab. Cap the count by RAISING the gap — coverage honestly
+  // saturates at the cap instead of hanging (same spirit as the gap-floor cap).
+  // Provably bounded: gap=sqrt(area·layers/MAX_DOTS) ⇒ new count = MAX_DOTS.
+  if (treatment.fillStyle === 'dots') {
+    const area = pathBBoxArea(pathD);
+    const layers = Math.max(1, density.layers);
+    const MAX_DOTS = 6000;
+    const est = area > 0 && density.gap > 0 ? (area / (density.gap * density.gap)) * layers : 0;
+    if (est > MAX_DOTS) density.gap = Math.sqrt((area * layers) / MAX_DOTS);
+  }
 
   // Build rough.js options from the treatment.
   // Map our biasMode → rough.js hachure angle variation:
