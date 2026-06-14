@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "dataset": "datasets/smart-layer.dataset.jsonl",
   "dedupeKey": "exampleId",
-  "exampleCount": 62715,
-  "highWaterIngestIndex": 62714,
+  "exampleCount": 63403,
+  "highWaterIngestIndex": 63402,
   "groundTruthCount": 1394,
   "countsBySource": {
     "golden": 1394,
@@ -12,27 +12,28 @@
     "fidelity-3d": 29553,
     "ofat-2d": 20094,
     "ofat-3d": 2426,
-    "ofat-manualdraw": 891,
-    "ofat-upload": 105
+    "ofat-manualdraw": 985,
+    "ofat-upload": 699
   },
   "countsByLabelKind": {
     "role": 1394,
-    "fidelity": 61321
+    "fidelity": 62009
   },
   "countsByRegime": {
     "canonical-eps3": 30954,
-    "unknown": 31761
+    "unknown": 32449
   },
   "countsByRenderSurface": {
     "audit": 29733,
     "desk": 7,
     "null": 32195,
-    "canvas-2d": 217,
+    "canvas-2d": 350,
     "upload": 14,
-    "canvas-3d": 549
+    "canvas-3d": 1104
   },
   "lastFeedSources": [
-    "ofat-manualdraw"
+    "ofat-manualdraw",
+    "ofat-upload"
   ],
   "lastFeedCapturedAt": null
 }
