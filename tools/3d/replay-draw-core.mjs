@@ -71,6 +71,13 @@ const catalog = await page.evaluate(() => {
     const vb = (svg.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
     if (vb.length !== 4 || !(vb[2] > 0) || !(vb[3] > 0)) continue;
     const [vx, vy, vw, vh] = vb;
+    // ASPECT-PRESERVING normalize: divide BOTH axes by the SAME factor (max side)
+    // so a thin/tall object stays thin/tall. (The old per-axis /vw,/vh stretched
+    // every non-square object to fill a square → thin pens drew as chunky boxes,
+    // which looked like a "snap over-widening" bug but was this harness distorting
+    // the aspect before snap ever ran.) content occupies [0,cw]×[0,ch], one == 1.
+    const s = Math.max(vw, vh);
+    const cw = vw / s, ch = vh / s;
     const els = [...svg.querySelectorAll('path, line, polyline, polygon, rect, circle, ellipse')];
     const polylines = [];
     for (const el of els) {
@@ -83,13 +90,13 @@ const catalog = await page.evaluate(() => {
       for (let i = 0; i < n; i++) {
         let pt;
         try { pt = el.getPointAtLength((total * i) / (n - 1)); } catch { ok = false; break; }
-        const nx = (pt.x - vx) / vw, ny = (pt.y - vy) / vh; // 0..1 in viewBox
+        const nx = (pt.x - vx) / s, ny = (pt.y - vy) / s; // aspect-preserved, in [0,cw]×[0,ch]
         if (!Number.isFinite(nx) || !Number.isFinite(ny)) { ok = false; break; }
         pl.push([nx, ny]);
       }
       if (ok && pl.length >= 2) polylines.push(pl);
     }
-    if (polylines.length) out.push({ shape, subjectId, polylines });
+    if (polylines.length) out.push({ shape, subjectId, cw, ch, polylines });
   }
   return out;
 });
@@ -145,15 +152,23 @@ for (const obj of work) {
   await page.waitForTimeout(600);
   const box = await drawSurfaceBox();
   if (!box) { findings.push({ object: obj.shape, subjectId: obj.subjectId, stage: 'setup', verdict: 'BREAK', note: 'no draw surface' }); continue; }
-  // Inset the drawing into 12%..88% of the frame so it isn't clipped at edges.
+  // ASPECT-PRESERVING fit: scale the object's content (cw×ch normalized) into the
+  // padded draw region with ONE uniform px factor + center it — so a thin/tall
+  // object draws thin/tall (no stretch). nx,ny are in [0,cw]×[0,ch].
   const pad = 0.12, span = 1 - 2 * pad;
+  const cw = obj.cw ?? 1, ch = obj.ch ?? 1;
+  const availW = span * box.w, availH = span * box.h;
+  const px = Math.min(availW / cw, availH / ch); // px per normalized unit, uniform
+  const drawW = cw * px, drawH = ch * px;
+  const ox = box.x + (box.w - drawW) / 2; // center horizontally
+  const oy = box.y + (box.h - drawH) / 2; // center vertically
   const rand = rng(strHash(obj.shape));
   const wob = 1.4; // px hand-wobble amplitude in screen space
   const errsBefore = errs.length;
   for (const pl of obj.polylines) {
     const pts = pl.map(([nx, ny]) => ({
-      x: box.x + (pad + nx * span) * box.w + (rand() - 0.5) * 2 * wob,
-      y: box.y + (pad + ny * span) * box.h + (rand() - 0.5) * 2 * wob,
+      x: ox + nx * px + (rand() - 0.5) * 2 * wob,
+      y: oy + ny * px + (rand() - 0.5) * 2 * wob,
     }));
     if (pts.length < 2) continue;
     await page.mouse.move(pts[0].x, pts[0].y);
@@ -188,10 +203,10 @@ for (const obj of work) {
       // a mid tone band
       const band = await page.$$('[aria-label="Tone band"] button');
       if (band[4]) { await band[4].click(); await page.waitForTimeout(120); }
-      // tap each closed-region centroid
+      // tap each closed-region centroid (same aspect-preserving transform as the ink)
       for (const [nx, ny] of cents.slice(0, 6)) {
-        const x = box.x + (0.12 + nx * 0.76) * box.w;
-        const y = box.y + (0.12 + ny * 0.76) * box.h;
+        const x = ox + nx * px;
+        const y = oy + ny * px;
         await page.mouse.click(x, y);
         await page.waitForTimeout(180);
         fillTaps++;
