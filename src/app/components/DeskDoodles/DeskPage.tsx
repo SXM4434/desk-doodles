@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { NavLink, useSearchParams } from 'react-router';
+import { NavLink, useSearchParams, useNavigate } from 'react-router';
 import { IS, ISe } from '../../lib/typography';
 import { CTA, PILL, SECTION_LABEL, CHIP } from '../../lib/chromeStyles';
 import { PAPER_GRAIN, WARM_POOL, OBJECT_SIT_SHADOW } from '../../lib/deskCraft';
@@ -45,6 +45,9 @@ import {
 import { PanelBoundary } from '../chrome/PanelBoundary';
 import { DrawPanel } from './DrawPanel';
 import { DrawerPanel } from './DrawerPanel';
+import { OnboardingFlow, hasOnboarded } from './OnboardingFlow';
+import { PersonalDrawer } from './PersonalDrawer';
+import { isPersonalSpaceEnabled } from '../../lib/personalSpace';
 import {
   getOpenDesk,
   listDesks,
@@ -624,6 +627,7 @@ export function DeskPage() {
   // the param was read once on mount only and never switched.
   const [searchParams] = useSearchParams();
   const deskParam = searchParams.get('desk');
+  const navigate = useNavigate();
 
   const [objects, setObjects] = useState<DeskObject[]>([]);
   // Live mirror for event-time reads (P-1 smart placement scores candidate
@@ -800,6 +804,43 @@ export function DeskPage() {
   const loadTokenRef = useRef(0);
 
   const isViewingOpenDesk = desk == null || desk.id === openDeskId;
+
+  // ── PERSONAL SPACE (R9 head-start — DB-INDEPENDENT UI wiring) ─────────────
+  // Flagged OFF by default (isPersonalSpaceEnabled reads VITE_PERSONAL_SPACE):
+  // until the owner_id migrations (0001-0003) are applied + Sebs flips the flag,
+  // NONE of this mounts, so the LIVE public desk is untouched (zero DB writes,
+  // zero new calls). When the flag is on, every data path in lib/personalSpace
+  // degrades gracefully on a pre-migration DB (returns null/empty), so the UI
+  // renders an honest empty state instead of crashing or writing.
+  const personalSpaceOn = isPersonalSpaceEnabled();
+  // Onboarding shows once per browser, on first visit, when the flag is on.
+  // hasOnboarded() reads a localStorage marker; OnboardingFlow writes it the
+  // moment the visitor settles (Keep / Reroll / Type / Skip). The handle claim
+  // itself is the ONLY would-be DB touch, and claimHandle returns 'unavailable'
+  // (no throw, no retry) when the RPC is absent — so onboarding is fully usable
+  // and persistence simply lands later with the migration.
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(
+    () => personalSpaceOn && !hasOnboarded(),
+  );
+  // The settled handle, surfaced after onboarding so the rest of the UI can show
+  // it immediately (the PersonalDrawer reads its own effective handle too).
+  const [myHandle, setMyHandle] = useState<string | null>(null);
+  const finishOnboarding = useCallback((handle: string) => {
+    setMyHandle(handle);
+    setShowOnboarding(false);
+  }, []);
+  // The handle chip / "edit your handle" re-opens onboarding (invitational).
+  const editHandle = useCallback(() => setShowOnboarding(true), []);
+  // View one of MY private desks: navigate by its uuid through the SAME ?desk=
+  // resolve the public-desk gallery uses. Pre-migration there are no private
+  // desks, so this never fires; once the owner_id DB lands, the mount-resolve
+  // effect picks up the new ?desk= target and loadDeskView shows it.
+  const viewMyDesk = useCallback(
+    (d: DeskRow) => {
+      navigate(`/desk?desk=${encodeURIComponent(d.id)}`);
+    },
+    [navigate],
+  );
 
   // ── REALTIME DELETE + UPDATE (Rock B 2026-06-12) ─────────────────────────
   // Subscriptions were INSERT-only, so another viewer's deletes and moves
@@ -1862,6 +1903,26 @@ export function DeskPage() {
             </span>
             {/* Objects-on-this-desk / cap — same baseline as the names. */}
             <span style={{ ...SECTION_LABEL, fontSize: 9, flexShrink: 0 }}>{countReadout}</span>
+            {/* PERSONAL SPACE (R9): the visitor's handle, once settled — a quiet
+                chip that re-opens onboarding. Only when the flag is on AND a
+                handle has been settled this session (the PersonalDrawer carries
+                the always-present chip; this header one is a settled-state
+                affordance, never an empty placeholder). */}
+            {personalSpaceOn && myHandle && (
+              <button
+                onClick={editHandle}
+                title="Edit your handle"
+                style={{
+                  ...CHIP,
+                  flexShrink: 0,
+                  cursor: 'pointer',
+                  border: '1px solid var(--dir-border)',
+                  letterSpacing: '-0.005em',
+                }}
+              >
+                @{myHandle}
+              </button>
+            )}
           </div>
           <PanelToggle
             side="left"
@@ -2073,6 +2134,21 @@ export function DeskPage() {
           {/* PanelBoundary (Rock B): a drawer crash shows the quiet fallback
               inside the panel — the desk canvas survives untouched. */}
           <PanelBoundary label="drawer">
+            {/* PERSONAL DRAWER (R9): every person gets their own drawer — and it
+                shows on the PUBLIC desk too, not only inside a private desk.
+                Flagged OFF by default; when on it degrades gracefully (empty
+                "my desks" / "my drawer" + the deterministic local handle) on a
+                pre-migration DB. The handle chip re-opens onboarding; "Place
+                here" only acts once a real private desk exists (currentDeskId =
+                the viewed desk, or null on the flat/public fallback). */}
+            {personalSpaceOn && (
+              <PersonalDrawer
+                currentDeskId={desk?.id ?? null}
+                onViewDesk={viewMyDesk}
+                onPlaced={bumpDrawer}
+                onEditHandle={editHandle}
+              />
+            )}
             <DrawerPanel
               open={drawerOpen}
               refreshKey={drawerNonce}
@@ -2475,6 +2551,19 @@ export function DeskPage() {
           rightInset={rightOpen ? 360 : 0}
           leftInset={drawerOpen ? 300 : 0}
         />
+        </PanelBoundary>
+      )}
+
+      {/* ── ONBOARDING (R9): the "claim your space" first-run moment ──────────
+          Mounts only when personal space is on AND this browser hasn't
+          onboarded (or the handle chip re-opened it). The flow is DB-safe: it
+          pre-fills a deterministic local handle, and claimHandle returns
+          'unavailable' (never throws) on a pre-migration DB, so Keep / Reroll /
+          Type / Skip all settle locally and the visitor enters the desk. The
+          overlay is its own fixed scrim above all desk chrome. */}
+      {personalSpaceOn && showOnboarding && (
+        <PanelBoundary label="onboarding" variant="popup" onDismiss={() => setShowOnboarding(false)}>
+          <OnboardingFlow onDone={finishOnboarding} />
         </PanelBoundary>
       )}
     </div>

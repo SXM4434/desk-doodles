@@ -31,6 +31,24 @@ export function isPersonalSpaceEnabled(): boolean {
   }
 }
 
+// ─── DB-WRITE GATE (R9 head-start — write-free by default) ────────────────────
+// VITE_PERSONAL_SPACE turns the personal-space UI ON; it does NOT mean the
+// owner_id migrations (0001-0003) are applied. Those are Sebs-side, separate,
+// and NOT applied yet. Until they are, the head-start must be DB-INDEPENDENT:
+// the UI renders + degrades gracefully, but NO mutation is even attempted (the
+// makeathon desk is a LIVE shared public board — writing to it is forbidden).
+// So every MUTATING RPC below short-circuits to its graceful no-op result
+// UNLESS this second flag confirms the DB is ready. Sebs flips it (alongside
+// applying the migrations) to go from head-start → full private desk. READS are
+// untouched (they already swallow the missing-table error and return empty).
+export function isPersonalSpaceDbReady(): boolean {
+  try {
+    return import.meta.env.VITE_PERSONAL_SPACE_DB === '1';
+  } catch {
+    return false;
+  }
+}
+
 // ─── Identity (swappable to anon-auth) ───────────────────────────────────────
 // TODAY this returns the localStorage UUID (lib/session.ts). After the anon-auth
 // swap, change getSessionId() itself to return supabase.auth.signInAnonymously()
@@ -101,6 +119,9 @@ export async function claimHandle(
   handle: string,
   source: 'generated' | 'rerolled' | 'custom' = 'generated',
 ): Promise<'claimed' | 'taken' | 'unavailable'> {
+  // Head-start: don't even reach the wire until the DB is confirmed ready —
+  // the caller already treats 'unavailable' as "keep the local handle, enter".
+  if (!isPersonalSpaceDbReady()) return 'unavailable';
   const { data, error } = await supabase.rpc('claim_handle', {
     p_id: getIdentityId(),
     p_handle: handle,
@@ -125,6 +146,8 @@ export async function getEffectiveHandle(): Promise<string> {
 /** Create a new private desk owned by the caller. Returns the desk, or null
  *  pre-migration. */
 export async function createPrivateDesk(name = 'My Desk'): Promise<DeskRow | null> {
+  // Head-start: write-free until the DB is ready (caller treats null as no-op).
+  if (!isPersonalSpaceDbReady()) return null;
   const { data, error } = await supabase.rpc('create_private_desk', {
     p_session: getIdentityId(),
     p_name: name,
@@ -160,6 +183,8 @@ export async function stashToDrawer(input: {
   why?: string | null;
   renderConfig?: Record<string, unknown> | null;
 }): Promise<DoodleRow | null> {
+  // Head-start: write-free until the DB is ready (caller treats null as no-op).
+  if (!isPersonalSpaceDbReady()) return null;
   const content_hash = await contentHash(input.svg);
   const { data, error } = await supabase.rpc('stash_to_drawer', {
     p_session: getIdentityId(),
@@ -200,6 +225,8 @@ export async function placeFromDrawer(
   y = 0,
   rotation = 0,
 ): Promise<boolean> {
+  // Head-start: write-free until the DB is ready (caller treats false as no-op).
+  if (!isPersonalSpaceDbReady()) return false;
   const { data, error } = await supabase.rpc('place_from_drawer', {
     p_id: id,
     p_session: getIdentityId(),
