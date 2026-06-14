@@ -41,9 +41,55 @@ export type SvgUploadResult =
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024; // 2 MiB raw file
 const MAX_ELEMENT_COUNT = 12000; // total markup tags before sanitize
 
+// PATH-DATA CAPS (bug 1) — the element-count + byte caps both MISS the
+// single-giant-geometry freeze: one `<path>` (or `<polygon>`) carrying a ~2MB
+// `d`/`points` string is 1 element and <2MiB, so it slips past BOTH guards →
+// DOMPurify + dangerouslySetInnerHTML on a monster path string → multi-second
+// main-thread freeze (and, in the image flow, getTotalLength/getPointAtLength
+// sampling over it = a second freeze). The fix is a cap on PATH-DATA VOLUME, the
+// dimension the other guards don't measure: the sum of all `d`+`points`
+// attribute lengths, AND a cap on any SINGLE such attribute.
+//
+//   MAX_TOTAL_PATH_DATA_CHARS = 256K
+//     Headroom math: a real-world dense icon/illustration is a few KB of path
+//     data; an honestly auto-traced photo (the heaviest legit input — Quiver
+//     output, hundreds of sub-paths) lands in the low tens of KB. 256K is ~10×
+//     above that worst legit case — generous enough that no real doodle is ever
+//     rejected — yet ~8× UNDER the ~2MB single-path that freezes, so the freeze
+//     class is closed with margin on both sides.
+//   MAX_SINGLE_PATH_DATA_CHARS = 64K
+//     A single hand/traced sub-path is at most a few KB; 64K (= the desk row's
+//     whole-SVG storage cap, a known-safe upper bound for one doodle's geometry)
+//     bounds the per-element work so one pathological `<path>` can't freeze the
+//     parser or the getTotalLength sampler even while the total stays under cap.
+const MAX_TOTAL_PATH_DATA_CHARS = 256 * 1024; // 256K summed d+points chars
+const MAX_SINGLE_PATH_DATA_CHARS = 64 * 1024; // 64K for any one d/points attr
+
 function bytesToReadable(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
   return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+}
+
+/**
+ * Sum the length of every `d` and `points` attribute in the markup, and track
+ * the single largest one. Cheap regex pass over the sanitized string, run BEFORE
+ * rendering / BEFORE any getTotalLength sampling — never parses the geometry,
+ * just measures the volume of path data. Handles both quote styles. Exported so
+ * the verify harness can assert the measured volume directly.
+ */
+export function measurePathData(markup: string): { total: number; max: number } {
+  let total = 0;
+  let max = 0;
+  // d="..." | d='...' | points="..." | points='...'  (attribute VALUE only).
+  const re = /\b(?:d|points)\s*=\s*("([^"]*)"|'([^']*)')/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(markup)) !== null) {
+    const value = m[2] ?? m[3] ?? '';
+    const len = value.length;
+    total += len;
+    if (len > max) max = len;
+  }
+  return { total, max };
 }
 
 export async function prepareSvgUpload(file: File): Promise<SvgUploadResult> {
@@ -97,18 +143,49 @@ export async function prepareSvgUpload(file: File): Promise<SvgUploadResult> {
       };
     }
 
-    // EXTRACT the <svg> element (bug 2). The old non-greedy `<svg…?</svg>` stopped
-    // at the FIRST `</svg>`, which a `</svg>` hidden inside an XML comment or a
-    // CDATA section truncates the real document at — dropping everything after it.
-    // Fix: (a) strip comments + CDATA first (a `</svg>` there is not a real close
-    // and is dead markup anyway), then (b) GREEDY-match to the LAST `</svg>` so a
-    // legitimately nested/multi `<svg>` document is captured whole.
+    // EXTRACT the <svg> element (bug 2) — FIRST complete root, non-greedy.
+    // The previous fix went GREEDY (match to the LAST `</svg>`) to keep nested
+    // SVGs whole, but greedy ALSO merges two sibling roots and swallows any junk
+    // between them: `<svg>…</svg><script>…</script><svg></svg>` extracts the
+    // whole blob — the inter-root `<script>` + a second root — defeating the
+    // "extract THE svg" intent (DOMPurify strips the script downstream, but we
+    // should never feed it that extra unsanitized text + a merged document).
+    // Fix: strip comments + CDATA first (a `</svg>` hidden there is dead markup,
+    // not a real close), then take the FIRST `<svg`…matching-`</svg>` only —
+    // dropping everything AFTER the first root (the existing leading-junk drop is
+    // preserved by anchoring on the first `<svg`).
     const stripped = text
       .replace(/<!--[\s\S]*?-->/g, '') // XML comments
       .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, ''); // CDATA sections
-    const match = stripped.match(/<svg[\s\S]*<\/svg>/i);
-    if (!match) return { ok: false, error: 'Could not find <svg> in file.' };
-    const clean = sanitizeSvgMarkup(match[0]);
+    const extracted = extractFirstSvgRoot(stripped);
+    if (!extracted) return { ok: false, error: 'Could not find <svg> in file.' };
+
+    // PATH-DATA CAP (bug 1) — measure the extracted root's path-data volume
+    // BEFORE sanitizing/rendering. A single ~2MB `d` slips past the byte +
+    // element caps; reject it here so it never reaches DOMPurify / the DOM /
+    // getTotalLength sampling. Measured on the extracted root (the only markup
+    // we keep) so trailing junk we already dropped can't inflate the count.
+    const pathData = measurePathData(extracted);
+    if (pathData.max > MAX_SINGLE_PATH_DATA_CHARS) {
+      return {
+        ok: false,
+        error: `SVG has an oversized path (${bytesToReadable(
+          pathData.max,
+        )} of path data in one element). Max ${bytesToReadable(
+          MAX_SINGLE_PATH_DATA_CHARS,
+        )} per path.`,
+      };
+    }
+    if (pathData.total > MAX_TOTAL_PATH_DATA_CHARS) {
+      return {
+        ok: false,
+        error: `SVG too detailed (${bytesToReadable(
+          pathData.total,
+        )} of path data). Max ${bytesToReadable(MAX_TOTAL_PATH_DATA_CHARS)}.`,
+      };
+    }
+
+    const clean = sanitizeSvgMarkup(extracted);
     if (!/<svg[\s\S]*<\/svg>/i.test(clean)) {
       return { ok: false, error: 'SVG could not be safely sanitized.' };
     }
@@ -116,4 +193,39 @@ export async function prepareSvgUpload(file: File): Promise<SvgUploadResult> {
   } catch (err) {
     return { ok: false, error: `Read failed: ${(err as Error).message}` };
   }
+}
+
+/**
+ * Take the FIRST complete `<svg>…</svg>` from the text — the first `<svg` opener
+ * to its matching close. Scans tags from the first opener forward, tracking nest
+ * depth so a legitimately NESTED `<svg>` (e.g. an `<svg>` inside a `<symbol>`)
+ * keeps the OUTER root whole instead of closing on the inner one. Drops anything
+ * after the first root (sibling roots + inter-root junk). Returns null if no
+ * `<svg` opener or no matching close is found. Exported for the verify harness.
+ */
+export function extractFirstSvgRoot(text: string): string | null {
+  const open = /<svg\b/i.exec(text);
+  if (!open) return null;
+  const start = open.index;
+  // Walk every <svg…> / </svg> from the first opener, balancing depth.
+  const tagRe = /<svg\b[^>]*?(\/?)>|<\/svg\s*>/gi;
+  tagRe.lastIndex = start;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(text)) !== null) {
+    const tag = m[0];
+    if (/^<\/svg/i.test(tag)) {
+      depth--;
+      if (depth === 0) {
+        // Matched the close for the first root → return through this tag only.
+        return text.slice(start, m.index + tag.length);
+      }
+    } else if (m[1] === '/') {
+      // Self-closing <svg/> — only a root by itself when depth is 0.
+      if (depth === 0) return text.slice(start, m.index + tag.length);
+    } else {
+      depth++;
+    }
+  }
+  return null; // opener with no matching close
 }

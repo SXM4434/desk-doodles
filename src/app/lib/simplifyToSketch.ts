@@ -176,12 +176,31 @@ function splitSubpaths(d: string): string[] {
   return out.length ? out : [d];
 }
 
+// DEFENSIVE SAMPLING CEILINGS (bug 1, image-flow side). svgUpload rejects giant
+// path data before this module ever runs, but simplifyToSketch can also be fed
+// markup from other callers, so it guards the sampling loop independently —
+// never trust the input to be pre-capped. Two ceilings:
+//   MAX_SAMPLE_POINTS — hard cap on getPointAtLength calls per sub-path. Even an
+//     absurd total length yields at most this many samples (one path can't spin
+//     the main thread on millions of geometry queries). Kept at 2048 (the prior
+//     implicit clamp) — finer than any doodle needs.
+//   MAX_PATH_DATA_CHARS — skip a sub-path whose `d` string is itself absurd
+//     (a ~2MB single path). getTotalLength on monster data is the extra freeze
+//     risk the upload-harden pass names; bail BEFORE constructing/measuring it.
+const MAX_SAMPLE_POINTS = 2048;
+const MAX_PATH_DATA_CHARS = 64 * 1024; // matches svgUpload's per-path cap
+
 /** Sample a single sub-path into a polyline using the DOM geometry API.
  *  `sampleStep` is the arc-length spacing (viewBox units). Returns null if the
- *  path is degenerate (zero length / unsupported). */
+ *  path is degenerate (zero length / unsupported) OR absurd (oversized `d` —
+ *  skipped so a monster path can't freeze the getTotalLength sampler). */
 function samplePath(d: string, sampleStep: number): { pts: Pt[]; closed: boolean } | null {
   // SVGGeometryElement lives only in a DOM. Guard for non-DOM contexts (tests).
   if (typeof document === 'undefined') return null;
+  // Bail on an absurd sub-path before touching the geometry API — getTotalLength
+  // on a ~MB `d` string is itself a freeze hazard. Skipping returns null so the
+  // caller keeps the original `d` unchanged (no crash, no freeze).
+  if (d.length > MAX_PATH_DATA_CHARS) return null;
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const el = document.createElementNS(SVG_NS, 'path') as SVGPathElement;
   el.setAttribute('d', d);
@@ -195,7 +214,9 @@ function samplePath(d: string, sampleStep: number): { pts: Pt[]; closed: boolean
 
   const closed = /[Zz]\s*$/.test(d.trim());
   const step = Math.max(0.5, sampleStep);
-  const count = Math.max(2, Math.min(2048, Math.ceil(total / step) + 1));
+  // MAX_SAMPLE_POINTS ceiling: an absurd `total` (or a tiny step) can't blow the
+  // getPointAtLength loop into millions of iterations / a multi-second freeze.
+  const count = Math.max(2, Math.min(MAX_SAMPLE_POINTS, Math.ceil(total / step) + 1));
   const pts: Pt[] = [];
   for (let i = 0; i < count; i++) {
     const len = (i / (count - 1)) * total;
