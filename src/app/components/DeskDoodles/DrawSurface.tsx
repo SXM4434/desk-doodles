@@ -181,6 +181,10 @@ export function strokesToObjectMarkup(strokes: Stroke[], toneFills: ToneFill[] =
       if (y > maxY) maxY = y;
     }
   }
+  // 3D-2: no strokes + no tone (e.g. svg-port requested on a pure UPLOAD where
+  // the drawn-stroke pool is empty) leaves the bbox at Infinity → viewBox=
+  // "Infinity Infinity …" (browser parse error). Emit nothing; callers fall back.
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return '';
   const pad = 6; // breathing room for the 3px stroke + round caps
   const r = (v: number) => (Math.round(v * 100) / 100).toString();
   const vb = `${r(minX - pad)} ${r(minY - pad)} ${r(maxX - minX + pad * 2)} ${r(maxY - minY + pad * 2)}`;
@@ -434,7 +438,7 @@ export function sortedToneFills(toneFills: ToneFill[]): ToneFill[] {
 /** Gap-tolerance ladder — multiplier on the extractor's ink-stamp radius
  *  (spec §6: 6 ticks per feedback_more_toggle_options_better; default 1× =
  *  SOLID_INK_RADIUS parity with the 3D conversion). */
-export const GAP_LADDER: readonly number[] = [0.5, 0.75, 1, 1.5, 2, 3];
+export const GAP_LADDER: readonly number[] = [0.5, 0.75, 1, 1.5, 2, 3, 4.5, 6];
 
 /** Nearest ladder index for a stored multiplier (slider round-trip). */
 export function gapIdxOf(gap: number): number {

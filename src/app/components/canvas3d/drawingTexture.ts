@@ -386,6 +386,11 @@ export async function buildSvgPortTexture(
   const vMinY = center.y - worldMaxY / WORLD_SCALE;
   const vW = win.spanX / WORLD_SCALE;
   const vH = win.spanY / WORLD_SCALE;
+  // 3D-2: a degenerate / non-finite window or center would emit
+  // viewBox="Infinity Infinity …" (browser parse error + blank raster). Bail →
+  // the caller falls back to the plain lit body (same degenerate-bbox contract
+  // the parse/origin guards below use).
+  if (![vMinX, vMinY, vW, vH].every(Number.isFinite) || !(vW > 0) || !(vH > 0)) return null;
 
   // Re-root the styled svg onto the sub-rect viewBox at the canvas pixel size.
   let doc: Document;

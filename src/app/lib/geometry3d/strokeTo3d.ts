@@ -466,6 +466,9 @@ export function poolCenter(
   let maxY = -Infinity;
   for (const stroke of strokes) {
     for (const [x, y] of stroke) {
+      // 3D-2: a single Inf/NaN sample (corrupt compound-path) would otherwise
+      // make max=Infinity → center=Infinity → viewBox="Infinity …" parse error.
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
