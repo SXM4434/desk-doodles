@@ -42,6 +42,10 @@ export interface DoodleRow {
   name?: string | null;
   why?: string | null;
   render_config?: Record<string, unknown> | null;
+  // personal-space fields (migration 0003 owner_id + a shelf/is_public flag;
+  // null/undefined on pre-migration rows):
+  owner_id?: string | null;
+  is_public?: boolean | null;
 }
 
 /** One row of public.desks (see supabase/schema-v2-desks.sql). */

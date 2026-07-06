@@ -21,13 +21,27 @@
 
 // ─── Word pools (warm + lowercase) ──────────────────────────────────────────
 // Mirror ObjectCard.tsx HANDLE_ADJ / HANDLE_NOUN so generated handles match.
+// Warm, intentional vocabulary (cozy desk · small critters · doodle things),
+// lowercase single words. ~50×50 = 2500 combos so handles read DISTINCT, not
+// "name-7" (Sebs 2026-06-18: a number suffix is lazy). MUST stay byte-identical
+// to ObjectCard.tsx's HANDLE_ADJ/HANDLE_NOUN (same order → same hash index).
 const ADJ = [
   'quiet', 'warm', 'little', 'sleepy', 'sunny', 'gentle', 'humble', 'wobbly',
   'inky', 'folded', 'scuffed', 'crooked', 'doodled', 'smudged', 'loose', 'tidy',
+  'cozy', 'dusty', 'faded', 'soft', 'rumpled', 'hazy', 'mellow', 'drowsy',
+  'plucky', 'nimble', 'tiny', 'rounded', 'speckled', 'dappled', 'woolly', 'fuzzy',
+  'dainty', 'lanky', 'bashful', 'chipper', 'snug', 'breezy', 'earthy', 'pale',
+  'bright', 'brisk', 'calm', 'curly', 'knotted', 'patched', 'stitched', 'amber',
+  'briny', 'sandy',
 ] as const;
 const NOUN = [
   'heron', 'wren', 'finch', 'moth', 'snail', 'otter', 'pebble', 'acorn',
   'maple', 'clover', 'pencil', 'eraser', 'paperclip', 'crayon', 'mug', 'stamp',
+  'sparrow', 'robin', 'swallow', 'magpie', 'beetle', 'ladybug', 'cricket', 'minnow',
+  'tadpole', 'newt', 'hedgehog', 'dormouse', 'vole', 'marmot', 'teapot', 'kettle',
+  'thimble', 'button', 'ribbon', 'marble', 'domino', 'inkwell', 'quill', 'notebook',
+  'bookmark', 'postcard', 'lantern', 'walnut', 'chestnut', 'pinecone', 'mushroom', 'fern',
+  'moss', 'reed',
 ] as const;
 
 // FNV-1a 32-bit over (value + salt) — same hash family as lib/deskNames.ts +
@@ -48,6 +62,10 @@ function streamHash(value: string, salt: number): number {
 export function handleFromId(id: string): string {
   const adj = ADJ[streamHash(id, 1) % ADJ.length];
   const noun = NOUN[streamHash(id, 2) % NOUN.length];
+  // A clean two-word handle — NO number suffix (Sebs 2026-06-18: lazy). The
+  // ~2500-combo pool keeps deterministic auto-names distinct at makeathon scale;
+  // GUARANTEED uniqueness (re-roll a DIFFERENT combo if taken) is enforced at
+  // CLAIM time by claim_handle's collision check (migration 0002).
   return `${adj}-${noun}`;
 }
 

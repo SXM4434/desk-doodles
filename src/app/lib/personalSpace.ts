@@ -20,32 +20,35 @@ import { handleFromId } from './handle';
 import type { DeskRow, DoodleRow } from './publish';
 
 // ─── Feature flag ────────────────────────────────────────────────────────────
-// Off until: (1) migrations 0001-0003 applied, (2) anon-auth swap done (or the
-// honor-system era is accepted), (3) Sebs flips it on. Reads an env var so Make
-// + local can toggle without a code edit; defaults OFF.
+// Gates whether the personal-space UI (the homepage "Your space" door, the
+// /your-space + /drawer surfaces) is wired. Reads an env var so Make + local can
+// toggle without a code edit. Defaults ON: the UI is DB-SAFE on its own — the
+// SEPARATE isPersonalSpaceDbReady() gate (VITE_PERSONAL_SPACE_DB) still guards
+// every live mutation, so showing the UI never touches the shared public DB.
+// (Make doesn't carry env vars, so the door would silently vanish if this
+// defaulted OFF.) Set VITE_PERSONAL_SPACE='0' to force the UI off.
 export function isPersonalSpaceEnabled(): boolean {
   try {
-    return import.meta.env.VITE_PERSONAL_SPACE === '1';
+    return import.meta.env.VITE_PERSONAL_SPACE !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
-// ─── DB-WRITE GATE (R9 head-start — write-free by default) ────────────────────
-// VITE_PERSONAL_SPACE turns the personal-space UI ON; it does NOT mean the
-// owner_id migrations (0001-0003) are applied. Those are Sebs-side, separate,
-// and NOT applied yet. Until they are, the head-start must be DB-INDEPENDENT:
-// the UI renders + degrades gracefully, but NO mutation is even attempted (the
-// makeathon desk is a LIVE shared public board — writing to it is forbidden).
-// So every MUTATING RPC below short-circuits to its graceful no-op result
-// UNLESS this second flag confirms the DB is ready. Sebs flips it (alongside
-// applying the migrations) to go from head-start → full private desk. READS are
-// untouched (they already swallow the missing-table error and return empty).
+// ─── DB-WRITE GATE (now DEFAULTS ON — migrations are live) ────────────────────
+// HISTORY: this used to default OFF (write-free head-start) while the owner_id
+// migrations (0001-0005) weren't applied yet. They ARE applied now (verified
+// 2026-06-15 against the live Supabase project), so private-desk writes are
+// safe. It must default ON because env vars (VITE_*) DON'T travel to Figma Make
+// — a default-OFF flag made create_private_desk / stash / publish silently no-op
+// in the Make build ("create a new desk does nothing"). Private-desk writes are
+// owner-scoped (owner_id = session) and never touch the public board, so there's
+// no risk in defaulting on. Set VITE_PERSONAL_SPACE_DB='0' to force write-free.
 export function isPersonalSpaceDbReady(): boolean {
   try {
-    return import.meta.env.VITE_PERSONAL_SPACE_DB === '1';
+    return import.meta.env.VITE_PERSONAL_SPACE_DB !== '0';
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -134,11 +137,42 @@ export async function claimHandle(
   return data === true ? 'claimed' : 'taken';
 }
 
-/** The caller's effective handle: their claimed one, else the deterministic
- *  local fallback so the UI always has a friendly label even pre-onboarding. */
+// ─── Local handle persistence (DB-INDEPENDENT) ───────────────────────────────
+// The settled onboarding handle, mirrored to localStorage so a rerolled / custom
+// choice STICKS across reloads and reads CONSISTENTLY everywhere — even before
+// the migrations land. Pre-migration, claimHandle() is a no-op (DB not ready),
+// so localStorage is the ONLY place a chosen handle can live; without it the
+// drawer chip falls back to the deterministic handle and disagrees with the
+// onboarding choice (the top-bar chip). Once the DB is ready the CLAIMED profile
+// handle takes precedence (getEffectiveHandle reads the profile first).
+const LOCAL_HANDLE_KEY = 'dd.handle';
+
+/** The locally-remembered settled handle, or null (never set / private mode). */
+export function getLocalHandle(): string | null {
+  try {
+    const h = localStorage.getItem(LOCAL_HANDLE_KEY);
+    return h && h.length > 0 ? h : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remember the settled handle locally (called by onboarding on settle / skip). */
+export function setLocalHandle(handle: string): void {
+  try {
+    localStorage.setItem(LOCAL_HANDLE_KEY, handle);
+  } catch {
+    /* private mode — handle won't persist; the deterministic fallback covers it */
+  }
+}
+
+/** The caller's effective handle: their CLAIMED one (DB), else the LOCALLY
+ *  remembered onboarding choice, else the deterministic fallback so the UI
+ *  always has a friendly label even pre-onboarding. The local layer keeps the
+ *  drawer chip in sync with the onboarding choice while the DB is off. */
 export async function getEffectiveHandle(): Promise<string> {
   const profile = await getMyProfile().catch(() => null);
-  return profile?.handle ?? handleFromId(getIdentityId());
+  return profile?.handle ?? getLocalHandle() ?? handleFromId(getIdentityId());
 }
 
 // ─── Private desks ───────────────────────────────────────────────────────────
@@ -161,6 +195,9 @@ export async function createPrivateDesk(name = 'My Desk'): Promise<DeskRow | nul
 
 /** List the caller's private desks (owner_id = me), newest-first. [] pre-migration. */
 export async function listMyDesks(): Promise<DeskRow[]> {
+  // Gate the READ like the writes (Sebs 2026-06-19): without this it hits the wire
+  // on every /desk mount before the migrations exist → 404/400 spam in the console.
+  if (!isPersonalSpaceDbReady()) return [];
   const { data, error } = await supabase
     .from('desks')
     .select('*')
@@ -171,6 +208,23 @@ export async function listMyDesks(): Promise<DeskRow[]> {
     throw new Error(`listMyDesks failed: ${error.message}`);
   }
   return (data ?? []) as DeskRow[];
+}
+
+/** Delete one of MY private desks (+ its doodles) via the owner-scoped
+ *  delete_private_desk RPC (supabase/schema-v6-delete-desk.sql). Returns true if a
+ *  desk was removed. Write-free / false until the DB is ready (caller treats false
+ *  as a no-op). The public open desk is never deletable (RPC requires owner_id). */
+export async function deleteMyDesk(deskId: string): Promise<boolean> {
+  if (!isPersonalSpaceDbReady()) return false;
+  const { data, error } = await supabase.rpc('delete_private_desk', {
+    p_id: deskId,
+    p_session: getIdentityId(),
+  });
+  if (error) {
+    if (isMissing(error)) return false; // RPC not pasted yet → quiet no-op
+    throw new Error(`deleteMyDesk failed: ${error.message}`);
+  }
+  return data === true;
 }
 
 // ─── Personal drawer ─────────────────────────────────────────────────────────
@@ -203,6 +257,7 @@ export async function stashToDrawer(input: {
 
 /** List the caller's drawer doodles (owner = me, not on any desk). [] pre-migration. */
 export async function listMyDrawer(limit = 100): Promise<DoodleRow[]> {
+  if (!isPersonalSpaceDbReady()) return []; // gate the read (no pre-migration 404s)
   const { data, error } = await supabase
     .from('doodles')
     .select('*')
@@ -240,4 +295,91 @@ export async function placeFromDrawer(
     throw new Error(`placeFromDrawer failed: ${error.message}`);
   }
   return data === true;
+}
+
+// ─── SHELF (the PUBLIC half of a person's drawer) ────────────────────────────
+// Naming (Sebs locked 2026-06-14): a person has a DRAWER (private, closed —
+// listMyDrawer above) and a SHELF (public, on display). "In the drawer = hidden,
+// on the shelf = visible." A public-desk doodle is inherently public, so it lands
+// on the owner's shelf automatically; a private-desk/drawer doodle reaches the
+// shelf only when the owner explicitly shares it (shareToShelf). The shelf is the
+// shareable face others browse from a doodle's @handle.
+//
+// The shelf is keyed off the doodle's owner_id (migration 0003) + an is_public /
+// shelf flag. Public-read RLS means listShelfOf(id) returns ONLY the rows a
+// viewer may see — exactly that person's public set — so the social "view their
+// shelf" needs NO profiles-table lookup (the doodle card already carries owner_id).
+
+/** Someone's PUBLIC shelf — their shareable doodles, newest-first. Readable by
+ *  anyone (public-read RLS). [] pre-migration / on a DB without the shelf flag. */
+export async function listShelfOf(ownerId: string, limit = 100): Promise<DoodleRow[]> {
+  if (!isPersonalSpaceDbReady()) return []; // gate the read (no pre-migration 404s); also covers listMyShelf
+  const { data, error } = await supabase
+    .from('doodles')
+    .select('*')
+    .eq('owner_id', ownerId)
+    .eq('is_public', true)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (isMissing(error)) return []; // pre-migration / no owner_id|is_public column
+    throw new Error(`listShelfOf failed: ${error.message}`);
+  }
+  return (data ?? []) as DoodleRow[];
+}
+
+/** My own PUBLIC shelf (the shareable doodles under my identity). */
+export async function listMyShelf(limit = 100): Promise<DoodleRow[]> {
+  return listShelfOf(getIdentityId(), limit);
+}
+
+/** Share a doodle from my private drawer onto my shelf (make it public).
+ *  Write-free until the DB is ready (caller treats false as a no-op). */
+export async function shareToShelf(doodleId: string): Promise<boolean> {
+  if (!isPersonalSpaceDbReady()) return false;
+  const { data, error } = await supabase.rpc('share_to_shelf', {
+    p_id: doodleId,
+    p_session: getIdentityId(),
+  });
+  if (error) {
+    if (isMissing(error)) return false;
+    throw new Error(`shareToShelf failed: ${error.message}`);
+  }
+  return data === true;
+}
+
+/** Publish a doodle directly onto one of MY private desks (owner-scoped) instead
+ *  of the public open desk — the routing fix so drawing on a private desk stays
+ *  private. null pre-DB (caller treats null as a no-op / falls back). */
+export async function publishToPrivateDesk(
+  deskId: string,
+  input: {
+    svg: string;
+    name?: string | null;
+    why?: string | null;
+    renderConfig?: Record<string, unknown> | null;
+    x?: number;
+    y?: number;
+    rotation?: number;
+  },
+): Promise<DoodleRow | null> {
+  if (!isPersonalSpaceDbReady()) return null;
+  const content_hash = await contentHash(input.svg);
+  const { data, error } = await supabase.rpc('publish_to_private_desk', {
+    p_session: getIdentityId(),
+    p_desk_id: deskId,
+    p_svg: input.svg,
+    p_content_hash: content_hash,
+    p_name: input.name ?? null,
+    p_why: input.why ?? null,
+    p_render_config: input.renderConfig ?? null,
+    p_x: input.x ?? 0,
+    p_y: input.y ?? 0,
+    p_rot: input.rotation ?? 0,
+  });
+  if (error) {
+    if (isMissing(error)) return null;
+    throw new Error(`publishToPrivateDesk failed: ${error.message}`);
+  }
+  return (data as DoodleRow) ?? null;
 }

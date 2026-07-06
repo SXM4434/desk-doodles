@@ -78,16 +78,40 @@ export interface SketchifyOptions {
    *  edge (inner+outer boundary of a thick line). Off by default — conservative;
    *  the maxPaths cap already removes most redundancy. */
   dedupeParallel: boolean;
+  /** Chaikin corner-cutting iterations applied to each sub-path AFTER RDP
+   *  (Sebs 2026-06-16, the Quiver "improve it" pass). A vectorizer emits faceted
+   *  polygon edges; Chaikin rounds them into clean curves. 0 = off (default);
+   *  2 = the image-trace smoothing level. Closed sub-paths cut around the loop;
+   *  open ones keep their endpoints. */
+  chaikinSmooth: number;
+  /** Drop SUB-paths shorter than this fraction of the LONGEST sub-path within a
+   *  path (Sebs 2026-06-16 "use L3"). The real "simplify down more" lever for
+   *  filled compound line-art (e.g. the rose = one <path> with ~112 sub-paths):
+   *  maxPaths can't thin a single compound path, but this removes the fine
+   *  internal creases while keeping the major strokes complete. 0 = off
+   *  (default); ~0.1 = the L3 minimal level. */
+  minSubpathFrac: number;
 }
 
+// DEFAULTS = NON-DESTRUCTIVE NORMALIZE (Sebs 2026-06-16, supersedes the 6/13
+// "abstract to a few strokes" call). Two SEPARATE jobs: (1) the Quiver request
+// in imageToSvg.ts controls HOW the trace comes out (model/target_size/crop);
+// (2) THIS step normalizes that SVG into our register WITHOUT destroying the
+// picture. The old defaults demolished it — maxPaths:12 deleted all but 12
+// regions, outlineFills:true hollowed every filled shape into a thin outline.
+// New defaults: keep the picture (high path cap), KEEP fills as fills (our Smart
+// Hachure converts them to value), only gentle RDP + true-noise removal. Callers
+// that genuinely want the sparse few-strokes look pass explicit opts.
 export const DEFAULT_SKETCHIFY: SketchifyOptions = {
-  maxPaths: 12,
-  minAreaFrac: 0.0015,
-  rdpEpsilon: 1.6,
-  outlineFills: true,
+  maxPaths: 200, // safety cap for pathological traces only — not an abstraction lever
+  minAreaFrac: 0.0008, // drop only true noise specks (<0.08% of the drawing)
+  rdpEpsilon: 1.2, // gentle: clean redundant anchors, keep the shape
+  outlineFills: false, // KEEP fills — never hollow shapes into outlines
   strokeWidth: 2,
   ink: 'currentColor',
   dedupeParallel: false,
+  chaikinSmooth: 0, // off by default; the image-trace cleanup opts into 2
+  minSubpathFrac: 0, // off by default; the upload LINE/FILLED L3 modes opt in
 };
 
 export interface SketchifyResult {
@@ -224,6 +248,39 @@ function samplePath(d: string, sampleStep: number): { pts: Pt[]; closed: boolean
     pts.push([p.x, p.y]);
   }
   return { pts, closed };
+}
+
+/** Chaikin corner-cutting: replace each point with two quarter/three-quarter
+ *  points along its edges → rounds polygon facets into a smooth curve. Closed
+ *  sub-paths cut around the loop; open ones keep their first/last point. Each
+ *  iteration ~doubles the point count, so callers keep iterations small (≤2). */
+function chaikin(pts: Pt[], closed: boolean, iters: number): Pt[] {
+  let p = pts;
+  for (let k = 0; k < iters && p.length >= 3; k++) {
+    const out: Pt[] = [];
+    const n = p.length;
+    if (!closed) out.push(p[0]);
+    const lim = closed ? n : n - 1;
+    for (let i = 0; i < lim; i++) {
+      const a = p[i];
+      const b = p[(i + 1) % n];
+      out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]]);
+      out.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]]);
+    }
+    if (!closed) out.push(p[n - 1]);
+    p = out;
+  }
+  return p;
+}
+
+/** Total length of a polyline (sum of segment distances) — used to rank
+ *  sub-paths for the L3 subpath-drop. */
+function polylineLen(pts: Pt[]): number {
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+  return len;
 }
 
 /** Build a polyline `d` string from points. Closed paths get a trailing Z. */
@@ -416,17 +473,31 @@ export function simplifyToSketch(
     let outlinedAny = false;
     for (const s of keep) {
       const subDs = splitSubpaths(s.d);
+      // Sample every sub-path up front so we can rank them by length for the
+      // subpath-drop (the L3 lever — thins a single compound path like the rose).
+      const sampledSubs = subDs.map((sub) => ({ sub, r: samplePath(sub, sampleStep) }));
+      const maxSubLen =
+        o.minSubpathFrac > 0
+          ? Math.max(1, ...sampledSubs.map(({ r }) => (r ? polylineLen(r.pts) : 0)))
+          : 0;
       const newSubDs: string[] = [];
-      for (const sub of subDs) {
-        const sampled = samplePath(sub, sampleStep);
+      for (const { sub, r: sampled } of sampledSubs) {
         if (!sampled || sampled.pts.length < 2) {
           // Couldn't sample (degenerate) — keep the original sub-path d.
           newSubDs.push(sub);
           continue;
         }
+        // L3 subpath-drop: remove fine internal creases (well below the longest
+        // stroke) so a dense compound path reads as a few bold strokes.
+        if (o.minSubpathFrac > 0 && polylineLen(sampled.pts) < o.minSubpathFrac * maxSubLen) {
+          continue;
+        }
         const simplified = rdpSimplify(sampled.pts, o.rdpEpsilon);
-        pointsKept += simplified.length;
-        newSubDs.push(pointsToD(simplified, sampled.closed));
+        // Chaikin-smooth the simplified polyline (image-trace de-faceting).
+        const finalPts =
+          o.chaikinSmooth > 0 ? chaikin(simplified, sampled.closed, o.chaikinSmooth) : simplified;
+        pointsKept += finalPts.length;
+        newSubDs.push(pointsToD(finalPts, sampled.closed));
       }
       const newD = newSubDs.join(' ').trim();
       if (newD) s.el.setAttribute('d', newD);
