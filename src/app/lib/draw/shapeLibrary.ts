@@ -340,9 +340,71 @@ function arrowBlockUnit(): Pt[] {
   ];
 }
 
+// ─── basic primitives (rectangle / circle / triangle / rounded-rect) ─────────
+
+/** Unit ELLIPSE filling [0,1]² — dense curve outline (fills the bbox = circle when
+ *  the bbox is square). */
+function ellipseUnit(n = 64): Pt[] {
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU;
+    out.push([0.5 + 0.5 * Math.cos(a), 0.5 + 0.5 * Math.sin(a)]);
+  }
+  return out;
+}
+
+/** Unit ROUNDED RECTANGLE filling [0,1]². `r` = corner radius as a fraction of the
+ *  unit box (clamped to 0.5); each corner is a sampled quarter-arc (clockwise,
+ *  y-down screen convention) so the outline reads smooth. */
+function roundedRectUnit(r = 0.22, perCorner = 8): Pt[] {
+  const rr = Math.max(0.001, Math.min(0.5, r));
+  const out: Pt[] = [];
+  // [centerX, centerY, arc-start-angle] for TL → TR → BR → BL, each sweeping +90°.
+  const corners: [number, number, number][] = [
+    [rr, rr, Math.PI],          // top-left:     180° → 270°
+    [1 - rr, rr, -Math.PI / 2], // top-right:    270° → 360°
+    [1 - rr, 1 - rr, 0],        // bottom-right:   0° →  90°
+    [rr, 1 - rr, Math.PI / 2],  // bottom-left:   90° → 180°
+  ];
+  for (const [cx, cy, a0] of corners) {
+    for (let i = 0; i <= perCorner; i++) {
+      const a = a0 + (i / perCorner) * (Math.PI / 2);
+      out.push([cx + rr * Math.cos(a), cy + rr * Math.sin(a)]);
+    }
+  }
+  return out;
+}
+
 // ─── library registry ────────────────────────────────────────────────────────
 
 export const SHAPE_LIBRARY: ShapeLibraryEntry[] = [
+  // BASICS first (the everyday primitives — a heart was insertable but a square
+  // wasn't). Rectangle/triangle are corner chains; circle/rounded-rect are curves.
+  {
+    kind: 'rectangle',
+    label: 'Rectangle',
+    curved: false,
+    generate: (b) => mapUnit([[0, 0], [1, 0], [1, 1], [0, 1]], b),
+  },
+  {
+    kind: 'circle',
+    label: 'Circle',
+    curved: true,
+    generate: (b) => mapUnit(ellipseUnit(64), b),
+  },
+  {
+    kind: 'triangle',
+    label: 'Triangle',
+    curved: false,
+    // Equilateral, vertex UP, normalized to fill the box (same family as pentagon).
+    generate: (b) => mapUnit(regularPolygonFilledUnit(3, 0), b),
+  },
+  {
+    kind: 'rounded-rect',
+    label: 'Rounded rect',
+    curved: true,
+    generate: (b) => mapUnit(roundedRectUnit(0.22, 8), b),
+  },
   {
     kind: 'diamond',
     label: 'Diamond',

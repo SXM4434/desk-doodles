@@ -1372,33 +1372,54 @@ function fitArrow(sig: SnapSignals, corners: number[]): ShapeCandidate | null {
   return end || start;
 }
 
-/** Kåsa algebraic circle fit (linear LSQ) [Chernov/conicfit]. Residual = RMS
- *  radial deviation ÷ radius, then ÷ bboxDiag-normalized for ranking parity. */
+/** Taubin algebraic circle fit [Chernov, CircleFitByTaubin]. Gradient-weighted,
+ *  so it stays UNBIASED on a partial / slightly-open arc where Kåsa pulls the
+ *  centre inward and under-closes the snapped circle (Sebs 2026-06-19). Residual
+ *  = RMS radial deviation ÷ radius, ÷ bboxDiag-normalized for ranking parity. */
 function fitCircle(sig: SnapSignals): ShapeCandidate | null {
   const pts = sig.resampled;
   if (pts.length < 5) return null;
-  // Kåsa: minimize Σ(x²+y² + Dx + Ey + F)². Solve the 3×3 normal equations.
-  let Sx = 0, Sy = 0, Sxx = 0, Syy = 0, Sxy = 0, Sxz = 0, Syz = 0, Sz = 0;
   const n = pts.length;
+  // Centre on the centroid for conditioning, then accumulate the moments Taubin
+  // needs (everything in centred coords u=x-mx, v=y-my, z=u²+v²).
+  let mx = 0, my = 0;
+  for (const [x, y] of pts) { mx += x; my += y; }
+  mx /= n; my /= n;
+  let Mxx = 0, Myy = 0, Mxy = 0, Mxz = 0, Myz = 0, Mzz = 0;
   for (const [x, y] of pts) {
-    const z = x * x + y * y;
-    Sx += x; Sy += y; Sxx += x * x; Syy += y * y; Sxy += x * y;
-    Sxz += x * z; Syz += y * z; Sz += z;
+    const u = x - mx, v = y - my;
+    const z = u * u + v * v;
+    Mxx += u * u; Myy += v * v; Mxy += u * v;
+    Mxz += u * z; Myz += v * z; Mzz += z * z;
   }
-  // Normal equations matrix [Sxx Sxy Sx; Sxy Syy Sy; Sx Sy n] · [D E F]ᵀ =
-  // -[Sxz; Syz; Sz].
-  const A = [
-    [Sxx, Sxy, Sx],
-    [Sxy, Syy, Sy],
-    [Sx, Sy, n],
-  ];
-  const rhs = [-Sxz, -Syz, -Sz];
-  const sol = solve3(A, rhs);
-  if (!sol) return null;
-  const [D, E, F] = sol;
-  const cx = -D / 2;
-  const cy = -E / 2;
-  const r2 = cx * cx + cy * cy - F;
+  Mxx /= n; Myy /= n; Mxy /= n; Mxz /= n; Myz /= n; Mzz /= n;
+  const Mz = Mxx + Myy;
+  const CovXy = Mxx * Myy - Mxy * Mxy;
+  const VarZ = Mzz - Mz * Mz;
+  // Characteristic quartic coefficients; Newton from 0 finds its smallest root.
+  const A3 = 4 * Mz;
+  const A2 = -3 * Mz * Mz - Mzz;
+  const A1 = VarZ * Mz + 4 * CovXy * Mz - Mxz * Mxz - Myz * Myz;
+  const A0 = Mxz * (Mxz * Myy - Myz * Mxy) + Myz * (Myz * Mxx - Mxz * Mxy) - VarZ * CovXy;
+  const A22 = A2 + A2;
+  const A33 = A3 + A3 + A3;
+  let xx = 0, yy = A0;
+  for (let iter = 0; iter < 99; iter++) {
+    const Dy = A1 + xx * (A22 + A33 * xx);
+    if (Dy === 0) break;
+    const xnew = xx - yy / Dy;
+    if (xnew === xx || !Number.isFinite(xnew)) break;
+    const ynew = A0 + xnew * (A1 + xnew * (A2 + xnew * A3));
+    if (Math.abs(ynew) >= Math.abs(yy)) break;
+    xx = xnew; yy = ynew;
+  }
+  const DET = xx * xx - xx * Mz + CovXy;
+  if (!(Math.abs(DET) > 1e-12)) return null;
+  const ucx = (Mxz * (Myy - xx) - Myz * Mxy) / DET / 2;
+  const ucy = (Myz * (Mxx - xx) - Mxz * Mxy) / DET / 2;
+  const cx = ucx + mx;
+  const cy = ucy + my;
+  const r2 = ucx * ucx + ucy * ucy + Mz;
   if (!(r2 > 0)) return null;
   const r = Math.sqrt(r2);
   // Geometric corroboration [PaleoSketch]: a closed round form turns ≈ 2π. Accept
