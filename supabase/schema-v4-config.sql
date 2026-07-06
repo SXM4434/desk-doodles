@@ -25,12 +25,14 @@ as $$
 declare
   v_updated int;
 begin
-  -- Sanity bound (same philosophy as the 64KB svg cap in schema-v2/harden):
-  -- a real config is ~1-2KB (svgStyle + ~30 modifier scalars); 16KB is
-  -- generous headroom. Keeps an anon-writable jsonb column from becoming a
-  -- blob store. Oversized payloads resolve false, never partially write.
+  -- Sanity bound. RAISED 16KB → 256KB (Sebs 2026-06-16): an object's config can
+  -- legitimately carry the recorded strokes, tone fills, the saved 3D look
+  -- (geometry3d / aiMesh) AND — for a traced upload — the source photo data-URL
+  -- (sourceImage, ~150KB). At 16KB those edits silently failed to persist (the
+  -- RPC returned false → "saved locally" → reverted on reload). 256KB fits them
+  -- while still blocking an anon-writable jsonb from becoming a blob store.
   if p_render_config is not null
-     and pg_column_size(p_render_config) > 16384 then
+     and pg_column_size(p_render_config) > 262144 then
     return false;
   end if;
 

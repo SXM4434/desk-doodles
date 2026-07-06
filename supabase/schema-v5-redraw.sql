@@ -45,7 +45,7 @@ begin
   -- top of svgStyle + ~30 modifier scalars. Still keeps an anon-writable
   -- jsonb column from becoming a blob store.
   if p_render_config is not null
-     and pg_column_size(p_render_config) > 65536 then
+     and pg_column_size(p_render_config) > 262144 then
     return false;
   end if;
 
@@ -81,7 +81,7 @@ declare
   v_updated int;
 begin
   if p_render_config is not null
-     and pg_column_size(p_render_config) > 65536 then
+     and pg_column_size(p_render_config) > 262144 then
     return false;
   end if;
 
