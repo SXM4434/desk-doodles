@@ -14,7 +14,23 @@ export default defineConfig({
     // every instance resolve the one on-disk react@18, so a shared/again-stale
     // cache can't produce a second copy. (Agent servers should ALSO pass their
     // own --cacheDir; this is the belt-and-suspenders.)
-    dedupe: ['react', 'react-dom'],
+    //
+    // CRITICAL (2026-06-15): force a SINGLE three copy too. `stats-gl` (a
+    // transitive dep of @react-three/drei) pulls three@0.170 while the rest of
+    // the stack is on three@0.169 — TWO physical copies on disk. Locally it's
+    // dormant (we never import drei's Perf/stats-gl, so 0.170 stays out of the
+    // graph), but Make's optimized-deps bundle pulled both in → react-three-fiber's
+    // `instanceof THREE.*` identity checks failed → applyProps resolved a pierced
+    // prop against the wrong three instance and threw `Cannot read properties of
+    // undefined (reading 'fg')` (fiber even documents this duplicate-three hazard).
+    // dedupe collapses every `three` import (incl. stats-gl's) to the one root
+    // copy; optimizeDeps.include pre-bundles the R3F stack against that single
+    // three so a second copy is never inlined. (3D crashed in Make — homepage +
+    // desk-3D — until this landed; clear node_modules/.vite to force re-optimize.)
+    dedupe: ['react', 'react-dom', 'three', '@react-three/fiber', '@react-three/drei'],
+  },
+  optimizeDeps: {
+    include: ['three', '@react-three/fiber', '@react-three/drei'],
   },
   server: {
     port: 5182,

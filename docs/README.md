@@ -89,6 +89,22 @@ Rules, eligibility, positioning, gaps. Live in [submission/](submission/).
 
 ---
 
+## 2026-06-18 code-quality + render pass docs
+
+The map of the docs made during the local debugging / optimization / architecture pass Sebs kicked off 2026-06-18. They cross-link tightly: the **issue log** feeds the **render plan**, both roll up into the **bug index**, the bug index points at the **proven-algorithm library** and the **perf playbook**, and the two new **skills** are the on-ramps. Read them in roughly this order when working a render/lag/architecture problem.
+
+| Doc | What it's for | When to read it |
+|---|---|---|
+| [CODE-QUALITY-PASS.md](submission/CODE-QUALITY-PASS.md) | Running issue log + method reminders for the pass; Sebs's recorded bug list, the suspected architecture debt (stale-state, unnecessary `useEffect`), and the lag-pass notes. | The append-as-you-go backlog — read/update first when working the pass. |
+| [DESK-RENDER-FIXES-PLAN.md](submission/DESK-RENDER-FIXES-PLAN.md) | The diagnosed, ordered fix plan for the desk-canvas zoom/pan/3D-streaming bugs (B1–B5), with the world↔screen math and `file:line`. | Before touching `DeskPage.tsx` culling/pan/3D-stream — this is the authority the bug index summarizes. |
+| [ALL-BUGS-AND-FIXES.md](submission/ALL-BUGS-AND-FIXES.md) | **The master bug INDEX** — what's broken, why, the recommended fix, where the proven solution lives, status, per subsystem. Doesn't re-paste algorithms; folds in the render plan + perf playbook by reference. | FIRST stop for ANY bug — check if it's already diagnosed before re-diagnosing. |
+| [KNOWN-SOLUTIONS.md](submission/KNOWN-SOLUTIONS.md) + [KNOWN-SOLUTIONS-PART2.md](submission/KNOWN-SOLUTIONS-PART2.md) | **The proven-algorithm library** — citable, ready-to-execute fixes (region fill, even-odd holes, 3D relief/inflation, clean silhouette, recognition+gap-close, NPR/smart-ML, many-objects-in-3D, image-upload/AI-mesh). | When a bug-index row says `→ KS §X` — read that section for the *how*. |
+| [OPTIMIZATION-ANTI-LAG.md](submission/OPTIMIZATION-ANTI-LAG.md) | The performance playbook: measure-first profiling, quick-wins-vs-deep-dives, the brand-law guardrail (speed without softening the ink-black pencil look), the ranked levers + verifiable sources. | When the desk feels laggy / janky — profile before patching. |
+| `.claude/skills/desk-doodles-bug-index/SKILL.md` | Skill: teaches "consult the bug index + known-solutions FIRST before re-diagnosing"; how the two docs relate + the standing diagnose/live-verify/regress discipline. | Auto-fires when debugging — the on-ramp into the index + library. |
+| `.claude/skills/desk-doodles-perf/SKILL.md` | Skill: the measure-first procedure + ranked levers + brand guardrail distilled from the anti-lag playbook. | Auto-fires on "the desk lags / optimize / speed up 3D". |
+
+---
+
 ## Process docs — how we work
 
 - [BUILD-TEST-FLOW.md](BUILD-TEST-FLOW.md) — the build-test gauntlet: the five non-negotiables, the rock structure, fleet orchestration, the LAWS block baked into every agent prompt.

@@ -8,6 +8,8 @@ import { DeskDoodlesPublicCanvas } from './components/DeskDoodles/DeskDoodlesPub
 import { DeskDoodlesPlayground } from './components/DeskDoodles/DeskDoodlesPlayground';
 import { DeskDoodlesAudit } from './components/DeskDoodles/DeskDoodlesAudit';
 import { PosterDiag } from './components/DeskDoodles/PosterDiag';
+import { YourSpacePage } from './components/DeskDoodles/YourSpacePage';
+import { DrawerPage } from './components/DeskDoodles/DrawerPage';
 
 function NotFound() {
   return (
@@ -45,6 +47,9 @@ export const router = createBrowserRouter([
   { path: '/desks', Component: DeskGallery },
   { path: '/public', Component: DeskDoodlesPublicCanvas },
   { path: '/playground', Component: DeskDoodlesPlayground },
+  // Personal-space IA (R9): the "Your space" door + the full-page Drawer/Shelf.
+  { path: '/your-space', Component: YourSpacePage },
+  { path: '/drawer', Component: DrawerPage },
   { path: '/audit', Component: DeskDoodlesAudit },
   { path: '/poster-diag', Component: PosterDiag },
   { path: '*', Component: NotFound },

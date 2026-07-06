@@ -20,7 +20,7 @@ export default function App() {
     <DirectionModeProvider>
       <DirectionScope>
         <F3SvgStyleProvider>
-          <F3RoughModifiersProvider>
+          <F3RoughModifiersProvider devHook>
             <TextureFilterDefs />
             <RouterProvider router={router} />
           </F3RoughModifiersProvider>

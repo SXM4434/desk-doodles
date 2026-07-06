@@ -10,3 +10,6 @@ dist-ssr
 audit-archive/
 # regeneratable ML capture intermediate (node tools/ml/capture-signals.mjs --serve)
 tools/ml/captured-signals.json
+.claude/worktrees/
+.claude/settings.local.json
+supabase/.temp/

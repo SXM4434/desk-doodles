@@ -50,14 +50,14 @@ GitHub: `https://github.com/SXM4434/desk-doodles` (public, for Build-in-Public).
 # Locked Working Stack
 
 - **Framework:** Vite + React + TypeScript
-- **Physics:** **cannon-es** (NOT Rapier — Rapier WASM intermittent in Make per `project_desk_doodles_no_rapier_in_make`)
+- **Physics:** **Rapier** via `@react-three/rapier` (CHANGED 2026-06-25 — Sebs self-hosting off Figma Make; the no-Rapier ruling was Make-platform-only, now lifted per `project_desk_doodles_no_rapier_in_make`. cannon-es dropped.)
 - **3D:** @react-three/fiber + @react-three/drei + @react-three/cannon
 - **Backend:** Supabase (for cached conversions + public canvas)
 - **Drawing primitive:** perfect-freehand
 - **SVG AST:** svgson (available for future structural work)
 - **Design system:** portfolio tokens (W1/W1-D + ISe ladder + locked spacing) are the WORKING SCAFFOLD only — Desk Doodles earns its OWN design + motion language at the Day 12-13 system pass (per project_desk_doodles_own_design_language). Don't stop mid-build to systematize; don't ship a portfolio reskin either.
 
-This stack is locked. Don't add Rapier (test repeatedly broke in Make). Don't add other physics libs. Smart Hachure stays inside SVG mode.
+This stack is locked. Physics = Rapier (`@react-three/rapier`) now that we self-host; don't add OTHER physics libs. Smart Hachure stays inside SVG mode.
 
 ---
 

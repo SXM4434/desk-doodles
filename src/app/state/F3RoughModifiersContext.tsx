@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 // F3 SVG style modifier state — refactored 2026-06-01 per user direction.
 //
@@ -179,13 +179,22 @@ type Ctx = {
 
 const F3RoughModifiersCtx = createContext<Ctx | null>(null);
 
-export function F3RoughModifiersProvider({ children }: { children: ReactNode }) {
+export function F3RoughModifiersProvider({ children, devHook = false }: { children: ReactNode; devHook?: boolean }) {
   const [state, setState] = useState<F3ModifiersState>(DEFAULT_MODIFIERS);
   const set = <K extends keyof F3ModifiersState>(key: K, value: F3ModifiersState[K]) => {
     setState((prev) => ({ ...prev, [key]: value }));
   };
   const replace = (next: F3ModifiersState) => setState(next);
   const reset = () => setState(DEFAULT_MODIFIERS);
+  // DEV/TEST: the app-level provider exposes its setter on window so a headed-Chrome
+  // OFAT harness can drive the 2D Shading sliders (which now also feed the 3D hatch).
+  useEffect(() => {
+    if (!devHook || typeof window === 'undefined') return;
+    (window as unknown as Record<string, unknown>).__dd_mods = {
+      set: <K extends keyof F3ModifiersState>(k: K, v: F3ModifiersState[K]) => setState((p) => ({ ...p, [k]: v })),
+      reset: () => setState(DEFAULT_MODIFIERS),
+    };
+  }, [devHook]);
   return <F3RoughModifiersCtx.Provider value={{ state, set, replace, reset }}>{children}</F3RoughModifiersCtx.Provider>;
 }
 
@@ -193,6 +202,14 @@ export function useF3RoughModifiers(): Ctx {
   const v = useContext(F3RoughModifiersCtx);
   if (!v) throw new Error('useF3RoughModifiers must be used inside F3RoughModifiersProvider');
   return v;
+}
+
+/** Non-throwing variant — returns null outside a provider. For render paths that
+ *  MAY mount without the provider (e.g. a 3D mount reused in a provider-less
+ *  preview): fall back to DEFAULT_MODIFIERS so the 2D Shading sliders drive the
+ *  3D hatch when present, and the byte-identical defaults apply when absent. */
+export function useF3RoughModifiersOptional(): Ctx | null {
+  return useContext(F3RoughModifiersCtx);
 }
 
 // Backwards-compat type alias used by render code (was F3RoughModifiersState).
