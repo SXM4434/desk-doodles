@@ -1,0 +1,17 @@
+import puppeteer from 'puppeteer-core';
+const CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+const b=await puppeteer.launch({executablePath:CHROME,headless:false,args:['--window-size=1600,1050'],defaultViewport:{width:1600,height:1050}});
+const p=await b.newPage();const errs=[];p.on('pageerror',e=>errs.push(e.message.slice(0,140)));
+await p.goto('http://localhost:5182/desk?test=1',{waitUntil:'networkidle2',timeout:60000});await sleep(4500);
+const click=(re)=>p.evaluate(r=>{const x=[...document.querySelectorAll('button')].find(y=>new RegExp(r,'i').test((y.textContent||'').trim()));if(x){x.click();return true;}return false;},re.source);
+const lastObj=()=>p.evaluate(()=>{const els=[...document.querySelectorAll('[data-desk-obj-id]')];const el=els[els.length-1];const w=el;const r=el.getBoundingClientRect();let rot=0;const t=w.style.transform||'';const m=t.match(/rotate\(([-\d.]+)deg\)/);if(m)rot=parseFloat(m[1]);return{cx:Math.round(r.x+r.width/2),cy:Math.round(r.y+r.height/2),rot};});
+await click(/add doodle/);await sleep(1100);await click(/upload svg/);await sleep(600);
+const fi=await p.$('input[type=file]');if(fi)await fi.uploadFile('/tmp/dd-face-test.svg');await sleep(2000);await click(/^done$/);await sleep(1100);await click(/place on desk/);await sleep(150);
+const t0=await lastObj();await sleep(250);const t1=await lastObj();await sleep(900);const t2=await lastObj();
+const flopMove=Math.hypot(t1.cx-t0.cx,t1.cy-t0.cy);
+const flopSpin=Math.abs(t1.rot-t0.rot);
+console.log(`placed object FLOP: moved ${flopMove.toFixed(0)}px + spun ${flopSpin.toFixed(0)}° in first 250ms → settled at (${t2.cx},${t2.cy}) rot ${t2.rot.toFixed(0)}°`);
+console.log(`→ ${flopMove>8||flopSpin>4?'FLOP visible':'no flop'}`);
+console.log('errors:',errs.filter(e=>!/Supabase|RPC|400|404|v5/i.test(e)).length);
+await b.close();

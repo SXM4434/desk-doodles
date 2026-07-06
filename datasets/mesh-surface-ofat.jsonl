@@ -1,0 +1,31 @@
+{"variant":"greyscale-default","group":"base","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"authentic","note":"universal-safe default; keeps mesh identity"}
+{"variant":"greyscale-dark-low","group":"base","verdicts":{"tt":"A","gbPhoto":"B","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"authentic","note":"slightly dim on detail meshes"}
+{"variant":"greyscale-dark-high","group":"base","verdicts":{"tt":"A","gbPhoto":"F","gbSketch":"B","gbDoodle":"F","pball":"A"},"consensus":"mesh-dependent","note":"fine on form meshes; crushes detail meshes to black"}
+{"variant":"greyscale-contrast-low","group":"base","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"authentic","note":"soft matte, identity intact everywhere"}
+{"variant":"greyscale-contrast-high","group":"base","verdicts":{"tt":"B","gbPhoto":"F","gbSketch":"B","gbDoodle":"B","pball":"B"},"consensus":"borderline","note":"crushes detail; ok separation on form"}
+{"variant":"pbr-photoreal","group":"base","verdicts":{"tt":"F","gbPhoto":"F","gbSketch":"F","gbDoodle":"F","pball":"F"},"consensus":"fake","note":"UNIVERSAL FAKE — photoreal color breaks monochrome"}
+{"variant":"native-ink","group":"preset","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"F","gbDoodle":"A","pball":"A"},"consensus":"mesh-dependent","note":"good except the dark sketchy mesh"}
+{"variant":"native-softGel","group":"preset","verdicts":{"tt":"B","gbPhoto":"B","gbSketch":"F","gbDoodle":"B","pball":"F"},"consensus":"borderline-fake","note":"sheen creeps to plastic"}
+{"variant":"native-matteClay","group":"preset","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"F","gbDoodle":"B","pball":"B"},"consensus":"mesh-dependent","note":"clean sculptural on form; blob on flat"}
+{"variant":"native-glossyPlastic","group":"preset","verdicts":{"tt":"F","gbPhoto":"F","gbSketch":"F","gbDoodle":"F","pball":"F"},"consensus":"fake","note":"UNIVERSAL FAKE — plastic CG highlight"}
+{"variant":"native-rubber","group":"preset","verdicts":{"tt":"A","gbPhoto":"B","gbSketch":"F","gbDoodle":"F","pball":"B"},"consensus":"mesh-dependent-fake","note":"only clean on turntable"}
+{"variant":"native-signal","group":"preset","verdicts":{"tt":"B","gbPhoto":"B","gbSketch":"F","gbDoodle":"B","pball":"A"},"consensus":"mesh-dependent","note":"metallic; mixed"}
+{"variant":"polish-0","group":"dial","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"F","gbDoodle":"A","pball":"A"},"consensus":"mesh-dependent","note":"matte, good except sketchy"}
+{"variant":"polish-1","group":"dial","verdicts":{"tt":"B","gbPhoto":"F","gbSketch":"F","gbDoodle":"F","pball":"F"},"consensus":"fake","note":"NEAR-UNIVERSAL FAKE — glossy specular"}
+{"variant":"reflection-0","group":"dial","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"F","gbDoodle":"B","pball":"A"},"consensus":"mesh-dependent","note":"matte, mostly authentic"}
+{"variant":"reflection-1","group":"dial","verdicts":{"tt":"B","gbPhoto":"F","gbSketch":"B","gbDoodle":"F","pball":"F"},"consensus":"fake","note":"reflective sheen reads CG"}
+{"variant":"sheen-0","group":"dial","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"F","gbDoodle":"B","pball":"A"},"consensus":"mesh-dependent","note":"matte, mostly authentic"}
+{"variant":"sheen-1","group":"dial","verdicts":{"tt":"B","gbPhoto":"B","gbSketch":"F","gbDoodle":"F","pball":"B"},"consensus":"borderline-fake","note":"sheen edge reads plastic"}
+{"variant":"outline-mid","group":"dial","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"B","gbDoodle":"B","pball":"A"},"consensus":"authentic","note":"ink edges recover structure"}
+{"variant":"outline-high","group":"dial","verdicts":{"tt":"A","gbPhoto":"B","gbSketch":"B","gbDoodle":"B","pball":"A"},"consensus":"authentic-borderline","note":"strong ink contour; can over-darken"}
+{"variant":"glossy-polish1-refl1","group":"suspect","verdicts":{"tt":"F","gbPhoto":"F","gbSketch":"F","gbDoodle":"F","pball":"F"},"consensus":"fake","note":"UNIVERSAL FAKE — wettest gloss"}
+{"variant":"ink-polish1","group":"suspect","verdicts":{"tt":"B","gbPhoto":"B","gbSketch":"F","gbDoodle":"F","pball":"F"},"consensus":"fake","note":"polish gloss kills ink register"}
+{"variant":"signal-refl1","group":"suspect","verdicts":{"tt":"B","gbPhoto":"F","gbSketch":"F","gbDoodle":"F","pball":"F"},"consensus":"fake","note":"reflective specular plastic"}
+{"variant":"hatch-hachure-fixed","group":"hatch","verdicts":{"tt":"B","gbPhoto":"A","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"authentic","note":"inked hatching; a touch sparse on form"}
+{"variant":"hatch-hachure-light","group":"hatch","verdicts":{"tt":"F","gbPhoto":"B","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"mesh-dependent","note":"too sparse on form meshes"}
+{"variant":"hatch-crosshatch-fixed","group":"hatch","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"authentic","note":"MOST ROBUST — authentic on every mesh"}
+{"variant":"hatch-crosshatch-light","group":"hatch","verdicts":{"tt":"A","gbPhoto":"B","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"authentic","note":"light crosshatch, holds identity"}
+{"variant":"hatch-stipple-fixed","group":"hatch","verdicts":{"tt":"B","gbPhoto":"B","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"authentic","note":"dotwork; muddies fine detail a little"}
+{"variant":"hatch-stipple-light","group":"hatch","verdicts":{"tt":"F","gbPhoto":"F","gbSketch":"A","gbDoodle":"A","pball":"A"},"consensus":"mesh-dependent","note":"sparse dots blob out form meshes"}
+{"variant":"hatch-contour-fixed","group":"hatch","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"A","gbDoodle":"B","pball":"A"},"consensus":"authentic","note":"contour follows form; strong"}
+{"variant":"hatch-contour-light","group":"hatch","verdicts":{"tt":"A","gbPhoto":"A","gbSketch":"A","gbDoodle":"B","pball":"A"},"consensus":"authentic","note":"clean contour sketch read"}

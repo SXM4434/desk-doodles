@@ -1,0 +1,20 @@
+import puppeteer from 'puppeteer-core';
+const CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+const b=await puppeteer.launch({executablePath:CHROME,headless:false,args:['--window-size=1600,1050'],defaultViewport:{width:1600,height:1050}});
+const p=await b.newPage();const errs=[];p.on('pageerror',e=>errs.push(e.message.slice(0,140)));
+await p.goto('http://localhost:5182/desk?test=1',{waitUntil:'networkidle2',timeout:60000});await sleep(4500);
+const count=()=>p.evaluate(()=>document.querySelectorAll('[data-desk-obj-id]').length);
+console.log('desk objects before add:',await count());
+const click=(re)=>p.evaluate(r=>{const x=[...document.querySelectorAll('button')].find(y=>new RegExp(r,'i').test((y.textContent||'').trim()));if(x){x.click();return true;}return false;},re.source);
+await click(/add doodle/);await sleep(1100);await click(/upload svg/);await sleep(600);
+const fi=await p.$('input[type=file]');if(fi)await fi.uploadFile('/tmp/dd-face-test.svg');await sleep(2000);await click(/^done$/);await sleep(1100);await click(/place on desk/);await sleep(2200);
+const after=await count();
+console.log('desk objects after add:',after,after===7?'OK (+1 landed)':'(check)');
+// is the new one draggable+physics? fling the last data-desk-obj-id
+const last=await p.evaluate(()=>{const els=[...document.querySelectorAll('[data-desk-obj-id]')];const el=els[els.length-1];const r=el.getBoundingClientRect();return{cx:Math.round(r.x+r.width/2),cy:Math.round(r.y+r.height/2)};});
+await p.mouse.move(last.cx,last.cy);await p.mouse.down();for(let k=1;k<=6;k++){await p.mouse.move(last.cx+180*k/6,last.cy,{steps:1});await sleep(10);}await p.mouse.up();await sleep(800);
+const moved=await p.evaluate((cx)=>{const els=[...document.querySelectorAll('[data-desk-obj-id]')];const el=els[els.length-1];const r=el.getBoundingClientRect();return Math.abs(Math.round(r.x+r.width/2)-cx);},last.cx);
+console.log('placed object fling →',moved,'px',moved>10?'OK (draggable+physics)':'frozen');
+console.log('errors:',errs.filter(e=>!/Supabase|RPC|400|404|v5/i.test(e)).length);
+await b.close();

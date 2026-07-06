@@ -1,0 +1,32 @@
+{"round":"R38-form-surface","desk":"mesh","form":"ai-mesh","surface":"greyscale","deskWall":"ok","final":"ok","note":"meshes as monochrome grey value, detail preserved"}
+{"round":"R38-form-surface","desk":"mesh","form":"ai-mesh","surface":"native","deskWall":"ok","final":"ok","note":"dark matte ink material, dimensional"}
+{"round":"R38-form-surface","desk":"mesh","form":"ai-mesh","surface":"hatch","deskWall":"ok","final":"ok","note":"light pen cross-hatch over near-white forms"}
+{"round":"R38-form-surface","desk":"mesh","form":"ai-mesh","surface":"svg-port","deskWall":"ok","final":"ok","note":"engraved: dark form + light incised drawing lines"}
+{"round":"R38-form-surface","desk":"mesh","form":"ai-mesh","surface":"og-pbr","deskWall":"ok","final":"ok","note":"original photoreal + color (allowed)"}
+{"round":"R38-form-surface","desk":"mesh","form":"extrude","surface":"native","deskWall":"ok","final":"ok","note":"drawings as extruded slabs, lit ink"}
+{"round":"R38-form-surface","desk":"mesh","form":"extrude","surface":"hatch","deskWall":"ok","final":"ok","note":"extruded silhouettes with diagonal hatch"}
+{"round":"R38-form-surface","desk":"mesh","form":"extrude","surface":"svg-port","deskWall":"ok","final":"ok","note":"extruded forms with drawing engraved"}
+{"round":"R38-form-surface","desk":"mesh","form":"inflate","surface":"native","deskWall":"ok","final":"ok","note":"puffy inflated forms, soft lit"}
+{"round":"R38-form-surface","desk":"mesh","form":"inflate","surface":"hatch","deskWall":"ok","final":"ok","note":"inflated forms, contour-following hatch"}
+{"round":"R38-form-surface","desk":"mesh","form":"inflate","surface":"svg-port","deskWall":"ok","final":"ok","note":"inflated forms, drawing ported"}
+{"round":"R38-form-surface","desk":"mesh","form":"rod","surface":"native","deskWall":"fake","final":"ok","note":"deskwall(top-down,small)=flat; MODAL LENS=thin tubes along each drawn circle, tilted in 3D — correct rod render of a concentric-circle drawing"}
+{"round":"R38-form-surface","desk":"mesh","form":"rod","surface":"hatch","deskWall":"fake","final":"ok","note":"deskwall artifact; rod tubes + hatch, same form family as rod_native"}
+{"round":"R38-form-surface","desk":"mesh","form":"rod","surface":"svg-port","deskWall":"fake","final":"ok","note":"deskwall artifact; rod tubes + ported drawing"}
+{"round":"R38-form-surface","desk":"mesh","form":"solid","surface":"native","deskWall":"fake","final":"ok","note":"deskwall(top-down)=flat black; MODAL LENS=solid mass with vinyl grooves engraved + beveled silhouette. Dark/heavy is solid-mode character on a flat disc, not a defect"}
+{"round":"R38-form-surface","desk":"mesh","form":"solid","surface":"hatch","deskWall":"fake","final":"ok-minor","note":"solid mass + hatch; reads dark, detail softens at small scale — mode character"}
+{"round":"R38-form-surface","desk":"mesh","form":"solid","surface":"svg-port","deskWall":"ok","final":"ok","note":"solid mass with drawing engraved — most readable solid variant"}
+{"round":"R38-form-surface","desk":"stroke","form":"auto","surface":"native","deskWall":"ok","final":"ok","note":"closed doodles as solid filled 3D forms, lit ink"}
+{"round":"R38-form-surface","desk":"stroke","form":"auto","surface":"hatch","deskWall":"ok","final":"ok","note":"auto forms with diagonal hatch"}
+{"round":"R38-form-surface","desk":"stroke","form":"auto","surface":"svg-port","deskWall":"ok","final":"ok","note":"auto forms with drawing ported, interior detail visible"}
+{"round":"R38-form-surface","desk":"stroke","form":"extrude","surface":"native","deskWall":"ok","final":"ok","note":"extruded slabs, visible depth shading"}
+{"round":"R38-form-surface","desk":"stroke","form":"extrude","surface":"hatch","deskWall":"ok","final":"ok","note":"extruded forms with hatch on faces"}
+{"round":"R38-form-surface","desk":"stroke","form":"extrude","surface":"svg-port","deskWall":"ok","final":"ok","note":"extruded forms with drawing ported"}
+{"round":"R38-form-surface","desk":"stroke","form":"inflate","surface":"native","deskWall":"fake","final":"ok","note":"deskwall(top-down)=flat; MODAL LENS (turntable) confirms inflate is puffy/volumetric with shading — deskwall camera artifact"}
+{"round":"R38-form-surface","desk":"stroke","form":"inflate","surface":"hatch","deskWall":"ok","final":"ok","note":"inflated forms with sketchy hatch"}
+{"round":"R38-form-surface","desk":"stroke","form":"inflate","surface":"svg-port","deskWall":"ok","final":"ok","note":"inflated dimensional forms with drawing ported"}
+{"round":"R38-form-surface","desk":"stroke","form":"rod","surface":"native","deskWall":"ok","final":"ok","note":"thin lit tube/rod strokes tracing each contour"}
+{"round":"R38-form-surface","desk":"stroke","form":"rod","surface":"hatch","deskWall":"ok","final":"ok","note":"rod outlines with hatch texture"}
+{"round":"R38-form-surface","desk":"stroke","form":"rod","surface":"svg-port","deskWall":"ok","final":"ok","note":"rod forms with drawing ported"}
+{"round":"R38-form-surface","desk":"stroke","form":"solid","surface":"native","deskWall":"fake","final":"ok-minor","note":"deskwall(top-down)=flat black; solid mass reads dark — mode character, same as mesh solid"}
+{"round":"R38-form-surface","desk":"stroke","form":"solid","surface":"hatch","deskWall":"fake","final":"ok-minor","note":"solid + hatch loses some doodle detail at small scale — mode character, readable in modal lens"}
+{"round":"R38-form-surface","desk":"stroke","form":"solid","surface":"svg-port","deskWall":"ok","final":"ok","note":"solid mass with drawing engraved — most readable solid variant + lit edges"}

@@ -1,0 +1,1603 @@
+{
+ "style": "newsprint",
+ "runKind": "verification-vs-clean",
+ "surface": "audit-2d",
+ "workflowNote": "BIG-DADDY re-confirm; 2D render code unchanged this session; re-confirm zero-regression + paired-vs-clean deliverable",
+ "capturedAt": "2026-06-15T19:55:45.803450",
+ "cellCount": 197,
+ "objectsChecked": 197,
+ "healthyCount": 194,
+ "specEdgeCount": 3,
+ "regressionCount": 0,
+ "emptyCount": 0,
+ "covRatioRange": [
+  0.72,
+  1.14
+ ],
+ "pairedCropsDir": "/tmp/dd-shots/bigdaddy/newsprint/flagged",
+ "cleanCropsDir": "/tmp/dd-shots/bigdaddy/newsprint/clean",
+ "styledCropsDir": "/tmp/dd-shots/bigdaddy/newsprint/styled",
+ "knownSpecEdges": [
+  "pitchDeckCover",
+  "ppvPoster",
+  "psPoster"
+ ],
+ "perObject": [
+  {
+   "shapeId": "ring",
+   "cleanCov": 0.0339,
+   "styleCov": 0.0332,
+   "covRatio": 0.98,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "keychain",
+   "cleanCov": 0.0366,
+   "styleCov": 0.0358,
+   "covRatio": 0.98,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "fidget",
+   "cleanCov": 0.0436,
+   "styleCov": 0.0403,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "bibSafetyPins",
+   "cleanCov": 0.0409,
+   "styleCov": 0.0405,
+   "covRatio": 0.99,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "begleri",
+   "cleanCov": 0.0444,
+   "styleCov": 0.0409,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "boomMic",
+   "cleanCov": 0.0431,
+   "styleCov": 0.0414,
+   "covRatio": 0.96,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "tangleToy",
+   "cleanCov": 0.0433,
+   "styleCov": 0.0429,
+   "covRatio": 0.99,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "xacto",
+   "cleanCov": 0.047,
+   "styleCov": 0.044,
+   "covRatio": 0.94,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "cookingTool",
+   "cleanCov": 0.0466,
+   "styleCov": 0.0443,
+   "covRatio": 0.95,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "komboloi",
+   "cleanCov": 0.0476,
+   "styleCov": 0.0448,
+   "covRatio": 0.94,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "stylus",
+   "cleanCov": 0.0503,
+   "styleCov": 0.0449,
+   "covRatio": 0.89,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "sonyKeychain",
+   "cleanCov": 0.0498,
+   "styleCov": 0.0451,
+   "covRatio": 0.91,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "capPen",
+   "cleanCov": 0.0505,
+   "styleCov": 0.0454,
+   "covRatio": 0.9,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "brushPen",
+   "cleanCov": 0.0499,
+   "styleCov": 0.0461,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "guitarPick",
+   "cleanCov": 0.0512,
+   "styleCov": 0.0462,
+   "covRatio": 0.9,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "usbCCable",
+   "cleanCov": 0.0485,
+   "styleCov": 0.048,
+   "covRatio": 0.99,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "drumsticks",
+   "cleanCov": 0.0487,
+   "styleCov": 0.0483,
+   "covRatio": 0.99,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "mic",
+   "cleanCov": 0.0544,
+   "styleCov": 0.0486,
+   "covRatio": 0.89,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "monkeyNoodle",
+   "cleanCov": 0.0492,
+   "styleCov": 0.0493,
+   "covRatio": 1.0,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "draftingPen",
+   "cleanCov": 0.0533,
+   "styleCov": 0.0499,
+   "covRatio": 0.94,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "kendoStick",
+   "cleanCov": 0.054,
+   "styleCov": 0.0507,
+   "covRatio": 0.94,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "amiiboFigure",
+   "cleanCov": 0.0576,
+   "styleCov": 0.0517,
+   "covRatio": 0.9,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "actionFigure",
+   "cleanCov": 0.0564,
+   "styleCov": 0.052,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "mechanicalPencil",
+   "cleanCov": 0.0565,
+   "styleCov": 0.0523,
+   "covRatio": 0.93,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "friendshipBracelet",
+   "cleanCov": 0.0539,
+   "styleCov": 0.0524,
+   "covRatio": 0.97,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "flagPin",
+   "cleanCov": 0.0593,
+   "styleCov": 0.0525,
+   "covRatio": 0.89,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "inktoberCard",
+   "cleanCov": 0.054,
+   "styleCov": 0.0525,
+   "covRatio": 0.97,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "begleriDisplay",
+   "cleanCov": 0.0565,
+   "styleCov": 0.0548,
+   "covRatio": 0.97,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "medal",
+   "cleanCov": 0.0652,
+   "styleCov": 0.0553,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "chiselMarker",
+   "cleanCov": 0.0626,
+   "styleCov": 0.0557,
+   "covRatio": 0.89,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "worryStone",
+   "cleanCov": 0.0658,
+   "styleCov": 0.0557,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "conferenceLanyard",
+   "cleanCov": 0.0569,
+   "styleCov": 0.0563,
+   "covRatio": 0.99,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "overEarHeadphones",
+   "cleanCov": 0.0629,
+   "styleCov": 0.0577,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "bottleOpener",
+   "cleanCov": 0.0675,
+   "styleCov": 0.0588,
+   "covRatio": 0.87,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "laptopSideProfile",
+   "cleanCov": 0.0641,
+   "styleCov": 0.0588,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "dvdSpine",
+   "cleanCov": 0.0705,
+   "styleCov": 0.0589,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "raceMedal",
+   "cleanCov": 0.0727,
+   "styleCov": 0.0613,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "awwwardsStatue",
+   "cleanCov": 0.0694,
+   "styleCov": 0.0616,
+   "covRatio": 0.89,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "eraserBlock",
+   "cleanCov": 0.0694,
+   "styleCov": 0.0635,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "sharedHouseplant",
+   "cleanCov": 0.0718,
+   "styleCov": 0.0635,
+   "covRatio": 0.88,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "criterionSpine",
+   "cleanCov": 0.0748,
+   "styleCov": 0.0641,
+   "covRatio": 0.86,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "maracasGuacharaca",
+   "cleanCov": 0.0768,
+   "styleCov": 0.0658,
+   "covRatio": 0.86,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "topoChicoBottle",
+   "cleanCov": 0.0753,
+   "styleCov": 0.0661,
+   "covRatio": 0.88,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "nintendoPlush",
+   "cleanCov": 0.0805,
+   "styleCov": 0.0664,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "arepaPan",
+   "cleanCov": 0.0804,
+   "styleCov": 0.0668,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pokeball",
+   "cleanCov": 0.084,
+   "styleCov": 0.068,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "glassWithBubbles",
+   "cleanCov": 0.0819,
+   "styleCov": 0.0688,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pokemonFigure",
+   "cleanCov": 0.0823,
+   "styleCov": 0.069,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "marioHat",
+   "cleanCov": 0.0808,
+   "styleCov": 0.0691,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "joyConSingle",
+   "cleanCov": 0.085,
+   "styleCov": 0.0698,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "seltzer",
+   "cleanCov": 0.0865,
+   "styleCov": 0.0699,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "shoe",
+   "cleanCov": 0.0861,
+   "styleCov": 0.0699,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "triangleRuler",
+   "cleanCov": 0.0862,
+   "styleCov": 0.07,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "splitShorts",
+   "cleanCov": 0.083,
+   "styleCov": 0.0704,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "filmStrip",
+   "cleanCov": 0.0875,
+   "styleCov": 0.071,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "mondoPrintTube",
+   "cleanCov": 0.08,
+   "styleCov": 0.0717,
+   "covRatio": 0.9,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "glassBottleTopo",
+   "cleanCov": 0.0867,
+   "styleCov": 0.0728,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "externalSsdArchive",
+   "cleanCov": 0.0862,
+   "styleCov": 0.0731,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "boteroFigurine",
+   "cleanCov": 0.0866,
+   "styleCov": 0.0735,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "beltMini",
+   "cleanCov": 0.0876,
+   "styleCov": 0.0736,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "foldingChair",
+   "cleanCov": 0.0851,
+   "styleCov": 0.0736,
+   "covRatio": 0.87,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "megaphone",
+   "cleanCov": 0.0902,
+   "styleCov": 0.0739,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "colombianFlagFolded",
+   "cleanCov": 0.0796,
+   "styleCov": 0.0744,
+   "covRatio": 0.93,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "fidgetCube",
+   "cleanCov": 0.092,
+   "styleCov": 0.0745,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "luggageTagWorn",
+   "cleanCov": 0.0903,
+   "styleCov": 0.0746,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pokemonPlush",
+   "cleanCov": 0.0929,
+   "styleCov": 0.075,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "coladorTela",
+   "cleanCov": 0.094,
+   "styleCov": 0.0754,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "seltzerCan",
+   "cleanCov": 0.0888,
+   "styleCov": 0.0754,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "bassGuitar",
+   "cleanCov": 0.0934,
+   "styleCov": 0.0757,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pairedMug",
+   "cleanCov": 0.0953,
+   "styleCov": 0.076,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "homeProjector",
+   "cleanCov": 0.0926,
+   "styleCov": 0.0763,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "multiMedalHanger",
+   "cleanCov": 0.0831,
+   "styleCov": 0.0764,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pairedPhotoStrip",
+   "cleanCov": 0.0916,
+   "styleCov": 0.0766,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pencilStubJar",
+   "cleanCov": 0.0945,
+   "styleCov": 0.077,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "electricGuitar",
+   "cleanCov": 0.0944,
+   "styleCov": 0.0773,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "handheldBottle",
+   "cleanCov": 0.0964,
+   "styleCov": 0.0778,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "wornFidgetCube",
+   "cleanCov": 0.0978,
+   "styleCov": 0.0784,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ps1MemoryCard",
+   "cleanCov": 0.0919,
+   "styleCov": 0.0792,
+   "covRatio": 0.86,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "bandPatch",
+   "cleanCov": 0.1005,
+   "styleCov": 0.0794,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "mxMouse",
+   "cleanCov": 0.1004,
+   "styleCov": 0.0794,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "mochilaWayuu",
+   "cleanCov": 0.0963,
+   "styleCov": 0.0796,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "co2Canister",
+   "cleanCov": 0.0957,
+   "styleCov": 0.0801,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "nalgeneBottle",
+   "cleanCov": 0.0978,
+   "styleCov": 0.0806,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "travelPatch",
+   "cleanCov": 0.0977,
+   "styleCov": 0.0812,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "mokaPotGreca",
+   "cleanCov": 0.1036,
+   "styleCov": 0.0822,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "wrestlingBoot",
+   "cleanCov": 0.1047,
+   "styleCov": 0.0823,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "cardSleeve",
+   "cleanCov": 0.1048,
+   "styleCov": 0.0829,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ruanaCloth",
+   "cleanCov": 0.1054,
+   "styleCov": 0.0835,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "carriel",
+   "cleanCov": 0.1021,
+   "styleCov": 0.0838,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "lacroixCan",
+   "cleanCov": 0.1062,
+   "styleCov": 0.0838,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "luggageTag",
+   "cleanCov": 0.1091,
+   "styleCov": 0.085,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "sombreroVueltiao",
+   "cleanCov": 0.1011,
+   "styleCov": 0.0854,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "dominoTiles",
+   "cleanCov": 0.1076,
+   "styleCov": 0.0863,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "fieldNotes",
+   "cleanCov": 0.1073,
+   "styleCov": 0.0872,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "luchaMask",
+   "cleanCov": 0.1125,
+   "styleCov": 0.0876,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "gpsWatch",
+   "cleanCov": 0.1101,
+   "styleCov": 0.088,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "sodaStreamCarbonator",
+   "cleanCov": 0.11,
+   "styleCov": 0.0883,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "filmCanister",
+   "cleanCov": 0.1141,
+   "styleCov": 0.0891,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "gameBoy",
+   "cleanCov": 0.1167,
+   "styleCov": 0.09,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "snesController",
+   "cleanCov": 0.1137,
+   "styleCov": 0.0905,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "signedPhoto",
+   "cleanCov": 0.1126,
+   "styleCov": 0.0911,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "stickerStack",
+   "cleanCov": 0.1021,
+   "styleCov": 0.0913,
+   "covRatio": 0.89,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "passport",
+   "cleanCov": 0.1194,
+   "styleCov": 0.0914,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "foamRoller",
+   "cleanCov": 0.1167,
+   "styleCov": 0.0922,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "carryOnBackpack",
+   "cleanCov": 0.1176,
+   "styleCov": 0.0924,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "popcornBucket",
+   "cleanCov": 0.1182,
+   "styleCov": 0.0929,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "miniDisc",
+   "cleanCov": 0.1204,
+   "styleCov": 0.093,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "rollerSuitcase",
+   "cleanCov": 0.1247,
+   "styleCov": 0.0955,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "trinitronTv",
+   "cleanCov": 0.1066,
+   "styleCov": 0.0962,
+   "covRatio": 0.9,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "gigTicket",
+   "cleanCov": 0.1239,
+   "styleCov": 0.0963,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ringsideTicket",
+   "cleanCov": 0.1247,
+   "styleCov": 0.0968,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "boosterPack",
+   "cleanCov": 0.1185,
+   "styleCov": 0.0969,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "eventTicketPair",
+   "cleanCov": 0.1219,
+   "styleCov": 0.0972,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "powerGlove",
+   "cleanCov": 0.1177,
+   "styleCov": 0.0973,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "vinyl",
+   "cleanCov": 0.1273,
+   "styleCov": 0.0978,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "replicaBelt",
+   "cleanCov": 0.1033,
+   "styleCov": 0.0984,
+   "covRatio": 0.95,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "travelCamera",
+   "cleanCov": 0.125,
+   "styleCov": 0.0988,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "agePodiumPlaque",
+   "cleanCov": 0.1218,
+   "styleCov": 0.0995,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "perrierPoster",
+   "cleanCov": 0.0999,
+   "styleCov": 0.0996,
+   "covRatio": 1.0,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "framedMoviePoster",
+   "cleanCov": 0.1004,
+   "styleCov": 0.1002,
+   "covRatio": 1.0,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "polaroid",
+   "cleanCov": 0.1324,
+   "styleCov": 0.1002,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "wrestlingFigure",
+   "cleanCov": 0.112,
+   "styleCov": 0.1004,
+   "covRatio": 0.9,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ps5Controller",
+   "cleanCov": 0.1324,
+   "styleCov": 0.1007,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "vita",
+   "cleanCov": 0.1359,
+   "styleCov": 0.1026,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "premiereTicket",
+   "cleanCov": 0.1321,
+   "styleCov": 0.103,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "tradingCard",
+   "cleanCov": 0.1375,
+   "styleCov": 0.1033,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "dualShockController",
+   "cleanCov": 0.1347,
+   "styleCov": 0.1034,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pinnedFigurePhoto",
+   "cleanCov": 0.1307,
+   "styleCov": 0.1042,
+   "covRatio": 0.8,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ps1ConsoleDisplay",
+   "cleanCov": 0.1363,
+   "styleCov": 0.1049,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "souvenirMagnet",
+   "cleanCov": 0.1237,
+   "styleCov": 0.1056,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "framedDribbble",
+   "cleanCov": 0.1061,
+   "styleCov": 0.1062,
+   "covRatio": 1.0,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "boxedGameCartridge",
+   "cleanCov": 0.1069,
+   "styleCov": 0.1066,
+   "covRatio": 1.0,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "walkman",
+   "cleanCov": 0.1378,
+   "styleCov": 0.1071,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "guitarPedal",
+   "cleanCov": 0.1359,
+   "styleCov": 0.1074,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "filmReel",
+   "cleanCov": 0.143,
+   "styleCov": 0.1075,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "packingCubes",
+   "cleanCov": 0.1373,
+   "styleCov": 0.1076,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "psaSlab",
+   "cleanCov": 0.1307,
+   "styleCov": 0.1086,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "raceBib",
+   "cleanCov": 0.145,
+   "styleCov": 0.1086,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "mechKeyboard",
+   "cleanCov": 0.1317,
+   "styleCov": 0.1092,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "controllerShadowBox",
+   "cleanCov": 0.1445,
+   "styleCov": 0.1105,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "switch",
+   "cleanCov": 0.1503,
+   "styleCov": 0.1117,
+   "covRatio": 0.74,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "cartShadowBox",
+   "cleanCov": 0.1454,
+   "styleCov": 0.1122,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "nesCartridge",
+   "cleanCov": 0.1472,
+   "styleCov": 0.1122,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "framedSketchPage",
+   "cleanCov": 0.1485,
+   "styleCov": 0.114,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "collectorTin",
+   "cleanCov": 0.134,
+   "styleCov": 0.1142,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "n64Controller",
+   "cleanCov": 0.1504,
+   "styleCov": 0.1145,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "macbook",
+   "cleanCov": 0.1552,
+   "styleCov": 0.1155,
+   "covRatio": 0.74,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "boardingPassTW",
+   "cleanCov": 0.1537,
+   "styleCov": 0.1157,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "walkmanMixtape",
+   "cleanCov": 0.1506,
+   "styleCov": 0.1159,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "nesController",
+   "cleanCov": 0.1505,
+   "styleCov": 0.1164,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "vhs",
+   "cleanCov": 0.1575,
+   "styleCov": 0.1168,
+   "covRatio": 0.74,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "loveLetter",
+   "cleanCov": 0.155,
+   "styleCov": 0.1171,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "sealedBoosterBox",
+   "cleanCov": 0.1405,
+   "styleCov": 0.1175,
+   "covRatio": 0.84,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "lacroixRack",
+   "cleanCov": 0.1425,
+   "styleCov": 0.1176,
+   "covRatio": 0.82,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "discman",
+   "cleanCov": 0.1567,
+   "styleCov": 0.1192,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "framedMarioPoster",
+   "cleanCov": 0.1524,
+   "styleCov": 0.12,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "sealedKickstarterFidget",
+   "cleanCov": 0.1515,
+   "styleCov": 0.1202,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "bandTshirt",
+   "cleanCov": 0.1652,
+   "styleCov": 0.1213,
+   "covRatio": 0.73,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ampCombo",
+   "cleanCov": 0.1541,
+   "styleCov": 0.1222,
+   "covRatio": 0.79,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "cardBinder",
+   "cleanCov": 0.1648,
+   "styleCov": 0.125,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "foldedMap",
+   "cleanCov": 0.1708,
+   "styleCov": 0.1251,
+   "covRatio": 0.73,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "looseCartridge",
+   "cleanCov": 0.1435,
+   "styleCov": 0.1256,
+   "covRatio": 0.88,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "psp",
+   "cleanCov": 0.1726,
+   "styleCov": 0.1267,
+   "covRatio": 0.73,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "postcard",
+   "cleanCov": 0.1706,
+   "styleCov": 0.1271,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "clapperboard",
+   "cleanCov": 0.1633,
+   "styleCov": 0.128,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "cardBinderClosed",
+   "cleanCov": 0.1653,
+   "styleCov": 0.1282,
+   "covRatio": 0.78,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "framedSketch",
+   "cleanCov": 0.1752,
+   "styleCov": 0.1287,
+   "covRatio": 0.73,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "finisherShirt",
+   "cleanCov": 0.1758,
+   "styleCov": 0.1288,
+   "covRatio": 0.73,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "setlistHandwritten",
+   "cleanCov": 0.1736,
+   "styleCov": 0.1302,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "processPrint",
+   "cleanCov": 0.174,
+   "styleCov": 0.1303,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "instaxCamera",
+   "cleanCov": 0.1724,
+   "styleCov": 0.1305,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "flagPanel",
+   "cleanCov": 0.15,
+   "styleCov": 0.1306,
+   "covRatio": 0.87,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ps1JewelCase",
+   "cleanCov": 0.1329,
+   "styleCov": 0.1318,
+   "covRatio": 0.99,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "seltzerTshirt",
+   "cleanCov": 0.1774,
+   "styleCov": 0.1325,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "fidgetCollectionTray",
+   "cleanCov": 0.1751,
+   "styleCov": 0.1337,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "singleSketchbookClosed",
+   "cleanCov": 0.1787,
+   "styleCov": 0.1337,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "strategyGuide",
+   "cleanCov": 0.1655,
+   "styleCov": 0.1337,
+   "covRatio": 0.81,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "zeldaMap",
+   "cleanCov": 0.1849,
+   "styleCov": 0.1337,
+   "covRatio": 0.72,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "stampedPassport",
+   "cleanCov": 0.1795,
+   "styleCov": 0.134,
+   "covRatio": 0.75,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "framedFlyer",
+   "cleanCov": 0.1759,
+   "styleCov": 0.1346,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "stackedSketchbooks",
+   "cleanCov": 0.1501,
+   "styleCov": 0.1347,
+   "covRatio": 0.9,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "psPoster",
+   "cleanCov": 0.1368,
+   "styleCov": 0.1369,
+   "covRatio": 1.0,
+   "verdict": "SPEC_EDGE_knockout_or_dotlegibility",
+   "severity": "spec-edge"
+  },
+  {
+   "shapeId": "passportDocument",
+   "cleanCov": 0.1451,
+   "styleCov": 0.1372,
+   "covRatio": 0.95,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "wrestlingCard",
+   "cleanCov": 0.1514,
+   "styleCov": 0.1374,
+   "covRatio": 0.91,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "sketchbook",
+   "cleanCov": 0.1903,
+   "styleCov": 0.1378,
+   "covRatio": 0.72,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "nintendoPowerMag",
+   "cleanCov": 0.1665,
+   "styleCov": 0.1384,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "playstationMag",
+   "cleanCov": 0.1666,
+   "styleCov": 0.1389,
+   "covRatio": 0.83,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "screenshotPrint",
+   "cleanCov": 0.1811,
+   "styleCov": 0.1392,
+   "covRatio": 0.77,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "playmat",
+   "cleanCov": 0.1943,
+   "styleCov": 0.1396,
+   "covRatio": 0.72,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "vinylLpSleeve",
+   "cleanCov": 0.1238,
+   "styleCov": 0.1407,
+   "covRatio": 1.14,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "monitor",
+   "cleanCov": 0.1942,
+   "styleCov": 0.141,
+   "covRatio": 0.73,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "ppvPoster",
+   "cleanCov": 0.1443,
+   "styleCov": 0.1439,
+   "covRatio": 1.0,
+   "verdict": "SPEC_EDGE_knockout_or_dotlegibility",
+   "severity": "spec-edge"
+  },
+  {
+   "shapeId": "vhsClamshell",
+   "cleanCov": 0.1722,
+   "styleCov": 0.1462,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "stickeredLaptopLid",
+   "cleanCov": 0.1939,
+   "styleCov": 0.1467,
+   "covRatio": 0.76,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "letterboxdCard",
+   "cleanCov": 0.1822,
+   "styleCov": 0.1543,
+   "covRatio": 0.85,
+   "verdict": "OK",
+   "severity": null
+  },
+  {
+   "shapeId": "pitchDeckCover",
+   "cleanCov": 0.1654,
+   "styleCov": 0.1647,
+   "covRatio": 1.0,
+   "verdict": "SPEC_EDGE_knockout_or_dotlegibility",
+   "severity": "spec-edge"
+  },
+  {
+   "shapeId": "framedRacePhoto",
+   "cleanCov": 0.1831,
+   "styleCov": 0.1681,
+   "covRatio": 0.92,
+   "verdict": "OK",
+   "severity": null
+  }
+ ]
+}
