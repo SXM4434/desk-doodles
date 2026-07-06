@@ -48,15 +48,36 @@ export function classify(
     };
   }
 
-  // (2)(3) walk provider chain
+  // (2) "ALWAYS LOOK AT BOTH" (Sebs 2026-06-26) — collect EVERY provider's raw
+  //     opinion (no short-circuit). With only [ruleEngineProvider] this is
+  //     byte-identical to the old first-confident-wins (one opinion → step 4a).
+  const opinions: Classification[] = [];
   for (const provider of providers) {
-    const result = provider.classify(signals, ctx);
-    if (result && result.confidence >= ctx.confidenceThreshold) {
-      return result;
-    }
+    const r = provider.classify(signals, ctx);
+    if (r) opinions.push(r);
+  }
+  const ruleOp = opinions.find((o) => o.classifiedBy === 'rules');
+  const learnedOp = opinions.find((o) => o.classifiedBy === 'decision-tree');
+
+  // (3) ENSEMBLE — a rule opinion AND a learned opinion → reconcile them. This is
+  //     the wedge: rules carry provenance + cover roles the model never learned;
+  //     the learned model fixes the in-vocab disagreements it's proven 90.5% on
+  //     (tools/ml held-out hard cases). Augments the rule layer, never blind-
+  //     replaces it — and the trace records BOTH so nothing is hidden.
+  if (ruleOp && learnedOp) {
+    return reconcileBoth(ruleOp, learnedOp, signals);
   }
 
-  // (4) conservative fallback — when in doubt, do less hachure
+  // (4a) single provider (or only one fired) → the original first-confident-wins.
+  for (const o of opinions) {
+    if (o.confidence >= ctx.confidenceThreshold) return o;
+  }
+  // A confident learned opinion with NO rule firing fills the gap (the
+  // documented "learned fills where rules abstain" intent). It already cleared
+  // its own minConfidence to be in `opinions`.
+  if (learnedOp && !ruleOp) return learnedOp;
+
+  // (4b) conservative fallback — when in doubt, do less hachure
   return {
     role: 'paper',
     confidence: 0,
@@ -64,6 +85,72 @@ export function classify(
     margin: 0,
     firedRules: ['fallback:no-provider-confident'],
     classifiedBy: 'rules',
+    signalsSnapshot: signals,
+  };
+}
+
+/** The 6 roles the learned signals model can predict (mirror of
+ *  datasets/smart-layer.signals.model.json `classes`). The rule engine speaks a
+ *  SUPERSET (mid-tonal, sparse-tonal, decorative-accent, inner-* …) the model
+ *  was never trained on — so the model only adjudicates a disagreement when the
+ *  RULE's role also lives in this vocabulary (else the model would flatten a
+ *  nuance it can't represent). */
+const LEARNED_VOCAB: ReadonlySet<TonalRole> = new Set([
+  'dense-tonal', 'label-text', 'line-decoration', 'paper', 'solid-content', 'structural-frame',
+] as TonalRole[]);
+
+/** Confidence the learned model must clear to OVERRIDE the rule on an in-vocab
+ *  disagreement. Below it, the conservative rule opinion stands. */
+const LEARNED_OVERRIDE_CONF = 0.6;
+
+/** I-2 GUARD: roles that imply a DARK-FILL treatment (near-black / dense marks).
+ *  The model may not assign one to a region whose SOURCE darkness sits in the
+ *  paper/light band — that would push the region across an I-2 darkness band
+ *  (source darkness owns per-region identity; a light region always reads light)
+ *  and bury whatever the region outlines. This is exactly the nintendo "M": a
+ *  light circle outline the model wanted to fill solid black. */
+const DARK_FILL_ROLES: ReadonlySet<TonalRole> = new Set(['solid-content', 'dense-tonal'] as TonalRole[]);
+/** Below this source darkness a region is paper/light band → cannot be dark-fill. */
+const I2_DARK_FILL_FLOOR = 0.3;
+
+/** Reconcile a rule opinion and a learned opinion ("look at both"). */
+function reconcileBoth(rule: Classification, learned: Classification, signals: Signals): Classification {
+  // AGREE → both independent methods concur. Keep rule provenance, boost
+  // confidence to the stronger of the two, record the concurrence.
+  if (rule.role === learned.role) {
+    return {
+      ...rule,
+      confidence: Math.max(rule.confidence, learned.confidence),
+      firedRules: [...rule.firedRules, `learned-agrees(${learned.confidence.toFixed(2)})`],
+      signalsSnapshot: signals,
+    };
+  }
+  // I-2 GUARD — the model may NOT push a paper/light region to a dark-fill role.
+  // Reject that override outright (keep the rule), no matter how confident the
+  // model is: I-2 is a hard invariant, not a vote. This is the nintendo "M" fix —
+  // a light circle outline stays an outline, never gets filled solid.
+  if (DARK_FILL_ROLES.has(learned.role) && signals.darknessL < I2_DARK_FILL_FLOOR) {
+    return {
+      ...rule,
+      firedRules: [...rule.firedRules, `i2-blocked-learned:${learned.role}(dark ${signals.darknessL.toFixed(2)})`],
+      signalsSnapshot: signals,
+    };
+  }
+  // DISAGREE, and the model can speak to the rule's role, and it's confident →
+  // the model wins (it's right ~90% on exactly these). Trace keeps the rule's
+  // claim for provenance + reversibility.
+  if (LEARNED_VOCAB.has(rule.role) && learned.confidence >= LEARNED_OVERRIDE_CONF) {
+    return {
+      ...learned,
+      firedRules: [`learned-override:${learned.firedRules[0] ?? 'learned'}(${learned.confidence.toFixed(2)})`, `over-rule:${rule.role}`],
+      signalsSnapshot: signals,
+    };
+  }
+  // DISAGREE but the model is out-of-vocab on the rule's role OR not confident
+  // enough → the rule stands (don't let the coarser model flatten a nuance).
+  return {
+    ...rule,
+    firedRules: [...rule.firedRules, `learned-dissents:${learned.role}(${learned.confidence.toFixed(2)})`],
     signalsSnapshot: signals,
   };
 }

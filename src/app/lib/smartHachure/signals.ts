@@ -40,7 +40,33 @@ export function extractSignals(el: SVGElement, ctx: ExtractionContext): Signals 
   // limitation: a CSS class painting exactly black on an attr-less element
   // is still missed; acceptable v1).
   const fillAttr = readAttr(el, 'fill');
-  const computedFill = readComputedFill(el, fillAttr !== null);
+  // trustBlack: a computed rgb(0,0,0) is the AUTHOR's fill only when fill is
+  // EXPLICITLY DECLARED — own `fill` attr, own inline `style` fill, OR an
+  // ancestor declaring fill (attr/inline-style) that this element inherits
+  // (Sebs 2026-06-15: the cat silhouette rendered fill-less because its fill is
+  // `style="fill:black"`, not a `fill` attr → the old `fillAttr !== null` guard
+  // dropped it). Purely-DEFAULTED black (no declaration anywhere up the chain)
+  // stays GUARDED → the catalog doesn't shift ("doesn't cause the other thing").
+  //
+  // NOTE — pure SVG-default black (no fill AND no stroke declared, e.g.
+  // simple-icons github/x-twitter/nintendo) is DELIBERATELY still guarded. It's
+  // a real design fork (dark icons → dense hachure blob that loses fill-rule
+  // holes; touches the locked catalog) — see RUNNING-TODO "default-black fill" +
+  // BUG U4. Sequenced: winding-correct fill (clip marks to true fill-rule
+  // region) FIRST, then re-enable default-black trust.
+  let fillDeclared = fillAttr !== null;
+  if (!fillDeclared) {
+    let n: Element | null = el;
+    for (let depth = 0; depth < 10 && n; depth++) {
+      const inlineFill = (n as SVGElement).style?.fill;
+      if ((inlineFill && inlineFill !== '') || n.getAttribute('fill') != null) {
+        fillDeclared = true;
+        break;
+      }
+      n = n.parentElement;
+    }
+  }
+  const computedFill = readComputedFill(el, fillDeclared);
   const fill = fillAttr ?? computedFill;
   const stroke = readAttr(el, 'stroke');
   const strokeWidth = parseFloat(readAttr(el, 'stroke-width') ?? '1');
@@ -151,6 +177,11 @@ function binStrokeWidth(width: number, stroke: string | null): Signals['strokeWi
 
 // ─── TOPOLOGICAL HELPERS ──────────────────────────────────────────────────
 
+// Above this many siblings the per-element topology scan goes quadratic and
+// hangs; we skip it (the signals are meaningless at that scale). 1500² ≈ 2.25M
+// bbox checks worst-case — still snappy; a real doodle is far below this.
+const MAX_TOPOLOGY_SIBLINGS = 1500;
+
 function extractTopology(
   el: SVGElement,
   bbox: { x: number; y: number; w: number; h: number },
@@ -163,6 +194,15 @@ function extractTopology(
   let enclosesSiblingCount = 0;
   let containedInZIndex: number | null = null;
   const stripeCandidates: { sib: SVGElement; bbox: { w: number; y: number } }[] = [];
+
+  // O(n²) GUARD (Sebs 2026-06-19): this pass runs per element and scans EVERY
+  // sibling, so a pathological upload (e.g. a 10k-rect document) is quadratic and
+  // hangs the tab. Topology signals (enclosure / stripe-cluster) carry no useful
+  // meaning at that scale anyway, so above the cap we skip the scan and return the
+  // neutral result — the element still classifies on its own bbox/fill signals.
+  if (ctx.siblings.length > MAX_TOPOLOGY_SIBLINGS) {
+    return { enclosesSiblingCount: 0, containedInZIndex: null, isPartOfStripeCluster: false };
+  }
 
   // Compute self's bbox params used in repeated checks
   const right = bbox.x + bbox.w;

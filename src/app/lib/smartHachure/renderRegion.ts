@@ -23,6 +23,21 @@ import {
   paramsToCoverage,
   isCoverageFillStyle,
 } from '../smart/coverage';
+// U4 — even-odd hole knockout. polygon-clipping ships methods on its default
+// export (named imports break at runtime under Vite); re-type via the .d.ts
+// signatures (mirrors lib/toneMask.ts). xor(rings…) = the odd-parity region.
+import polygonClippingDefault from 'polygon-clipping';
+import type {
+  MultiPolygon as PCMultiPolygon,
+  Polygon as PCPolygon,
+  Ring as PCRing,
+  xor as PCXor,
+} from 'polygon-clipping';
+const pcXor = (polygonClippingDefault as unknown as { xor: typeof PCXor }).xor;
+// Proven marching-squares tracer (the flood-fill region path already uses it to
+// honor fill-rule via rasterized pixels) — reused for the self-intersecting
+// single-subpath even-odd fallback below.
+import { traceToRings } from '../fill/regionFill';
 
 // ─── PUBLIC ENTRY POINT ───────────────────────────────────────────────────
 
@@ -93,14 +108,244 @@ function pathBBoxArea(d: string): number {
   return Math.max(0, maxX - minX) * Math.max(0, maxY - minY);
 }
 
+/** U4: the source `fill-rule` for this region (own attr / inline style / nearest
+ *  ancestor that declares it). Default 'nonzero' (SVG default). */
+function readFillRule(el: SVGElement): string {
+  let n: Element | null = el;
+  for (let depth = 0; depth < 10 && n; depth++) {
+    const attr = n.getAttribute?.('fill-rule');
+    const inline = (n as SVGElement).style?.fillRule;
+    if (attr) return attr;
+    if (inline) return inline;
+    n = n.parentElement;
+  }
+  return 'nonzero';
+}
+
+/** Split a path `d` into one `d` string per sub-path (M/m). Mirrors
+ *  svgToStrokes.splitSubpaths (kept local to avoid coupling). */
+function splitPathSubpaths(d: string): string[] {
+  const out: string[] = [];
+  const re = /[Mm][^Mm]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(d)) !== null) out.push(m[0].trim());
+  return out.length ? out : [d];
+}
+
+/** Even-odd region via RASTERIZE + TRACE: render the path with the browser's own
+ *  `fill('evenodd')` into an offscreen mask, then run the proven marching-squares
+ *  tracer (`traceToRings`) to recover the true odd-parity region (outer + holes)
+ *  as clean L-only rings. Used for the SINGLE self-intersecting subpath the
+ *  ring-XOR can't resolve (the pentagram). Coord-exact: the mask grid maps back
+ *  to the path's own coordinate space via origin+cell. Browser-only; returns null
+ *  on any failure (caller keeps the raw path → no regression). */
+function evenOddViaRaster(d: string): string | null {
+  if (typeof document === 'undefined' || typeof Path2D === 'undefined') return null;
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const host = document.createElement('div');
+  host.setAttribute('aria-hidden', 'true');
+  host.style.cssText =
+    'position:absolute;left:-99999px;top:-99999px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none';
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  host.appendChild(svg);
+  document.body.appendChild(host);
+  try {
+    const el = document.createElementNS(SVG_NS, 'path') as SVGGeometryElement;
+    el.setAttribute('d', d);
+    svg.appendChild(el);
+    let bb: { x: number; y: number; width: number; height: number };
+    try {
+      bb = el.getBBox();
+    } catch {
+      return null;
+    }
+    if (!Number.isFinite(bb.width) || !Number.isFinite(bb.height) || bb.width <= 0.01 || bb.height <= 0.01) {
+      return null;
+    }
+    // ~256-cell long edge (matches the flood tracer's working resolution) + a
+    // 2-cell pad so a boundary touching the bbox edge still closes a loop.
+    const GRID_LONG = 256;
+    const cell = Math.max(bb.width, bb.height) / GRID_LONG;
+    if (!Number.isFinite(cell) || cell <= 0) return null;
+    const pad = 2;
+    const w = Math.ceil(bb.width / cell) + pad * 2;
+    const h = Math.ceil(bb.height / cell) + pad * 2;
+    if (w < 4 || h < 4 || w * h > 4_000_000) return null; // sanity + OOM guard
+    const origin = { x: bb.x - pad * cell, y: bb.y - pad * cell };
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const c2d = canvas.getContext('2d', { willReadFrequently: true });
+    if (!c2d) return null;
+    c2d.fillStyle = '#000';
+    c2d.fillRect(0, 0, w, h);
+    // Map world (path) coords → cell coords: px = (world − origin) / cell.
+    c2d.fillStyle = '#fff';
+    c2d.setTransform(1 / cell, 0, 0, 1 / cell, -origin.x / cell, -origin.y / cell);
+    c2d.fill(new Path2D(d), 'evenodd'); // the BROWSER's even-odd = ground truth
+    c2d.setTransform(1, 0, 0, 1, 0, 0);
+    const data = c2d.getImageData(0, 0, w, h).data;
+    const raw = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) raw[i] = data[i * 4] > 127 ? 1 : 0; // white = inside
+    // SEAL PINCH POINTS: a pentagram's filled arms meet at measure-zero points at
+    // the inner vertices; in the raster the center hole leaks to the outside
+    // through those pinches, so marching squares finds ONE merged boundary instead
+    // of an enclosed pentagon hole. A 1-cell dilation (8-connected) thickens the
+    // arms just enough to seal the leaks → the hole is a real island. Cost: the
+    // hole shrinks ~1 cell all round (invisible for hachure-clipping). A simple
+    // disc just grows 1px → still one ring (no regression on non-pinched shapes).
+    const mask = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idx = y * w + x;
+        if (raw[idx]) { mask[idx] = 1; continue; }
+        let on = 0;
+        for (let dy = -1; dy <= 1 && !on; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx >= 0 && nx < w && ny >= 0 && ny < h && raw[ny * w + nx]) { on = 1; break; }
+          }
+        }
+        mask[idx] = on;
+      }
+    }
+    const traced = traceToRings(mask, w, h, origin, cell);
+    if (!traced || traced.outer.length < 4) return null;
+    const ringToPath = (ring: [number, number][]) =>
+      ring.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`).join(' ') + ' Z';
+    const parts = [
+      ringToPath(traced.outer as unknown as [number, number][]),
+      ...traced.holes.filter((hh) => hh.length >= 4).map((hh) => ringToPath(hh as unknown as [number, number][])),
+    ];
+    return parts.join(' ');
+  } finally {
+    try {
+      document.body.removeChild(host);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** U4 — recompute a clean EVEN-ODD region path (outer minus holes) from a
+ *  compound `d`. rough.js mis-renders source compound/curved evenodd paths
+ *  (donut → solid, star → fragment, github → scribble) because it doesn't honor
+ *  the source fill-rule. We sample each sub-path into a clean point ring (via the
+ *  LIVE-mounted FULL path so relative `m` resolves correctly — cumulative-length
+ *  boundaries), XOR them (polygon-clipping = odd parity), and emit L-only rings
+ *  that rough.js hachures with correct hole knockout. Returns null on ANY failure
+ *  → caller keeps the raw path (no regression). Browser-only; evenodd compound
+ *  paths only (narrow → the locked catalog of single-subpath shapes is untouched). */
+function evenOddRegionPath(d: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const subs = splitPathSubpaths(d);
+  // SINGLE subpath: the sub-by-sub ring XOR has nothing to knock out, so a
+  // SELF-INTERSECTING single path (a PENTAGRAM under even-odd — the center
+  // pentagon should be a HOLE) used to fall through to the raw path and flood
+  // solid. polygon-clipping resolves a self-intersecting ring to NONZERO (the
+  // solid star — verified), so it can't recover the hole either. Rasterize the
+  // path with the browser's OWN even-odd fill + trace the pixels (the proven
+  // flood-fill tracer) → the true odd-parity region. Simple (non-self-crossing)
+  // single subpaths trace to just the outer ring = unchanged (no regression).
+  if (subs.length < 2) return evenOddViaRaster(d);
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const host = document.createElement('div');
+  host.setAttribute('aria-hidden', 'true');
+  host.style.cssText =
+    'position:absolute;left:-99999px;top:-99999px;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none';
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  host.appendChild(svg);
+  document.body.appendChild(host);
+  try {
+    const full = document.createElementNS(SVG_NS, 'path') as SVGGeometryElement;
+    full.setAttribute('d', d);
+    svg.appendChild(full);
+    let totalAll = 0;
+    try {
+      totalAll = full.getTotalLength();
+    } catch {
+      return null;
+    }
+    if (!Number.isFinite(totalAll) || totalAll <= 0.01) return null;
+    // Cumulative sub-path length boundaries: the cumulative path IS the real path
+    // up to sub-path k, so relative-m positions resolve correctly.
+    const bnd: number[] = [0];
+    const cum = document.createElementNS(SVG_NS, 'path') as SVGGeometryElement;
+    svg.appendChild(cum);
+    let acc = '';
+    for (const s of subs) {
+      acc += (acc ? ' ' : '') + s;
+      cum.setAttribute('d', acc);
+      try {
+        bnd.push(cum.getTotalLength());
+      } catch {
+        return null;
+      }
+    }
+    const rings: PCRing[] = [];
+    for (let k = 1; k < bnd.length; k++) {
+      const start = bnd[k - 1];
+      const span = bnd[k] - start;
+      if (span <= 0.5) continue;
+      const n = Math.max(8, Math.min(400, Math.ceil(span / 2)));
+      const ring: [number, number][] = [];
+      for (let i = 0; i <= n; i++) {
+        const len = Math.min(start + (span * i) / n, totalAll);
+        let pt: DOMPoint;
+        try {
+          pt = full.getPointAtLength(len);
+        } catch {
+          return null;
+        }
+        if (!Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return null;
+        ring.push([pt.x, pt.y]);
+      }
+      if (ring.length >= 4) rings.push(ring as unknown as PCRing);
+    }
+    if (rings.length < 2) return null;
+    let region: PCMultiPolygon;
+    try {
+      region = pcXor([rings[0]], ...rings.slice(1).map((r) => [r] as PCPolygon));
+    } catch {
+      return null;
+    }
+    if (!region || region.length === 0) return null;
+    const parts: string[] = [];
+    for (const poly of region) {
+      for (const ring of poly) {
+        if (ring.length < 4) continue;
+        const segs = ring.map(
+          ([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`,
+        );
+        segs.push('Z');
+        parts.push(segs.join(' '));
+      }
+    }
+    return parts.length ? parts.join(' ') : null;
+  } finally {
+    try {
+      document.body.removeChild(host);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function renderHachureFamily(
   region: SVGElement,
   treatment: Treatment,
   ctx: RenderContext,
 ): SVGElement[] {
   // Convert region's geometry into a path string rough.js can clip to.
-  const pathD = extractRegionPath(region);
+  let pathD = extractRegionPath(region);
   if (pathD === null) return []; // Region has no fillable geometry
+  // U4: even-odd compound paths (donut / star / knockout icons) flood or fragment
+  // under rough.js. Recompute the true odd-parity region as clean rings so holes
+  // knock out. Narrow (evenodd + multi-subpath only); falls back to the raw path.
+  if (readFillRule(region) === 'evenodd') {
+    const eo = evenOddRegionPath(pathD);
+    if (eo) pathD = eo;
+  }
 
   // Density math routes through the shared coverage module (smart Phase A —
   // one math, two renderers). See resolveDensity below.
@@ -145,8 +390,42 @@ function renderHachureFamily(
     roughness: 0,
   };
 
-  const hachureGroup = ctx.rc.path(pathD, fillOpts);
+  let hachureGroup = ctx.rc.path(pathD, fillOpts);
   if (!hachureGroup) return [];
+
+  // U3 BACKSTOP (OFAT 2026-06-14: Stipple emitted a 10.4M-char dots <path> that
+  // freezes the tab). The pre-estimate above (pathBBoxArea) MIS-PARSES arc/curve
+  // command params as coords, so its area can under-shoot → the gap-raise is
+  // skipped → rough.js emits a multi-MB path. This guarantees a ceiling
+  // regardless of the estimate: if the GENERATED dots path is over the char cap,
+  // regenerate with a proportionally larger gap until bounded (≤4 tries). A
+  // render-policy ceiling like the gap-floor — coverage saturates, never hangs.
+  // GENERALIZED to ALL gap-dependent grammars (OFAT 2026-06-15: the rose emitted
+  // a 1.1M-char HACHURE path — the bomb class isn't just dots; any per-mark fill
+  // over a huge/complex region can blow up). solid/none are gap-independent
+  // (their path is just the outline, already bounded) so they're excluded.
+  if (treatment.fillStyle !== 'none' && treatment.fillStyle !== 'solid') {
+    const MAX_PATH_CHARS = 300000;
+    // MAX over all paths in the group (rough.js may emit >1; measure the worst).
+    const dLen = (g: SVGElement) =>
+      [...g.querySelectorAll('path')].reduce((m, p) => Math.max(m, (p.getAttribute('d') ?? '').length), 0);
+    let len = dLen(hachureGroup);
+    let tries = 0;
+    while (len > MAX_PATH_CHARS && tries < 4) {
+      tries++;
+      density.gap *= Math.max(1.6, Math.sqrt(len / MAX_PATH_CHARS));
+      const regen = ctx.rc.path(pathD, { ...fillOpts, hachureGap: density.gap });
+      if (!regen) break;
+      hachureGroup.remove();
+      hachureGroup = regen;
+      len = dLen(hachureGroup);
+    }
+    // CRITICAL: propagate the raised gap to fillOpts so the EXTRA LAYERS below
+    // (layers>1, e.g. stipple's 2 dot layers) inherit the bounded gap. Without
+    // this they re-render at the original tiny gap → a second multi-MB layer
+    // ships uncapped (OFAT: 'tonal-layer-1' was the 10.4M path, base was fine).
+    fillOpts.hachureGap = density.gap;
+  }
 
   hachureGroup.setAttribute('data-smart-hachure', 'tonal');
   // Apply treatment opacity at the group level — preserves per-stroke

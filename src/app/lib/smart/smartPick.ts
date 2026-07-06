@@ -329,6 +329,31 @@ const PICK_RULES: PickRule[] = [
       input === 'upload-svg' && f.strokedOnlyCount >= 3 && f.thinStrokeFraction >= 0.7,
     votes: [{ axis: 'penTip', value: 'fineliner', weight: 1 }],
   },
+  {
+    // PREDOMINANTLY LINE ART with a few INCIDENTAL LIGHT fills — the upload twin
+    // of the abstain gap `upload-linework` left open: that rule needs
+    // filledCount===0, so a line drawing with one near-white fill (a shoe with a
+    // pale sole, a laptop with a pale screen: meanDarkness ~0.08, darkFraction 0)
+    // misses it and abstains. The fills are essentially white — rendering them as
+    // linework (fillStyle none) loses nothing. EXCLUSIVE with the tonal rules
+    // below by darkFraction===0 + meanDarkness≤0.3 (pokeball/vinyl sit at 0.36+,
+    // so mid-tone-fills keeps them) and with light-washes by filledCount≤2 (that
+    // rule needs ≥2 fills → it owns 2+, this owns the 1-fill line-art case).
+    id: 'upload-light-linework',
+    reason: 'line art with light, incidental fills',
+    when: (f, input) =>
+      input === 'upload-svg' &&
+      f.strokedOnlyCount >= 2 &&
+      f.strokedOnlyCount > f.filledCount &&
+      f.filledCount >= 1 &&
+      f.filledCount <= 2 &&
+      f.darkFraction === 0 &&
+      f.meanDarkness <= 0.3,
+    votes: [
+      { axis: 'svgStyle', value: 'sketchy', weight: 2 },
+      { axis: 'fillStyle', value: 'none', weight: 1 },
+    ],
+  },
 
   // ── Fill-character rules (any input that actually has fills) ────────────
   {
@@ -345,6 +370,28 @@ const PICK_RULES: PickRule[] = [
     votes: [
       { axis: 'svgStyle', value: 'bold-ink', weight: 2 },
       { axis: 'fillStyle', value: 'solid', weight: 1.5 },
+    ],
+  },
+  {
+    // A FEW MEDIUM-DARK fills (1-3 dark-majority regions, 0.55-0.75 mean) — the
+    // tonal gap between few-big-blacks (needs near-black ≥0.75) and dark-fill-field
+    // (needs ≥4 fills). A drawing like a Game Boy (3 fills, darkFraction 0.67,
+    // meanDarkness 0.69) is clearly tonal but cleared neither → abstained. It's
+    // the signature rough-handdrawn + hachure case (I-2: source darkness → marks).
+    // EXCLUSIVE: meanDarkness<0.75 keeps it off few-big-blacks (no bold-ink/rough
+    // tie), filledCount≤3 keeps it off dark-fill-field, meanDarkness≥0.55 keeps it
+    // off mid-tone-fills (which caps at <0.55).
+    id: 'few-mid-dark-fills',
+    reason: 'a few medium-dark fills',
+    when: (f) =>
+      f.filledCount >= 1 &&
+      f.filledCount <= 3 &&
+      f.darkFraction >= 0.5 &&
+      f.meanDarkness >= 0.55 &&
+      f.meanDarkness < 0.75,
+    votes: [
+      { axis: 'svgStyle', value: 'rough-handdrawn', weight: 2 },
+      { axis: 'fillStyle', value: 'hachure', weight: 1.5 },
     ],
   },
   {
@@ -457,6 +504,32 @@ const PICK_RULES: PickRule[] = [
       f.regionCount <= 4 &&
       f.inkPerDiag / f.regionCount >= 1.2,
     votes: [{ axis: 'svgStyle', value: 'bold-ink', weight: 1.5 }],
+  },
+  {
+    // ORDINARY HAND-DRAWN LINE ART — the common middle the two rules above
+    // miss: a real doodle of several MODERATE strokes (a face = outline + short
+    // eyes + smile, a house = box + roof + door). It's not a dense scribble
+    // (<10 regions) and not all-long-confident-strokes (per-stroke ink < 1.2,
+    // so bold-strokes passed it over), yet it's unmistakably a drawing — enough
+    // total ink across ≥2 strokes to carry intent. This restores the
+    // line-art→sketchy intent of `upload-linework` for DRAWN content (that rule
+    // gates on filledCount===0, an artifact of our stroke-only commit format,
+    // so it could never fire for draws — leaving these doodles to abstain).
+    // EXCLUSIVE with both draw rules above (regionCount<10, per-stroke ink<1.2)
+    // so the three never split the style vote. A genuinely trivial gesture (a
+    // 1-stroke squiggle, inkPerDiag below the bar) still abstains — honest.
+    id: 'draw-linework',
+    reason: 'hand-drawn line art',
+    when: (f, input) =>
+      input === 'draw' &&
+      f.regionCount >= 2 &&
+      f.regionCount < 10 &&
+      f.inkPerDiag >= 1.2 &&
+      f.inkPerDiag / f.regionCount < 1.2,
+    votes: [
+      { axis: 'svgStyle', value: 'sketchy', weight: 2 },
+      { axis: 'fillStyle', value: 'none', weight: 1 },
+    ],
   },
 
   // texture + sketchingStyle: NO rules yet — no aggregate signal we extract

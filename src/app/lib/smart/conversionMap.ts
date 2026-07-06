@@ -109,7 +109,9 @@ export type GeometryDirective =
   | 'hole-subtract'
   | 'skip';
 
-type ConcreteMode = Exclude<GeometryModeSetting, 'auto'>;
+// Stroke-concrete modes only — 'ai-mesh' is a non-stroke FORM (renders a GLB),
+// it has no per-stroke conversion directive.
+type ConcreteMode = Exclude<GeometryModeSetting, 'auto' | 'ai-mesh'>;
 
 const APPLICATION_MATRIX: Record<
   Extract<ConversionTreatmentKind, 'line-rod' | 'solid' | 'shell' | 'hole' | 'air'>,
@@ -133,7 +135,9 @@ export function directiveForTreatment(
   mode: GeometryModeSetting,
 ): GeometryDirective {
   if (treatment === 'surface-hatch' || treatment === 'relief') return 'skip';
-  if (mode === 'auto') {
+  // 'ai-mesh' is a non-stroke FORM (renders a GLB) — it has no per-stroke
+  // directive; compose like 'auto' if the smart map is ever asked for one.
+  if (mode === 'auto' || mode === 'ai-mesh') {
     // Auto composes: §4 "per REGION, line-rod regions → Rod machinery, solid
     // regions → Extrude, inside ONE object."
     switch (treatment) {

@@ -1,0 +1,24 @@
+{
+  "audit": "I-2-guarded learned-model override review — ALL 14 override objects (no sampling)",
+  "date": "2026-06-26",
+  "method": "render each object rules-only (before) vs rules+model (after) at /tmp/ml-ab2/<shape>-COMPARE.png; judge BETTER/WORSE/SAME; WORSE = a detail buried under fill",
+  "guard": "classify().reconcileBoth I-2 guard: model may not override a region to solid-content/dense-tonal when darknessL < 0.3 (blocks 25 light→dark-fill overrides incl. the nintendo M)",
+  "summary": { "objects": 14, "better": 1, "worse": 0, "same": 13, "verdict": "0 regressions — model verified safe everywhere it overrides; default-on restored" },
+  "verdicts": {
+    "sony": "BETTER — over-hatched dark poster cleaned to solid; PS/EXCLUSIVE text legible",
+    "nintendo": "SAFE — Mario 'M' roundel restored by I-2 guard (was buried before guard)",
+    "punk": "SAME — gig ticket identical both sides",
+    "fidget": "SAME — fidget shapes + square emblem identical",
+    "gf": "SAME — polaroid hatch fill + white border unchanged",
+    "movies": "SAME — PREMIERE/ROW G/G12/2024 text legible",
+    "pokemon": "SAME — star emblem + HP 60 legible",
+    "roots": "SAME — CARTAGENA text/stamp/address lines legible",
+    "running": "SAME — 5K medal legible, fill slightly cleaner, no detail lost",
+    "seltzer": "SAME — LaCroix/PAMPLEMOUSSE/bubbles preserved",
+    "sketching": "SAME — frame + dashed inner border identical",
+    "travel": "SAME — BOG→JFK + SEAT 14A legible",
+    "work-rig": "SAME — hatched bars/emblems/corner badge legible",
+    "wwe": "SAME — RINGSIDE/RAW·MSG/perforation/R stub preserved"
+  },
+  "note": "Confirmation-layer labels: sony override = confirmed GOOD; the I-2-blocked light→dark-fill class (the M) = confirmed BAD. Fold into training provenance; do not let evaporate (feedback_keep_feeding_smart_ml)."
+}

@@ -10,6 +10,8 @@
 import rough from 'roughjs';
 import { extractAllSignals, extractSignals, getRenderableChildren } from './signals';
 import { classify, ruleEngineProvider } from './classifier';
+import { makeLearnedSignalsProvider } from './learnedProvider';
+import { SIGNALS_MODEL } from './signalsModel.generated';
 import { selectTreatment, STYLE_OWNS_FILL_GRAMMAR, type SmartHachureStyle } from './techniqueMap';
 import { renderRegion } from './renderRegion';
 import { createOverrideStore, hashSvg } from './overrideStore';
@@ -22,6 +24,12 @@ import type {
   TonalRole,
   Treatment,
 } from './types';
+
+// The trained signals-only region classifier, instantiated ONCE (inference is a
+// dot product over fixed weights — no per-render setup). minConfidence 0.5 = it
+// only voices an opinion it's at least moderately sure of; classify() then does
+// the agree/override/keep reconciliation. Parity asserted by tools/ml/parity-check.
+const LEARNED_SIGNALS_PROVIDER = makeLearnedSignalsProvider(SIGNALS_MODEL, { minConfidence: 0.5 });
 
 // ─── DECISION LOG (QW-1) ──────────────────────────────────────────────────
 //
@@ -191,7 +199,23 @@ export function renderSmartHachure(
   opts: SmartHachureOpts,
 ): void {
   const overrideStore = opts.overrideStore ?? createOverrideStore();
-  const providers = opts.providers ?? [ruleEngineProvider];
+  // "Look at both" (Sebs 2026-06-26): rules + the trained signals model run on
+  // every region; classify() reconciles (agree → trusted, in-vocab disagreement
+  // → model wins, else rule keeps its nuance).
+  // DEFAULT = RULES + MODEL ("look at both"). The M regression that briefly
+  // forced opt-in is fixed by the I-2 guard in classify() (a paper/light region
+  // can't be overridden to a dark-fill role) AND a FULL AUDIT of all 14 catalog
+  // objects the model overrides came back 0-WORSE (1 better=sony, 13 same) —
+  // verified safe everywhere it acts, so it rides live again.
+  // OFF SWITCH (any of): add `?ml=off` to the URL (easiest — just visit
+  //   /audit?ml=off), or `window.__DD_ML_OFF__ = true`, or pass
+  //   opts.providers = [ruleEngineProvider]. All render rules-only.
+  const mlOff =
+    typeof window !== 'undefined' &&
+    ((window as unknown as { __DD_ML_OFF__?: boolean }).__DD_ML_OFF__ === true ||
+      new URLSearchParams(window.location.search).get('ml') === 'off');
+  const providers =
+    opts.providers ?? (mlOff ? [ruleEngineProvider] : [ruleEngineProvider, LEARNED_SIGNALS_PROVIDER]);
   const threshold = opts.confidenceThreshold ?? 0.7;
   const svgHash = hashSvg(svgRoot);
   const rc = rough.svg(svgRoot);
