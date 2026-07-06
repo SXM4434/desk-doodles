@@ -324,6 +324,11 @@ function DrawerCard({
   const markup = useMemo(() => plainArtMarkup(row.svg), [row.svg]);
   const displayName = row.name || 'Untitled doodle';
   const deskLine = here ? `${deskLabel} · here` : deskLabel;
+  // DRAG-FOLLOWER (Sebs 2026-06-23): only the DOODLE floats (setDragImage of the
+  // art well, below) — and the SOURCE CARD dims while it's in flight, so it reads
+  // as "the doodle popped OFF the card", not the whole card flying. Restored on
+  // dragend. (Native HTML5 DnD keeps the desk's drop pipeline intact.)
+  const [isDragging, setIsDragging] = useState(false);
 
   // R6.2 drag source — see the drag contract block at the top of this file.
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
@@ -341,6 +346,9 @@ function DrawerCard({
     if (art instanceof HTMLElement && typeof e.dataTransfer.setDragImage === 'function') {
       e.dataTransfer.setDragImage(art, art.offsetWidth / 2, art.offsetHeight / 2);
     }
+    // Dim the card AFTER the drag-image snapshot is taken (next frame) so the
+    // floating doodle stays bright while only the LEFT-BEHIND card greys out.
+    requestAnimationFrame(() => setIsDragging(true));
   };
 
   return (
@@ -349,6 +357,7 @@ function DrawerCard({
       data-dd-drawer-card={row.id}
       draggable
       onDragStart={handleDragStart}
+      onDragEnd={() => setIsDragging(false)}
       // R6.4 click-to-open (Enter/Space included when wired). The inner
       // Place pill stops propagation so it never double-fires an open.
       role={onOpen ? 'button' : undefined}
@@ -373,6 +382,9 @@ function DrawerCard({
         gap: 6,
         minWidth: 0,
         cursor: onOpen ? 'pointer' : 'grab',
+        // The doodle popped off → the card it left behind dims (restored on drop).
+        opacity: isDragging ? 0.4 : 1,
+        transition: 'opacity 0.16s ease',
       }}
     >
       {/* The collectible — ObjectCard's mini TCG frame (name banner + the one

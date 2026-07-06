@@ -2,6 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { IS, ISe } from '../../lib/typography';
 import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
 import { PILL, CTA, SECTION_LABEL, RAISED_SHADOW } from '../../lib/chromeStyles';
+import { Live3DMount } from './DeskObject3DMount';
+import { Canvas3DProvider, useCanvas3D } from '../../state/Canvas3DContext';
+import { Canvas3DChrome } from '../chrome/Canvas3DChrome';
+import { runMesh, isHardPathEnabled } from '../../lib/hardPath';
 import {
   DrawSurface,
   strokesToObjectMarkup,
@@ -19,10 +23,23 @@ import {
 } from './DrawSurface';
 import { DrawToolbar } from './DrawToolbar';
 import { type ShapeCandidate, type ShapeFitResult, type SnapAction } from '../../lib/draw/shapeFit';
+import { SwitchPopover } from './SwitchPopover';
+import { ShapeStrip } from './ShapeStrip';
+import { buildSwitchSet, type ShapeOverride, type SwitchEntry } from '../../lib/draw/switchSet';
+import { generateShape } from '../../lib/draw/shapeLibrary';
 import { pushShapeSnapEntry, type ShapeSnapOutcome } from '../../lib/shapeSnapLog';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
-import { prepareSvgUpload } from '../../lib/svgUpload';
+import {
+  prepareSvgUpload,
+  applyUploadSimplify,
+  defaultSimplifyMode,
+  type UploadSimplifyMode,
+} from '../../lib/svgUpload';
+import { simplifyToSketch } from '../../lib/simplifyToSketch';
+import { imageToSvg, isRasterImageFile } from '../../lib/imageToSvg';
 import { normalizeSvgSize } from '../../lib/normalizeInput';
+import { monochromeSvgMarkup } from '../../lib/monochromeSvg';
+import { svgMarkupToStrokes } from '../../lib/svgToStrokes';
 import { Dropdown } from '../chrome/Dropdown';
 import { Slider } from '../chrome/Slider';
 import { SLIDER_SPECS, MODIFIER_SETS_BY_STYLE, UNIVERSAL_MODIFIERS } from '../chrome/modifierSpecs';
@@ -194,6 +211,112 @@ function StagedRenderScope({
   return <>{children}</>;
 }
 
+/** Drives the modal's Canvas3DContext aiMeshActive flag from hardMeshUrl (mirror of
+ *  ObjectSurface's private AiMeshActiveSync) — gates the AI-mesh material toggle in
+ *  Canvas3DChrome so it only appears AFTER a mesh is generated. Runs INSIDE the
+ *  Canvas3DProvider so it touches only this modal's 3D context. */
+function AiMeshActiveSync({ active }: { active: boolean }) {
+  const { setAiMeshActive } = useCanvas3D();
+  useEffect(() => {
+    setAiMeshActive(active);
+  }, [active, setAiMeshActive]);
+  return null;
+}
+
+/** The AI mesh's OWN control set (Sebs 2026-06-16: "ai mesh needs its own custom
+ *  set of toggles that make sense for the mesh + our app") — Generate/regenerate,
+ *  then Material (greyscale/original) · Darkness · Auto-spin. Distinct from the
+ *  local Native/Hatch/Matte-Clay controls (a foreign GLB can't take geometry
+ *  styles). Lives inside the modal's Canvas3DProvider so useCanvas3D is live. */
+function AiMeshControls({
+  hardMeshUrl,
+  meshStatus,
+  onGenerate,
+}: {
+  hardMeshUrl: string | null;
+  meshStatus: string | null;
+  onGenerate: () => void;
+}) {
+  const { aiMeshMaterialMode, setAiMeshMaterialMode, aiMeshDark, setAiMeshDark, aiMeshAutoSpin, setAiMeshAutoSpin } = useCanvas3D();
+  const working = meshStatus === 'working';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div>
+        <button
+          onClick={onGenerate}
+          disabled={working}
+          style={{
+            ...PILL,
+            width: '100%',
+            justifyContent: 'center',
+            padding: '10px 14px',
+            fontSize: 12,
+            background: hardMeshUrl ? 'var(--dir-raised)' : 'var(--dir-text-primary)',
+            color: hardMeshUrl ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+            border: hardMeshUrl ? '1px solid var(--dir-border)' : 'none',
+            cursor: working ? 'wait' : 'pointer',
+            opacity: working ? 0.7 : 1,
+          }}
+        >
+          {working
+            ? 'Generating AI mesh… (~30–90s)'
+            : hardMeshUrl
+              ? '✓ AI mesh ready — regenerate'
+              : meshStatus === 'failed'
+                ? 'Generation failed — tap to retry'
+                : '✨ Generate AI 3D (hard path)'}
+        </button>
+        <p style={{ fontFamily: IS, fontSize: 10.5, color: meshStatus === 'failed' ? 'var(--dir-accent)' : 'var(--dir-text-body-soft)', margin: '6px 2px 0', lineHeight: 1.45 }}>
+          {working
+            ? 'Sending your original photo to the AI mesh generator (TRELLIS)…'
+            : meshStatus === 'failed'
+              ? 'The generator didn’t return a mesh — tap to try again.'
+              : 'Sends your original photo to the AI mesh generator (TRELLIS), ~30–90s + costs a gen.'}
+        </p>
+      </div>
+      {hardMeshUrl && !working && (
+        <>
+          <span style={{ ...SECTION_LABEL, marginTop: 4 }}>AI mesh look</span>
+          <Dropdown
+            label="Material"
+            value={aiMeshMaterialMode}
+            sections={[
+              {
+                heading: 'AI mesh material',
+                subheading: 'How the generated mesh is shaded — value, never hue.',
+                options: [
+                  { value: 'greyscale', label: 'Greyscale (ours)', detail: 'Desaturate to dark greyscale so the AI mesh sits in our ink register and fits the desk.' },
+                  { value: 'og-pbr', label: 'Original (PBR)', detail: "Keep the provider's photoreal materials untouched." },
+                ],
+              },
+            ]}
+            onChange={(v) => setAiMeshMaterialMode(v as 'greyscale' | 'og-pbr')}
+            popoverWidth={300}
+          />
+          <Slider
+            label="Darkness"
+            value={aiMeshDark}
+            min={0.05}
+            max={1}
+            step={0.01}
+            precision={2}
+            title="How dark the greyscale re-skin reads (value in the ink register)."
+            onChange={setAiMeshDark}
+          />
+          <button
+            onClick={() => setAiMeshAutoSpin(!aiMeshAutoSpin)}
+            aria-pressed={aiMeshAutoSpin}
+            style={{ ...PILL, justifyContent: 'space-between', padding: '8px 14px', fontSize: 12, background: 'var(--dir-bg)', border: '1px solid var(--dir-border)' }}
+          >
+            <span>Auto-spin</span>
+            <span style={{ fontFamily: IS, fontSize: 11, color: aiMeshAutoSpin ? 'var(--dir-text-primary)' : 'var(--dir-text-body-soft)' }}>{aiMeshAutoSpin ? 'On' : 'Off'}</span>
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Opaque cover for the canvas pane — the gate idiom (DrawSurface's honesty
 // gates): upload picker / un-embeddable fallback / image stub all sit OVER the
 // always-mounted DrawSurface, so switching input never unmounts (= never
@@ -212,11 +335,57 @@ const PANE_OVERLAY: React.CSSProperties = {
   textAlign: 'center',
 };
 
+/** A segmented pill toggle — the app's standard 2-up control (2D/3D, Drawer/
+ *  Shelf). Used for the destination + anonymity choices so they read as real
+ *  toggles instead of a raw checkbox (Sebs 2026-06-14). */
+function PillToggle({
+  options,
+  value,
+  onChange,
+}: {
+  options: { v: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignSelf: 'flex-start',
+        gap: 4,
+        padding: 4,
+        borderRadius: 999,
+        border: '1px solid var(--dir-border)',
+        background: 'var(--dir-raised)',
+      }}
+    >
+      {options.map((o) => (
+        <button
+          key={o.v}
+          onClick={() => onChange(o.v)}
+          style={{
+            ...PILL,
+            padding: '4px 14px',
+            fontSize: 12,
+            border: 'none',
+            ...(value === o.v
+              ? { background: 'var(--dir-text-primary)', color: 'var(--dir-bg)' }
+              : { background: 'transparent' }),
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function DrawPanel({
   onDone,
   onCancel,
   rightInset = 0,
   leftInset = 0,
+  allowDrawer = false,
 }: {
   /** Receives the markup for the ONE object this session made, plus the
    *  naming-stage meta: source strokes (the record keeps the hand — wedge
@@ -234,6 +403,14 @@ export function DrawPanel({
       name?: string | null;
       why?: string | null;
       sourceConfig?: Record<string, unknown> | null;
+      /** Destination: the PUBLIC wall (default) or the maker's PRIVATE drawer. */
+      dest?: 'public' | 'drawer';
+      /** PRIVATE multi-save (Sebs 2026-06-18): ALSO save the placed doodle to the
+       *  maker's Drawer and/or Shelf. Independent — tick either, both, or neither. */
+      saveDrawer?: boolean;
+      saveShelf?: boolean;
+      /** Public-only: post under the @handle (false) or anonymously (true). */
+      anon?: boolean;
     },
   ) => void;
   onCancel: () => void;
@@ -245,6 +422,13 @@ export function DrawPanel({
    *  fix 4): the scrim reserves the drawer's width on the left so the modal
    *  centers over the VISIBLE desk. Same narrow-viewport clamp. Default 0. */
   leftInset?: number;
+  /** Whether the "Public wall / My drawer" destination choice is offered. Only
+   *  a PRIVATE context (your own desk/space) lets you stash to the drawer; the
+   *  PUBLIC desk flow is public-only (Sebs 2026-06-14: "they can only add it to
+   *  the public since they are in the public"), so the dest toggle is hidden and
+   *  every doodle goes to the public wall. The anonymity choice still shows.
+   *  Default false (the public board). */
+  allowDrawer?: boolean;
 }) {
   // Live mirror of DrawSurface's preview-stroke pool — setState is a stable
   // callback, so the mirror effect in DrawSurface doesn't re-fire on renders.
@@ -262,14 +446,76 @@ export function DrawPanel({
   // Ink = strokes (the existing draw). Shade = the tone-fill brush: discrete
   // band-grey soft regions under the ink. A register, not a render mode —
   // Sketch|Style stays the canvas's render axis; Style pauses both tools.
-  const [penRegister, setPenRegister] = useState<'ink' | 'shade'>('ink');
+  const [penRegister, setPenRegister] = useState<'ink' | 'shade' | 'erase'>('ink');
+  // Erase sub-mode (GoodNotes Object/Pixel): object = whole stroke/patch, pixel = carve.
+  const [eraseMode, setEraseMode] = useState<'object' | 'pixel'>('object');
   const [shadeTool, setShadeTool] = useState<ShadeToolState>(SHADE_TOOL_DEFAULT);
   // Input mode — same trio as the /canvas dock. Upload-svg hands the
   // sanitized markup straight to the desk's add boundary (normalizeSvgSize
-  // sizes it there); upload-image is an honest stub until autotrace (S1).
+  // sizes it there). upload-image is live now (autotrace via Quiver Edge fn): a
+  // picked photo is traced + simplified to SVG markup, after which it IS an upload
+  // exactly like a picked .svg — so isUploadInput drives every consumption site.
   const [input, setInput] = useState<PanelInput>('draw');
   const [upload, setUpload] = useState<{ name: string; markup: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Image trace is a network round-trip (~2–6s) — busy gates the picker + drives
+  // honest "Tracing…" copy so the panel never looks frozen.
+  const [uploadBusy, setUploadBusy] = useState(false);
+  // SVG-UPLOAD SIMPLIFY MODE (Sebs 2026-06-16): how an uploaded .svg enters our
+  // register — 'off' (as-is), 'filled' (clean filled line-art), 'line' (centerline
+  // single-line). Changing it re-processes the SAME upload (no re-pick) by
+  // re-applying applyUploadSimplify to rawSvgUpload (the raw prepared markup).
+  // .svg-ONLY — traced images default to Clean and don't carry this toggle.
+  const [simplifyMode, setSimplifyMode] = useState<UploadSimplifyMode>('filled');
+  const [rawSvgUpload, setRawSvgUpload] = useState<string | null>(null);
+  // The downscaled ORIGINAL photo (data-URL) from a traced IMAGE upload. Carried
+  // onto the object's render_config so the hard-path 3D (Generate AI 3D) sends the
+  // real PHOTO to TRELLIS — which makes a good mesh — instead of the flat doodle
+  // render (which TRELLIS turns into a blob). null for .svg uploads / plain draw.
+  const [sourceImage, setSourceImage] = useState<string | null>(null);
+  // HARD PATH (AI mesh) — reachable RIGHT HERE in the add flow (Sebs 2026-06-16:
+  // "NO WAY TO GET THE TRELLIS HARD PATH"). Only image uploads carry a sourceImage,
+  // and TRELLIS only makes a good mesh from a photo, so the "Generate AI 3D" button
+  // shows for image uploads in the 3D view. The resulting GLB rides the modal's 3D
+  // preview (Live3DMount hardMeshUrl) and onto the placed object via render_config.
+  const [hardMeshUrl, setHardMeshUrl] = useState<string | null>(null);
+  const [meshStatus, setMeshStatus] = useState<string | null>(null);
+  // The 3D preview shows EITHER the instant local form ('local') OR the generated
+  // AI mesh ('ai') — a real toggle so the user can switch BACK to the normal 3D
+  // modes (Sebs 2026-06-16: "how do they switch back to the normal 3d modes").
+  const [meshView, setMeshView] = useState<'local' | 'ai'>('local');
+  const hardPathOn = isHardPathEnabled();
+  // A new (or cleared) source photo invalidates any prior mesh + view.
+  useEffect(() => {
+    setHardMeshUrl(null);
+    setMeshStatus(null);
+    setMeshView('local');
+  }, [sourceImage]);
+  // A finished mesh auto-shows in AI view (the user just asked for it).
+  useEffect(() => {
+    if (hardMeshUrl) setMeshView('ai');
+  }, [hardMeshUrl]);
+  const generateAiMesh = useCallback(async () => {
+    if (!sourceImage || meshStatus === 'working') return;
+    setMeshStatus('working');
+    try {
+      const mesh = await runMesh(
+        { imageUrl: sourceImage, provider: 'auto' },
+        { onStatus: (j) => setMeshStatus(j.status) },
+      );
+      if (mesh?.glbUrl) {
+        setHardMeshUrl(mesh.glbUrl);
+        setMeshStatus('done');
+      } else setMeshStatus('failed');
+    } catch {
+      setMeshStatus('failed');
+    }
+  }, [sourceImage, meshStatus]);
+  // Either upload mode. A traced image becomes SVG markup, so once `upload` is
+  // set the two modes are indistinguishable downstream (preview, backdrop,
+  // staging, 3D-derive, size-cap) — one flag keeps them in lock-step.
+  const isUploadInput = input === 'upload-svg' || input === 'upload-image';
+  const isUploadImage = input === 'upload-image';
   // UPLOAD-REMOVAL STRANDING fix (smasher round 7): Remove with strokes/tone
   // present keeps the work and auto-switches the input register to Draw (the
   // strokes ARE a draw session — Done must work on them alone). This note is
@@ -332,17 +578,24 @@ export function DrawPanel({
   const handleSnapApi = useCallback((api: ShapeSnapApi) => {
     snapApiRef.current = api;
   }, []);
-  // The live snap chip: which stroke it targets, the ranked candidate list,
-  // the cycle index, and the remembered ORIGINAL points (so 'original'
-  // restores the drawn stroke without DrawSurface holding undo memory).
-  const [snapChip, setSnapChip] = useState<{
-    strokeId: string;
-    action: SnapAction;
-    candidates: ShapeCandidate[];
-    index: number;
-    originalPoints: StrokePoint[];
-    margin: number;
-  } | null>(null);
+
+  // ── SNAP SWITCHER (Sebs 2026-06-15 — the ONE snap UI) ───────────────────────
+  // No auto-offer on pen-up, no click-through cycle chip. The SNAP button fits
+  // the last stroke, applies the best shape, and opens THIS switcher (recognized
+  // ∪ 12 library ∪ Original) so the user can pick a different one. ✕ dismisses
+  // (the applied shape stays; pick Original in the switcher to go back).
+  const [override, setOverride] = useState<ShapeOverride | null>(null);
+  const [switchAllOpen, setSwitchAllOpen] = useState(false);
+  // SHAPE INSERT (Phase 2): the armed library shape (null = Freehand). Arming a
+  // shape forces the ink register + clears any standing auto-detect offer.
+  const [armedShape, setArmedShape] = useState<string | null>(null);
+  const armShape = useCallback((kind: string | null) => {
+    setArmedShape(kind);
+    if (kind) {
+      setPenRegister('ink');
+      setOverride(null);
+    }
+  }, []);
 
   /** Log one shape-snap act into the unified decision log (training flywheel,
    *  spec §2.5/§8). */
@@ -406,68 +659,82 @@ export function DrawPanel({
         );
         return;
       }
-      // Apply the best candidate (index 0 of the chip set). Stays a stroke.
+      // Apply the best candidate immediately (that IS the snap, stays a stroke),
+      // then OPEN the recognized+library switcher so the user can pick a
+      // different shape. This is the ONE snap path now — it REPLACES both the
+      // old click-through cycle chip AND the auto-offer-on-pen-up (Sebs
+      // 2026-06-15: "snap is there, let a user click it… the clicking-through
+      // chip — that was what this was supposed to replace").
       const best = result.candidates[0];
       api.applyToStroke(strokeId, best, last.points);
       logSnap(action, 'evaluate', strokeId, result, best.kind, margin);
-      setSnapChip({
-        strokeId,
-        action,
-        candidates: result.candidates,
-        index: 0,
-        originalPoints: last.points,
-        margin,
-      });
+      const switchSet = buildSwitchSet(result, last.points);
+      const appliedIndex = Math.max(
+        0,
+        switchSet.findIndex((e) => e.source === 'recognized' && e.kind === best.kind),
+      );
+      setOverride({ strokeId, appliedKind: best.kind, switchSet, appliedIndex, originalPoints: last.points });
+      setSwitchAllOpen(true);
     },
     [logSnap, showFillNote],
   );
 
-  /** Chip tap: cycle to the next ranked candidate (incl. 'original'), apply it
-   *  live, log the cycle/revert. */
-  const cycleSnapChip = useCallback(() => {
-    setSnapChip((chip) => {
-      if (!chip) return chip;
+  /** Apply ONE switch entry to the override's stroke. recognized → the fitted
+   *  candidate; library → generate the primitive at the drawn stroke's bbox
+   *  (spec §4.5); original → restore the drawn points. Keeps the receipt open so
+   *  the user can keep switching. */
+  const applyOverrideEntry = useCallback(
+    (entry: SwitchEntry, index: number) => {
       const api = snapApiRef.current;
-      if (!api) return chip;
-      const nextIndex = (chip.index + 1) % chip.candidates.length;
-      const cand = chip.candidates[nextIndex];
-      api.applyToStroke(chip.strokeId, cand, chip.originalPoints);
-      pushShapeSnapEntry({
-        entryType: 'shape-snap',
-        surface: 'shape-snap',
-        action: chip.action,
-        outcome: cand.kind === 'original' ? 'revert' : 'cycle',
-        strokeId: chip.strokeId,
-        accepted: true,
-        refusedReason: null,
-        candidates: chip.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
-        chosen: cand.kind,
-        margin: chip.margin,
-      });
-      return { ...chip, index: nextIndex };
-    });
-  }, []);
+      if (!api || !override) return;
+      if (entry.source === 'recognized' && entry.candidate) {
+        api.applyToStroke(override.strokeId, entry.candidate, override.originalPoints);
+      } else if (entry.source === 'library') {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const [x, y] of override.originalPoints) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+        const outline = generateShape(
+          entry.kind as Parameters<typeof generateShape>[0],
+          { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+        );
+        if (outline) {
+          const cand: ShapeCandidate = {
+            kind: 'polygon',
+            points: outline as unknown as ShapeCandidate['points'],
+            normErr: 0,
+            score: 1,
+            closed: true,
+            label: entry.label,
+            notes: `library:${entry.kind}`,
+          };
+          api.applyToStroke(override.strokeId, cand, override.originalPoints);
+        }
+      } else {
+        const cand: ShapeCandidate = {
+          kind: 'original',
+          points: override.originalPoints as unknown as ShapeCandidate['points'],
+          normErr: 0,
+          score: 0,
+          closed: false,
+          label: 'Original',
+        };
+        api.applyToStroke(override.strokeId, cand, override.originalPoints);
+      }
+      logSnap('snap', 'cycle', override.strokeId, { accepted: true, candidates: [], refusedReason: undefined } as unknown as ShapeFitResult, entry.kind as ShapeCandidate['kind'], 0);
+      setOverride({ ...override, appliedIndex: index, appliedKind: entry.kind });
+      setSwitchAllOpen(false);
+    },
+    [override, logSnap],
+  );
 
-  /** Dismiss the chip (keep the standing choice). Logged as 'keep'. Called on
-   *  next stroke / register flip / Sketch↔Style / input switch / Done. */
+  /** Dismiss the snap switcher (keep whatever shape is applied). */
   const dismissSnapChip = useCallback(() => {
-    setSnapChip((chip) => {
-      if (!chip) return chip;
-      const cand = chip.candidates[chip.index];
-      pushShapeSnapEntry({
-        entryType: 'shape-snap',
-        surface: 'shape-snap',
-        action: chip.action,
-        outcome: 'keep',
-        strokeId: chip.strokeId,
-        accepted: true,
-        refusedReason: null,
-        candidates: chip.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
-        chosen: cand.kind,
-        margin: chip.margin,
-      });
-      return null;
-    });
+    setOverride(null);
+    setSwitchAllOpen(false);
   }, []);
 
   // Gap scrub → slider sync (DrawSurface fires once per ladder step; the
@@ -590,6 +857,25 @@ export function DrawPanel({
     setSmartPick(null);
   }
 
+  // ── SMART (on-demand) — one tap re-runs the existing smart-pick on the CURRENT
+  // doodle and applies it (style + fillStyle + sliders), via the SAME applySmartPick
+  // path as the ingest auto-pick (so the dropdowns reflect it + stay overridable —
+  // I-1). User-initiated, so NO once-latch. Reported up so the host renders the
+  // "Smart" pill in the style chrome (a sibling panel). ──────────────────────────
+  const smartRunRef = useRef<() => 'applied' | 'abstained'>(() => 'abstained');
+  smartRunRef.current = () => {
+    let markup: string | null = null;
+    if (isUploadInput && upload) markup = upload.markup;
+    else if (strokes.length > 0 || tone.length > 0) markup = strokesToObjectMarkup(strokes, tone);
+    if (!markup) return 'abstained';
+    const result = smartPickFromMarkup(markup, input === 'draw' ? 'draw' : 'upload-svg');
+    if (result?.pick) { applySmartPick(result); return 'applied'; }
+    return 'abstained';
+  };
+  const stableSmartRun = useCallback((): 'applied' | 'abstained' => smartRunRef.current(), []);
+  const smartHasContent = strokes.length > 0 || tone.length > 0 || (isUploadInput && !!upload);
+  const smartActiveNow = smartPick !== null && !smartPickFading;
+
   // ── ESCAPE = ONE LAYER PER PRESS (safety pass, ROUND 6/7) ─────────────────
   // Bubble phase on window, so an open Dropdown popover (capture-phase
   // document listener that stops propagation) closes itself first — that IS
@@ -669,7 +955,7 @@ export function DrawPanel({
   const canDone =
     input === 'draw'
       ? strokes.length > 0 || tone.length > 0
-      : input === 'upload-svg'
+      : isUploadInput
         ? upload !== null
         : false;
 
@@ -687,6 +973,27 @@ export function DrawPanel({
   // sketching, pen-up commits nothing. Style = sketching pauses, the drawing
   // renders styled and the pen controls restyle it live. Flip freely.
   const [composeMode, setComposeMode] = useState<'draw' | 'style'>('draw');
+  // COMPOSE 2D / 3D (Sebs 2026-06-14: "STILL NO 3D TOGGLE HERE" — the Add-a-
+  // doodle modal needs the same 2D/3D switch the desk panel has). 3D flips the
+  // canvas pane to a LIVE 3D preview of the current drawing (Live3DMount reads
+  // Canvas3DContext) and swaps the pen column for the full 3D controls — so you
+  // tune the next doodle's 3D form right where you draw it. DrawSurface stays
+  // mounted underneath (the gate idiom), so flipping back to 2D resumes the
+  // exact sketch. Only meaningful with strokes to lift; reset to 2D otherwise. */
+  const [composeView, setComposeView] = useState<'2d' | '3d'>('2d');
+  // Strokes the 3D preview lifts: DRAWN strokes, OR strokes DERIVED from an
+  // uploaded SVG (Sebs 2026-06-14: "when are we adding the 3d option for svg" —
+  // upload→3D preview/tune in the same modal, the same derivation the desk flip
+  // uses). Empty ⇒ no 3D toggle (nothing to lift).
+  const composeStrokes = useMemo(() => {
+    if (input === 'draw') return strokes.length > 0 ? capStrokes(strokes) : [];
+    if (isUploadInput && upload) return svgMarkupToStrokes(upload.markup);
+    return [];
+  }, [input, strokes, upload]);
+  const canComposeView3d = composeStrokes.length > 0;
+  useEffect(() => {
+    if (!canComposeView3d) setComposeView('2d');
+  }, [canComposeView3d]);
 
   // SHAPE-ASSIST chip dismissal (spec §3): the chip's claim is about the prior
   // stroke, so it dismisses when a NEW stroke arrives, the register/compose
@@ -703,10 +1010,17 @@ export function DrawPanel({
 
   const [stageName, setStageName] = useState('');
   const [stageWhy, setStageWhy] = useState('');
-  // Optional author "by ___" (card features, Sebs 2026-06-13) — skippable.
-  // Persists in render_config (a config extra) via the existing sourceConfig
-  // channel at Place, so no new live writer is invented.
-  const [stageAuthor, setStageAuthor] = useState('');
+  // DESTINATION + anon (Sebs 2026-06-14) — replaces the per-doodle author field.
+  // Where the doodle goes: PUBLIC wall (default) or your PRIVATE drawer; and when
+  // public, post under your @handle or anonymously. Your ONE handle, shown or
+  // hidden — never a different name per doodle.
+  const [dest, setDest] = useState<'public' | 'drawer'>('public');
+  // PRIVATE multi-save (Sebs 2026-06-18): on your OWN desk, ALSO save to Drawer
+  // and/or Shelf — independent toggles (tick either, both, or neither). The button
+  // always places on the desk; these add the extra copies.
+  const [saveDrawer, setSaveDrawer] = useState(false);
+  const [saveShelf, setSaveShelf] = useState(false);
+  const [anon, setAnon] = useState(false);
   // SIZE-CAP HONESTY: set when Place measured the staged svg over the 64KB
   // server cap. The popup STAYS OPEN — nothing is lost. `exhausted` = the
   // shrink lever ran out of detail to smooth and it still doesn't fit.
@@ -774,7 +1088,7 @@ export function DrawPanel({
         strokes: strokes.length > 0 ? capStrokes(strokes) : undefined,
         toneFills: tone.length > 0 ? capToneFills(tone) : undefined,
       });
-    } else if (input === 'upload-svg' && upload) {
+    } else if (isUploadInput && upload) {
       if (backdropFrame && (strokes.length > 0 || tone.length > 0)) {
         // DRAW-OVER MERGE (ROUND 6): backdrop + strokes (+ tone patches,
         // inverse-mapped the same way) become ONE object in one shared
@@ -810,25 +1124,42 @@ export function DrawPanel({
       setCapNote({ kb: Math.ceil(finalLength / 1024) });
       return;
     }
-    const author = stageAuthor.trim();
     const hasTone = !!(staged.toneFills && staged.toneFills.length > 0);
-    // TONE or AUTHOR in the record: both ride render_config, so route through
-    // the host's verbatim sourceConfig channel — DeskPage stores it byte-for-
-    // byte as the row's render_config (its parser passes extras through
-    // untouched on every hop, same contract that carries strokes). The pen
-    // half is the IDENTICAL snapshot DeskPage would take itself: svgStyle +
-    // mods are the same shared contexts (D-7, one pen) read at the same moment.
-    // No-tone + no-author keeps the original lightweight path byte-for-byte.
-    if (hasTone || author) {
+    // DEST + ANON (Sebs 2026-06-14): you choose where this doodle goes — the
+    // PUBLIC wall or your PRIVATE drawer — and, when public, whether to show your
+    // @handle or post anonymously (your ONE handle, shown or hidden — never a
+    // different per-doodle name; the old per-doodle "author" field is gone).
+    // anon only applies to public; private = nobody else sees it. anon rides
+    // render_config so the card can hide the handle.
+    const anonFlag = dest === 'public' && anon;
+    // PER-OBJECT 3D: if the doodle was composed in 3D, persist is3d so the desk
+    // places it AS 3D on its own (Sebs 2026-06-16: "not placed as 3d when i have
+    // it toggled 3d"). Rides the same render_config channel; an AI mesh (hardMeshUrl)
+    // composed in 3D carries both, so it shows its mesh on the desk.
+    const place3d = composeView === '3d' && canComposeView3d;
+    // TONE rides render_config via the host's verbatim sourceConfig channel —
+    // DeskPage stores it byte-for-byte as the row's render_config. The traced
+    // PHOTO (sourceImage) rides the SAME channel so the hard-path 3D can send the
+    // real photo to TRELLIS (Sebs 2026-06-16) — ObjectSurface.generateAiMesh reads
+    // baseline.sourceImage. Also carrying svgStyle/modifiers means the placed image
+    // object remembers it's Clean instead of falling back to a default pen.
+    if (hasTone || anonFlag || sourceImage || place3d) {
       onDone(staged.markup, {
         name: stageName.trim() || null,
         why: stageWhy.trim() || null,
+        dest,
+        saveDrawer: allowDrawer && saveDrawer,
+        saveShelf: allowDrawer && saveShelf,
+        anon: anonFlag,
         sourceConfig: {
           svgStyle,
           modifiers: mods,
           ...(staged.strokes && staged.strokes.length > 0 ? { strokes: staged.strokes } : {}),
           ...(hasTone ? { toneFills: staged.toneFills } : {}),
-          ...(author ? { author } : {}),
+          ...(anonFlag ? { anon: true } : {}),
+          ...(sourceImage ? { sourceImage } : {}),
+          ...(hardMeshUrl ? { hardMeshUrl } : {}),
+          ...(place3d ? { is3d: true } : {}),
         },
       });
       return;
@@ -837,6 +1168,10 @@ export function DrawPanel({
       strokes: staged.strokes,
       name: stageName.trim() || null,
       why: stageWhy.trim() || null,
+      dest,
+      saveDrawer: allowDrawer && saveDrawer,
+      saveShelf: allowDrawer && saveShelf,
+      anon: anonFlag,
     });
   }
 
@@ -848,7 +1183,7 @@ export function DrawPanel({
   function handleShrinkToFit() {
     if (strokes.length === 0) return;
     const build = (sts: Stroke[]) =>
-      input === 'upload-svg' && backdropFrame
+      isUploadInput && backdropFrame
         ? composeBackdropAndStrokes(backdropFrame, sts, { tight: true, toneFills: tone })
         : strokesToObjectMarkup(sts, tone);
     let pts = strokes;
@@ -881,25 +1216,124 @@ export function DrawPanel({
     setCapNote((prev) => (prev ? { ...prev, exhausted: true } : prev));
   }
 
+  /** Finish an upload once we have clean SVG markup (from either a traced image
+   *  or a simplified .svg): set it as the upload + run the smart-pick ingest. The
+   *  markup is already sanitized + in our register, so both paths converge here. */
+  function acceptUploadMarkup(
+    name: string,
+    markup: string,
+    kind: 'upload-svg' | 'upload-image' = 'upload-svg',
+  ) {
+    // MONOCHROME AT INGESTION (Sebs 2026-06-24): Desk Doodles is colourless ("value
+    // from marks, never hue") — convert the upload's colour to luminance-grey HERE,
+    // so it's monochrome everywhere downstream (desk · part editor · 3D), not patched
+    // per view. Shapes keep their value (light head vs dark eyes) so they stay distinct.
+    markup = monochromeSvgMarkup(markup);
+    setUpload({ name, markup });
+    setUploadError(null);
+    clearRemoveNote();
+    // ALL uploads default to CLEAN (Sebs 2026-06-16: "svg clean is our baseline,
+    // that's what it defaults to"). The smart-pick was choosing styles with a
+    // HACHURE/cross-hatch fill → faint cross-lines across line-art (the rose) and
+    // a dense blob on traced photos. Clean renders the marks flat + clean (ink +
+    // flat fill = the intended read); the user dials up rough/shading from the
+    // chrome. (smartPickFromMarkup kept for a future opt-in chip, not auto-applied.)
+    setSvgStyle('clean');
+    // SNAP THE MODIFIERS to Clean's canonical preset too (Sebs 2026-06-16 — the
+    // upload rendered DARK + OLIVE under a "Clean" label because setSvgStyle alone
+    // leaves the MODIFIERS untouched: a prior Sketchy pick (texture:'light',
+    // inkIntensity:0.85, fillStyle:'none') stuck, so Clean's NAME wore Sketchy's
+    // settings → the 'light' texture grain + dimmed ink read muddy/blobby). Reset
+    // from DEFAULT_MODIFIERS so leftover state can't bleed in — same move the chrome's
+    // onStyle/onReset make, so an upload lands on the TRUE Clean look (flat fills,
+    // texture:none, full ink) and the toggles ride from there.
+    const cleanMods = applyStylePreset(DEFAULT_MODIFIERS, 'clean');
+    (Object.keys(cleanMods) as (keyof typeof cleanMods)[]).forEach((k) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setMod(k, (cleanMods as any)[k]);
+    });
+    // IMAGE-SPECIFIC FILL POLICY (Sebs decision 2026-06-21 — "smart per source"):
+    // a traced PHOTO is a TONAL source, not line-art. Clean's fill grammar is
+    // 'hachure' (the smart layer would render its regions as cross-lines → the
+    // busy "dense blob on traced photos"). For image sources, swap the fill grammar
+    // to 'solid' = the OPACITY-ONLY tonal fill (09-LOCKED-MODEL I-2 + 16-research-
+    // solid-tonal-density: a region's source darkness renders as a flat solid at its
+    // target L). So a photo reads as a clean POSTERIZED tonal image (flat greys per
+    // region), never line hachure. Line-art SVG uploads keep Clean (already clean).
+    // Localized + reversible; the register stays 'clean', only the mark grammar
+    // changes — the user can re-pick any fillStyle from the chrome.
+    if (kind === 'upload-image') setMod('fillStyle', 'solid');
+    // LAND IN STYLE MODE (Sebs 2026-06-16: "the svg toggles don't work … when I
+    // switch from one to another the svg stays"). An upload's first job is being
+    // STYLED, not drawn-over. In Sketch mode the backdrop renders RAW (DrawSurface
+    // bypasses SvgStyleTransform until styled=true), so the SVG-STYLE dropdown — and
+    // the Clean default above — were invisible: the render never went through the
+    // style engine. Landing in Style makes the upload render through SvgStyleTransform
+    // immediately (Clean) and re-render live on every toggle. Flip to Sketch to draw over.
+    setComposeMode('style');
+  }
+
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
+    setUploadError(null);
+
+    // RASTER IMAGE → imageToSvg (Quiver Edge trace + simplifyToSketch + sanitize,
+    // all inside the lib). Output is already clean line-art in OUR register, so it
+    // feeds acceptUploadMarkup exactly like a prepared .svg from here on.
+    if (isRasterImageFile(file)) {
+      setUploadBusy(true);
+      try {
+        const traced = await imageToSvg(file);
+        if (traced.ok) {
+          setRawSvgUpload(null); // images don't carry the .svg-only Simplify toggle
+          setSourceImage(traced.sourceImage ?? null); // keep the photo for hard-path 3D
+          acceptUploadMarkup(file.name, traced.markup, 'upload-image');
+        }
+        else { setUpload(null); setRawSvgUpload(null); setSourceImage(null); setUploadError(traced.error); }
+      } catch (err) {
+        setUpload(null);
+        setRawSvgUpload(null);
+        setSourceImage(null);
+        setUploadError(`Image tracing failed: ${(err as Error).message}`);
+      } finally {
+        setUploadBusy(false);
+      }
+      return;
+    }
+
+    // SVG → prepare (type check + <svg> extract + DOMPurify), then apply the
+    // chosen SIMPLIFY MODE (off/filled/line) so the user picks how this upload
+    // enters our register (Sebs 2026-06-16). The smart default matches the
+    // source (filled art → 'filled', stroke-only → 'line'). We keep the RAW
+    // prepared markup so changeSimplifyMode can re-process the SAME upload live
+    // (no re-pick). applyUploadSimplify degrades safely (input unchanged if
+    // unparseable), so a clean/simple file is untouched.
     const result = await prepareSvgUpload(file);
     if (result.ok) {
-      setUpload({ name: result.name, markup: result.markup });
-      setUploadError(null);
-      clearRemoveNote();
-      // SMART PICK — upload ingest: every picked file is one ingest, and
-      // staging (the preview appearing) is the moment. Runs the signal
-      // extractor over the sanitized markup; confident → pen set through
-      // the preset-snap path + chip; ambiguous → nothing moves.
-      const evaluated = smartPickFromMarkup(result.markup, 'upload-svg');
-      if (evaluated) applySmartPick(evaluated);
+      setSourceImage(null); // a vector upload has no source photo for the hard path
+      const mode = defaultSimplifyMode(result.markup);
+      setSimplifyMode(mode);
+      setRawSvgUpload(result.markup);
+      const processed = applyUploadSimplify(result.markup, mode);
+      acceptUploadMarkup(result.name, processed);
     } else {
       setUpload(null);
+      setRawSvgUpload(null);
       setUploadError(result.error);
     }
+  }
+
+  /** Re-process the CURRENT .svg upload through a new simplify mode without a
+   *  re-pick: re-apply applyUploadSimplify to the stored raw markup and push it
+   *  through the SAME accept path so the preview updates live. No-op (just sets
+   *  the mode) if no .svg is staged. */
+  function changeSimplifyMode(m: UploadSimplifyMode) {
+    setSimplifyMode(m);
+    if (!rawSvgUpload) return;
+    const processed = applyUploadSimplify(rawSvgUpload, m);
+    acceptUploadMarkup(upload?.name ?? 'upload.svg', processed);
   }
 
   // The register row's one-line caption. The remove-note takes the slot over
@@ -923,18 +1357,53 @@ export function DrawPanel({
               : shadeTool.erase
                 ? 'erasing tone — brush carves it back to paper'
                 : `brushing ${COVERAGE_BANDS[shadeTool.band]?.name ?? 'mid'} tone — flat grey under your ink`
-          : input === 'upload-svg' && backdropFrame
+          : isUploadInput && backdropFrame
             ? 'raw ink over your upload — keep sketching'
             : 'raw ink — keep sketching'
-        : input === 'upload-svg' && backdropFrame
+        : isUploadInput && backdropFrame
           ? 'styled — the pen renders your upload live'
           : 'styled — play with the pen, flip back to keep drawing';
+
+  // SNAP SWITCHER receipt — rendered INLINE right after the SNAP/STRAIGHTEN pills
+  // (via DrawToolbar's snapSwitcher slot) so it sits AT the snap button, not
+  // floating above the canvas (Sebs 2026-06-15). The labeled button toggles the
+  // switcher (recognized ∪ 12 library ∪ Original); ✕ dismisses (pick Original to
+  // revert). No auto-offer, no cycle chip.
+  const snapSwitcherNode = override ? (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      <span aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)' }} />
+      <button
+        style={{ ...PILL, fontFamily: IS, fontSize: 11, padding: '5px 12px', cursor: 'pointer', background: switchAllOpen ? 'var(--dir-text-primary)' : 'var(--dir-raised)', color: switchAllOpen ? 'var(--dir-bg)' : 'var(--dir-text-body)', border: '1px solid var(--dir-border)' }}
+        onClick={() => setSwitchAllOpen((v) => !v)}
+        title="Switch to another shape"
+      >
+        Snapped to {override.switchSet[override.appliedIndex]?.label ?? 'shape'} ▾
+      </button>
+      <button
+        style={{ ...PILL, fontFamily: IS, fontSize: 11, padding: '5px 10px', cursor: 'pointer', background: 'var(--dir-raised)', color: 'var(--dir-text-body-soft)', border: '1px solid var(--dir-border)' }}
+        onClick={() => setOverride(null)}
+        title="Done"
+      >
+        ✕
+      </button>
+      {switchAllOpen && (
+        <SwitchPopover override={override} onSwitchTo={applyOverrideEntry} onClose={() => setSwitchAllOpen(false)} />
+      )}
+    </div>
+  ) : null;
 
   return (
     // Overlay scrim — click outside the panel closes ONLY when nothing is
     // drawn. With strokes present (or in the naming stage) the click is
     // NON-DESTRUCTIVE: it arms the same visible Esc-confirm hint instead of
     // eating the sketch (safety pass, ROUND 6/7).
+    // Canvas3DProvider scopes an ISOLATED 3D context to this modal (nested under
+    // any page-level provider): the compose 2D/3D toggle's preview + 3D controls
+    // drive it, and tuning the next doodle's 3D never disturbs the desk's.
+    <Canvas3DProvider>
+    {/* Gates the AI-mesh material toggle in Canvas3DChrome — only after a mesh. */}
+    <AiMeshActiveSync active={meshView === 'ai' && !!hardMeshUrl} />
+    <style>{`@keyframes dd-spin { to { transform: rotate(360deg); } }`}</style>
     <div
       onClick={() => {
         if (staged) return; // staging = work definitely present — no-op
@@ -1026,7 +1495,7 @@ export function DrawPanel({
                   ]
                     .filter(Boolean)
                     .join(' · ')
-              : input === 'upload-svg'
+              : isUploadInput
                 ? upload
                   ? `${upload.name}${
                       strokes.length > 0
@@ -1051,8 +1520,23 @@ export function DrawPanel({
             <button
               key={key}
               onClick={() => {
+                // Switching SOURCE clears the current upload so each mode opens at
+                // its OWN picker (Sebs 2026-06-16: "when I switch between svg or
+                // photo it stays what I had"). The old file of a different type must
+                // not linger. Strokes/tone are the SKETCH — DrawSurface keeps them
+                // mounted, so the draw-over work survives the source switch.
+                if (key !== input) {
+                  setUpload(null);
+                  setRawSvgUpload(null);
+                  setSourceImage(null);
+                  setUploadError(null);
+                  setSimplifyMode('filled');
+                }
                 setInput(key);
                 clearRemoveNote();
+                // Switching to Draw returns to Sketch mode (you draw before you
+                // style); uploads flip themselves to Style on accept (above).
+                if (key === 'draw') setComposeMode('draw');
               }}
               // Intentional PILL override — sentence-case 13/400 (dock idiom).
               style={{
@@ -1094,7 +1578,7 @@ export function DrawPanel({
             <input
               ref={fileRef}
               type="file"
-              accept=".svg,image/svg+xml"
+              accept={isUploadImage ? 'image/png,image/jpeg,image/webp' : '.svg,image/svg+xml'}
               onChange={handleFileChange}
               style={{ display: 'none' }}
             />
@@ -1110,10 +1594,19 @@ export function DrawPanel({
                 line, ellipsized, full text on hover via title. flexWrap only
                 ever moves the upload cluster to a second line at narrow
                 widths (the caption's flex-basis 0 keeps it on line one). */}
+            {/* SHAPE INSERT quick-pick (Phase 2): arm a shape → drag on canvas to
+                place it. Freehand (null) is the default. Only in the ink/draw flow. */}
+            {composeMode === 'draw' && penRegister === 'ink' && (
+              <div style={{ marginBottom: 8 }}>
+                <ShapeStrip armedShape={armedShape} onArmShape={armShape} collapsed />
+              </div>
+            )}
             <DrawToolbar
               variant="panel"
               register={penRegister}
               onRegisterChange={setPenRegister}
+              eraseMode={eraseMode}
+              onEraseModeChange={setEraseMode}
               registerDisabled={composeMode === 'style'}
               registerDisabledTitle="Flip back to Sketch to keep working"
               shadeTool={shadeTool}
@@ -1130,15 +1623,7 @@ export function DrawPanel({
                       ? 'Snap the last stroke to a clean shape'
                       : 'Crisp the last stroke’s edges (keeps your proportions)'
               }
-              snapChip={
-                snapChip
-                  ? {
-                      label: snapChip.candidates[snapChip.index]?.label ?? 'Shape',
-                      hasAlternatives: snapChip.candidates.length > 1,
-                      onCycle: cycleSnapChip,
-                    }
-                  : null
-              }
+              snapSwitcher={snapSwitcherNode}
               captionText={captionText}
               captionAlert={!!(removeNote || fillNote)}
               // Sketch | Style — the canvas's own render-axis pills. They stay
@@ -1170,9 +1655,54 @@ export function DrawPanel({
                 </>
               }
               // Upload Replace / Remove cluster — only with a file picked.
+              // The Simplify segmented toggle rides in front of it for .svg
+              // uploads only (rawSvgUpload != null && upload-svg mode).
               trailing={
-                input === 'upload-svg' && upload ? (
-                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexShrink: 0 }}>
+                isUploadInput && upload ? (
+                  <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    {/* SVG SIMPLIFY toggle — .svg uploads only (not traced images,
+                        which default to Clean). Re-processes the SAME upload live. */}
+                    {input === 'upload-svg' && rawSvgUpload && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <span style={{ fontFamily: IS, fontSize: 11, color: 'var(--dir-text-body-soft)' }}>
+                          Simplify
+                        </span>
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          {(
+                            [
+                              ['off', 'Off'],
+                              ['filled', 'Filled'],
+                              ['line', 'Line'],
+                            ] as [UploadSimplifyMode, string][]
+                          ).map(([m, label]) => (
+                            <button
+                              key={m}
+                              onClick={() => changeSimplifyMode(m)}
+                              aria-pressed={simplifyMode === m}
+                              title={
+                                m === 'off'
+                                  ? 'Keep the SVG as-is'
+                                  : m === 'filled'
+                                    ? 'Clean filled line-art (keeps fills)'
+                                    : 'Centerline single-line trace'
+                              }
+                              style={{
+                                ...PILL,
+                                fontFamily: IS,
+                                fontSize: 11,
+                                padding: '5px 10px',
+                                cursor: 'pointer',
+                                background: simplifyMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+                                color: simplifyMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+                                borderColor: simplifyMode === m ? 'var(--dir-accent)' : 'var(--dir-border)',
+                              }}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </span>
+                      </span>
+                    )}
                     <button
                       onClick={() => fileRef.current?.click()}
                       style={{ ...PILL, padding: '5px 12px', background: 'var(--dir-bg)' }}
@@ -1189,6 +1719,8 @@ export function DrawPanel({
                         // active truth; quiet fade, logged as overridden.
                         const keepWork = strokes.length > 0 || tone.length > 0;
                         setUpload(null);
+                        setRawSvgUpload(null);
+                        setSourceImage(null);
                         setUploadError(null);
                         dismissSmartPick();
                         if (keepWork) {
@@ -1223,40 +1755,57 @@ export function DrawPanel({
                 hideActions
                 fill
                 styled={composeMode === 'style'}
-                backdrop={input === 'upload-svg' ? backdropFrame : undefined}
+                backdrop={isUploadInput ? backdropFrame : undefined}
                 onStrokesChange={setStrokes}
                 shade={{
-                  active: composeMode === 'draw' && penRegister === 'shade',
-                  tool: shadeTool.tool,
-                  band: shadeTool.band,
+                  // The Erase register rides the tone-brush gesture as a band-0
+                  // lifter (carves tone) — and eraseStrokes below makes the SAME
+                  // drag also rub out ink. So one Erase tool wipes anything drawn.
+                  active: composeMode === 'draw' && (penRegister === 'shade' || penRegister === 'erase'),
+                  tool: penRegister === 'erase' ? 'brush' : shadeTool.tool,
+                  band: penRegister === 'erase' ? 0 : shadeTool.band,
                   radius: shadeTool.radius,
-                  erase: shadeTool.erase,
+                  erase: penRegister === 'erase' ? true : shadeTool.erase,
                   gap: shadeTool.gap,
+                  fullFill: shadeTool.fullFill,
                 }}
+                eraseStrokes={composeMode === 'draw' && penRegister === 'erase'}
+                eraseMode={eraseMode}
                 onToneFillsChange={setTone}
                 onGapChange={handleGapChange}
                 onFillNote={showFillNote}
                 onSnapApi={handleSnapApi}
+                onSelectionChange={(id) => { if (id === null) setOverride(null); }}
+                armedShape={armedShape}
+                onShapeInserted={() => { setOverride(null); setArmedShape(null); }}
               />
 
               {/* Upload picker — no file yet. */}
-              {input === 'upload-svg' && !upload && (
+              {isUploadInput && !upload && (
                 <div style={PANE_OVERLAY}>
-                  <p style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', margin: 0 }}>
-                    The file becomes one desk object — style it with the pen,
-                    draw over it, size handled automatically.
+                  <p style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', margin: 0, maxWidth: 280, textAlign: 'center' }}>
+                    {isUploadImage
+                      ? 'Your photo becomes a clean sketch in the Desk Doodles style — then style it with the pen, draw over it, flip it to 3D.'
+                      : 'The file becomes one desk object — style it with the pen, draw over it, size handled automatically.'}
                   </p>
                   <button
                     onClick={() => fileRef.current?.click()}
+                    disabled={uploadBusy}
                     // Heavier border = empty-state affordance (canvas dock precedent).
                     style={{
                       ...PILL,
                       padding: '10px 22px',
                       background: 'var(--dir-bg)',
+                      opacity: uploadBusy ? 0.6 : 1,
+                      cursor: uploadBusy ? 'wait' : 'pointer',
                       border: '1px solid var(--dir-text-primary)',
                     }}
                   >
-                    Pick an .svg file
+                    {uploadBusy
+                      ? 'Tracing your image…'
+                      : isUploadImage
+                        ? 'Pick a photo (PNG / JPG)'
+                        : 'Pick an .svg file'}
                   </button>
                   {uploadError && (
                     <p style={{ fontFamily: IS, fontSize: 12, color: 'var(--dir-accent)', margin: 0 }}>
@@ -1270,7 +1819,7 @@ export function DrawPanel({
                   viewBox, no width/height), so frame-space draw-over can't
                   letterbox it honestly. Thumbnail preview + plain placement
                   still work; no fake draw-over. */}
-              {input === 'upload-svg' && upload && !backdropFrame && (
+              {isUploadInput && upload && !backdropFrame && (
                 <div style={PANE_OVERLAY}>
                   <div
                     style={{ width: 180, height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -1287,24 +1836,63 @@ export function DrawPanel({
                 </div>
               )}
 
-              {/* Honest image stub — image→object needs the autotrace path
-                  (stretch S1); no fake controls, no time commitments. */}
-              {input === 'upload-image' && (
-                <div style={PANE_OVERLAY}>
-                  <p
-                    style={{
-                      fontFamily: IS,
-                      fontSize: 13,
-                      color: 'var(--dir-text-body-soft)',
-                      margin: 0,
-                      textAlign: 'center',
-                      lineHeight: 1.5,
-                      maxWidth: 380,
-                    }}
-                  >
-                    Image upload is coming — it will trace your picture into
-                    desk-ready linework. For now, draw it or upload an SVG.
-                  </p>
+              {/* (Image-upload stub removed 2026-06-16 — image→object is live via
+                  the Quiver Edge trace; upload-image now shares the picker +
+                  backdrop-preview chrome above via isUploadInput.) */}
+
+              {/* LIVE 3D PREVIEW — flipped via the pen column's 2D/3D toggle.
+                  Sits OVER the still-mounted DrawSurface (gate idiom), so the
+                  sketch is never lost; flip back to 2D to keep drawing. Driven
+                  by Canvas3DContext (Live3DMount) so the 3D controls beside it
+                  tune THIS preview live. Transparent + interactive (spin it). */}
+              {composeView === '3d' && canComposeView3d && (
+                <div
+                  style={{
+                    ...PANE_OVERLAY,
+                    padding: 0,
+                    backgroundColor: 'var(--dir-bg)',
+                    backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <Live3DMount
+                    strokes={composeStrokes as never}
+                    hardMeshUrl={meshView === 'ai' ? (hardMeshUrl ?? undefined) : undefined}
+                    transparent
+                    interactive
+                    showChips={false}
+                  />
+                  {/* LOADING — TRELLIS takes ~30–90s; without this the click looked
+                      dead (Sebs 2026-06-16 "i click it and nothing happens"). */}
+                  {meshStatus === 'working' && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 10,
+                        background: 'color-mix(in srgb, var(--dir-bg) 78%, transparent)',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 26,
+                          height: 26,
+                          borderRadius: '50%',
+                          border: '3px solid var(--dir-border)',
+                          borderTopColor: 'var(--dir-text-primary)',
+                          animation: 'dd-spin 0.8s linear infinite',
+                        }}
+                      />
+                      <span style={{ fontFamily: IS, fontSize: 12, color: 'var(--dir-text-body)' }}>
+                        Generating AI 3D… (~30–90s)
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1335,20 +1923,109 @@ export function DrawPanel({
                 gap: 8,
               }}
             >
-              <span style={SECTION_LABEL}>Pen</span>
-              <span
-                style={{
-                  fontFamily: IS,
-                  fontSize: 10,
-                  fontStyle: 'italic',
-                  color: 'var(--dir-text-body-soft)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                one pen — shared with the desk panel
-              </span>
+              <span style={SECTION_LABEL}>{composeView === '3d' ? '3D controls' : 'Pen'}</span>
+              {canComposeView3d ? (
+                <div
+                  role="tablist"
+                  aria-label="Edit in 2D or 3D"
+                  style={{
+                    display: 'inline-flex',
+                    gap: 4,
+                    padding: 3,
+                    borderRadius: 999,
+                    border: '1px solid var(--dir-border)',
+                    background: 'var(--dir-bg)',
+                  }}
+                >
+                  {(['2d', '3d'] as const).map((v) => (
+                    <button
+                      key={v}
+                      role="tab"
+                      aria-selected={composeView === v}
+                      onClick={() => setComposeView(v)}
+                      style={{
+                        ...PILL,
+                        padding: '3px 11px',
+                        fontSize: 10,
+                        border: 'none',
+                        ...(composeView === v
+                          ? { background: 'var(--dir-text-primary)', color: 'var(--dir-bg)' }
+                          : { background: 'transparent' }),
+                      }}
+                    >
+                      {v.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span
+                  style={{
+                    fontFamily: IS,
+                    fontSize: 10,
+                    fontStyle: 'italic',
+                    color: 'var(--dir-text-body-soft)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  one pen — shared with the desk panel
+                </span>
+              )}
             </div>
 
+            {composeView === '3d' ? (
+              // 3D CONTROLS — the SAME Canvas3DChrome the desk panel + edit modal
+              // use, driving this modal's own Canvas3DContext (the preview reads
+              // it live). Geometry mode + 3D style + material + property dials.
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
+                {/* TRELLIS HARD PATH — reachable right here in the add/upload 3D
+                    flow (Sebs 2026-06-16). Image uploads only (sourceImage): TRELLIS
+                    needs a real photo to make a good mesh. Sends the ORIGINAL photo,
+                    swaps the preview to the returned GLB, ~30–90s + costs a gen. */}
+                {hardPathOn && sourceImage && (
+                  <div style={{ marginBottom: 12 }}>
+                    {/* LOCAL 3D ⇄ AI MESH — switch BACK to the normal local 3D modes
+                        anytime (Sebs 2026-06-16 "how do they switch back"). Local =
+                        the instant doodle form (geometry/material below). AI mesh =
+                        the TRELLIS GLB (its own material toggle appears once ready). */}
+                    <div
+                      role="tablist"
+                      aria-label="Local 3D or AI mesh"
+                      style={{ display: 'flex', gap: 4, padding: 3, borderRadius: 999, border: '1px solid var(--dir-border)', background: 'var(--dir-bg)', marginBottom: 8 }}
+                    >
+                      {(['local', 'ai'] as const).map((v) => (
+                        <button
+                          key={v}
+                          role="tab"
+                          aria-selected={meshView === v}
+                          onClick={() => setMeshView(v)}
+                          style={{
+                            ...PILL,
+                            flex: 1,
+                            justifyContent: 'center',
+                            padding: '5px 10px',
+                            fontSize: 11,
+                            border: 'none',
+                            ...(meshView === v
+                              ? { background: 'var(--dir-text-primary)', color: 'var(--dir-bg)' }
+                              : { background: 'transparent' }),
+                          }}
+                        >
+                          {v === 'local' ? 'Local 3D' : 'AI mesh'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* AI mesh selected → its OWN controls; otherwise the local-3D chrome.
+                    The local Native/Hatch/Matte-Clay controls don't apply to a GLB. */}
+                {hardPathOn && sourceImage && meshView === 'ai' ? (
+                  <AiMeshControls hardMeshUrl={hardMeshUrl} meshStatus={meshStatus} onGenerate={generateAiMesh} />
+                ) : (
+                  <Canvas3DChrome />
+                )}
+              </div>
+            ) : (
+              <>
             {/* SMART PICK receipt — visible right where the pen lives, so the
                 "why did the controls just move" question is answered before
                 it's asked. Undo restores the exact prior pen. */}
@@ -1369,6 +2046,8 @@ export function DrawPanel({
               <SurfaceControls
                 svgStyle={svgStyle}
                 mods={mods}
+                onSmart={smartHasContent ? stableSmartRun : undefined}
+                smartActive={smartActiveNow}
                 onStyle={(nextStyle) => {
                   // Manual style change = the pick (if any) is no longer the
                   // active truth — chip fades, override logged (chip honesty).
@@ -1400,6 +2079,8 @@ export function DrawPanel({
                 }}
               />
             </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -1421,7 +2102,12 @@ export function DrawPanel({
               gap: 14,
             }}
           >
-            <span style={SECTION_LABEL}>Name your doodle</span>
+            {/* The naming stage carries NO 2D/3D toggle (Sebs 2026-06-14: "this
+                here shouldn't have the 2D 3D toggle") — 3D preview + tuning lives
+                on the compose/draw stage; this stage is just name + place. */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span style={SECTION_LABEL}>Name your doodle</span>
+            </div>
             <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div
                 style={{
@@ -1438,12 +2124,10 @@ export function DrawPanel({
                 }}
               >
                 {/* STYLED MINTING PREVIEW (ROUND 6): the staged art renders
-                    through the SAME nested-provider + SvgStyleTransform scope
-                    the desk uses (ObjectSurface SurfaceRenderScope pattern),
-                    synced to the CURRENT pen — the ceremony shows the doodle
-                    the user actually styled, never raw 3px hairlines. The
-                    nested providers shadow the global pen for this subtree
-                    only; pen moves (and smart-pick undo) re-render it live. */}
+                    through the SAME nested-provider + SvgStyleTransform scope the
+                    desk uses, synced to the CURRENT pen — the doodle the user
+                    actually styled, never raw 3px hairlines. No 2D/3D toggle here
+                    (it lives on the compose/draw stage — Sebs 2026-06-14). */}
                 <F3SvgStyleProvider>
                   <F3RoughModifiersProvider>
                     <StagedRenderScope svgStyle={svgStyle} mods={mods}>
@@ -1482,7 +2166,7 @@ export function DrawPanel({
                   }}
                 >
                   {capNote.exhausted
-                    ? `Still too detailed after smoothing — the desk caps doodles at 64KB (this one is ~${capNote.kb}KB). Go Back and try fewer strokes${input === 'upload-svg' ? ' or a simpler file' : ''}.`
+                    ? `Still too detailed after smoothing — the desk caps doodles at 64KB (this one is ~${capNote.kb}KB). Go Back and try fewer strokes${isUploadInput ? ' or a simpler file' : ''}.`
                     : strokes.length > 0
                       ? `Too detailed to save — the desk caps doodles at 64KB (this one is ~${capNote.kb}KB). Nothing is lost: shrink it to fit, or go Back and edit.`
                       : `Too detailed to save — the desk caps doodles at 64KB (this file is ~${capNote.kb}KB). Nothing is lost: go Back and try a simpler file.`}
@@ -1561,29 +2245,80 @@ export function DrawPanel({
                   outline: 'none',
                 }}
               />
-              {/* Optional author "by ___" (card features, Sebs 2026-06-13) \u2014
-                  sits with name + why; skippable. Persists in render_config. */}
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                <span style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-text-body-soft)', flexShrink: 0 }}>
-                  by
-                </span>
-                <input
-                  value={stageAuthor}
-                  onChange={(e) => setStageAuthor(e.target.value)}
-                  placeholder="your name (optional)"
-                  aria-label="Author name (optional)"
-                  maxLength={48}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    fontFamily: IS,
-                    fontSize: 13,
-                    color: 'var(--dir-text-body)',
-                    background: 'transparent',
-                    border: 'none',
-                    outline: 'none',
-                  }}
-                />
+              {/* DESTINATION + VISIBILITY (Sebs 2026-06-14, replaces the per-
+                  doodle author). The dest toggle (public wall / my drawer) only
+                  shows in a PRIVATE context — the public desk flow is public-only
+                  ("they can only add it to the public since they are in the
+                  public"), so there it's hidden and dest stays 'public'.
+                  Anonymity is its own segmented toggle (matches the app's other
+                  toggles), shown whenever the destination is public. */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 4 }}>
+                {allowDrawer && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={SECTION_LABEL}>Also save to</span>
+                    {/* On a desk you OWN the button always PLACES the doodle on
+                        THIS desk; these are INDEPENDENT extra saves — tick Drawer,
+                        Shelf, both, or neither (Sebs 2026-06-18). Multi-select, not
+                        a one-or-the-other toggle. */}
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignSelf: 'flex-start',
+                        gap: 4,
+                        padding: 4,
+                        borderRadius: 999,
+                        border: '1px solid var(--dir-border)',
+                        background: 'var(--dir-raised)',
+                      }}
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={saveDrawer}
+                        onClick={() => setSaveDrawer((v) => !v)}
+                        style={{
+                          ...PILL,
+                          padding: '4px 14px',
+                          fontSize: 12,
+                          border: 'none',
+                          ...(saveDrawer
+                            ? { background: 'var(--dir-text-primary)', color: 'var(--dir-bg)' }
+                            : { background: 'transparent' }),
+                        }}
+                      >
+                        Drawer
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={saveShelf}
+                        onClick={() => setSaveShelf((v) => !v)}
+                        style={{
+                          ...PILL,
+                          padding: '4px 14px',
+                          fontSize: 12,
+                          border: 'none',
+                          ...(saveShelf
+                            ? { background: 'var(--dir-text-primary)', color: 'var(--dir-bg)' }
+                            : { background: 'transparent' }),
+                        }}
+                      >
+                        Shelf
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {dest === 'public' && !allowDrawer && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={SECTION_LABEL}>Your name</span>
+                    <PillToggle
+                      options={[
+                        { v: 'show', label: 'Show @handle' },
+                        { v: 'anon', label: 'Anonymous' },
+                      ]}
+                      value={anon ? 'anon' : 'show'}
+                      onChange={(v) => setAnon(v === 'anon')}
+                    />
+                  </div>
+                )}
               </div>
             </div>
             <footer style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
@@ -1599,7 +2334,9 @@ export function DrawPanel({
               >
                 Back
               </button>
-              <button onClick={handlePlace} style={CTA}>Place on desk</button>
+              <button onClick={handlePlace} style={CTA}>
+                {allowDrawer ? 'Place on desk' : dest === 'drawer' ? 'Save to my drawer' : 'Place on desk'}
+              </button>
             </footer>
           </div>
         )}
@@ -1633,9 +2370,9 @@ export function DrawPanel({
                 ? 'Add this doodle to the desk'
                 : input === 'draw'
                   ? 'Draw or shade something first'
-                  : input === 'upload-svg'
-                    ? 'Pick a file first'
-                    : 'Image upload is coming — draw it or upload an SVG'
+                  : isUploadImage
+                    ? 'Pick a photo first'
+                    : 'Pick a file first'
             }
             style={{
               ...CTA,
@@ -1648,5 +2385,6 @@ export function DrawPanel({
         </footer>
       </div>
     </div>
+    </Canvas3DProvider>
   );
 }

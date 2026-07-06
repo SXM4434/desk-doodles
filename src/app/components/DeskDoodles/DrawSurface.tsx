@@ -1,9 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { getStroke } from 'perfect-freehand';
 import { IS } from '../../lib/typography';
 import { PILL, CTA } from '../../lib/chromeStyles';
 import { SvgStyleTransform } from '../canvas/SvgStyleTransform';
-import { prepareSvgUpload } from '../../lib/svgUpload';
+import {
+  prepareSvgUpload,
+  applyUploadSimplify,
+  defaultSimplifyMode,
+  type UploadSimplifyMode,
+} from '../../lib/svgUpload';
+import { simplifyToSketch } from '../../lib/simplifyToSketch';
+import type { SvgPart } from '../../lib/svgToParts';
+import { imageToSvg, isRasterImageFile } from '../../lib/imageToSvg';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
 import {
   createToneGrid,
@@ -30,6 +38,7 @@ import {
   REGION_EXTRACTOR_VERSION,
   type StrokeInputPoint,
 } from '../../lib/geometry3d/strokeTo3d';
+import { fillRegionAtMultiScale, DEFAULT_GAP_CLOSE_PX } from '../../lib/fill/regionFill';
 import { pushShadeFillEntry, type ShadeFillGesture } from '../../lib/shadeFillLog';
 import {
   fitStroke,
@@ -38,6 +47,7 @@ import {
   type ShapeFitResult,
   type SnapAction,
 } from '../../lib/draw/shapeFit';
+import { generateShape } from '../../lib/draw/shapeLibrary';
 
 // ─── Shape Assist API (Rock F3) ──────────────────────────────────────────────
 // SEBS'S LAW: freehand is the DEFAULT. Snap/Straighten are ACTION VERBS the
@@ -118,8 +128,15 @@ export function fitStrokesToFrame(
 export const STROKE_OPTS = {
   size: 4,
   thinning: 0.5,
-  smoothing: 0.5,
-  streamline: 0.5,
+  // streamline/smoothing RAISED 0.5→0.78/0.7 (Sebs 2026-06-20: "gets all jaggedy
+  // as I draw"). Real trackpad/pen input carries hand+sensor jitter; at 0.5 that
+  // jitter passed straight through into a faceted ribbon (measured: 117 sharp
+  // turns on noisy input). 0.78 streamline = perfect-freehand's input EMA smooths
+  // the jitter out (→ 14 sharp turns, visibly smooth) with only a slight,
+  // drawing-app-normal trail behind the cursor. Was NOT my buttery change — the
+  // live preview was always under-smoothed; a clean synthetic curve hid it.
+  smoothing: 0.7,
+  streamline: 0.78,
   easing: (t: number) => t,
   simulatePressure: true,
 };
@@ -273,6 +290,68 @@ export function strokeAtPoint(
     }
   }
   return bestD <= hit2 ? bestId : null;
+}
+
+/** Ray-cast point-in-polygon over a stroke's points treated as a CLOSED ring.
+ *  Used for the big interior select target (Sebs 2026-06-15: "I need a bigger
+ *  hit target… click anywhere in the shape to select it"). Reliable for closed
+ *  shapes (snapped / inserted); open scribbles fall back to outline proximity. */
+function pointInStroke(pts: ReadonlyArray<readonly number[]>, x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1];
+    const xj = pts[j][0], yj = pts[j][1];
+    const denom = yj - yi || 1e-9;
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / denom + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** The stroke whose CLOSED area contains (x,y), SMALLEST bbox-area first so a
+ *  nested / topmost small shape wins over a big enclosing one. Null if none.
+ *  This is the interior half of tap-select — a tap anywhere inside a shape picks
+ *  it, not just a tap on the thin outline. */
+export function strokeContainingPoint(strokes: Stroke[], x: number, y: number): string | null {
+  let bestId: string | null = null;
+  let bestArea = Infinity;
+  for (const s of strokes) {
+    if (s.points.length < 3) continue;
+    if (!pointInStroke(s.points, x, y)) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [px, py] of s.points) {
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+    }
+    const area = (maxX - minX) * (maxY - minY);
+    if (area < bestArea) { bestArea = area; bestId = s.id; }
+  }
+  return bestId;
+}
+
+/** The TONE PATCH whose filled area contains (x,y) — smallest bbox-area first so a
+ *  nested patch wins, and a tap inside a hole doesn't count (Sebs 2026-06-16 "move
+ *  shade as well"). Null if the tap is on bare paper / inside a hole. Mirrors
+ *  strokeContainingPoint for tone selection. */
+function toneFillAtPoint(fills: ToneFill[], x: number, y: number): string | null {
+  let bestId: string | null = null;
+  let bestArea = Infinity;
+  for (const f of fills) {
+    if (f.points.length < 3) continue;
+    if (!pointInStroke(f.points, x, y)) continue;
+    if (f.holes?.some((h) => h.length >= 3 && pointInStroke(h, x, y))) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [px, py] of f.points) {
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+    }
+    const area = (maxX - minX) * (maxY - minY);
+    if (area < bestArea) { bestArea = area; bestId = f.id; }
+  }
+  return bestId;
 }
 
 // ─── TONE-FILL BRUSH (the SHADE register — round 7, band-mask rebuild R2) ─────
@@ -571,6 +650,31 @@ export function extractFillRegions(strokes: Stroke[], gapMult: number): FillRegi
   return out;
 }
 
+/** True if any point of `pts` comes within `margin` px of the patch `outline` —
+ *  the precise "this stroke BORDERS the patch" test. Replaces bbox-overlap,
+ *  which wrongly kept a LARGE stroke whose bbox merely CONTAINS a small nested
+ *  patch (the outer circle around an inner shape): the rasterizer's ink-conform
+ *  treats every supplied ink as an enclosing wall, so the big circle's ink made
+ *  the fill grow out to the WHOLE outer region instead of the tapped inner shape
+ *  (the nested-fill bug). The outline is subsampled (≤120 probes) for speed. */
+function strokeBordersOutline(
+  pts: readonly (readonly number[])[],
+  outline: [number, number][],
+  margin: number,
+): boolean {
+  if (outline.length === 0) return false;
+  const m2 = margin * margin;
+  const stride = Math.max(1, Math.floor(outline.length / 120));
+  for (const [sx, sy] of pts) {
+    for (let i = 0; i < outline.length; i += stride) {
+      const dx = sx - outline[i][0];
+      const dy = sy - outline[i][1];
+      if (dx * dx + dy * dy <= m2) return true;
+    }
+  }
+  return false;
+}
+
 /** Ink CENTERLINE polylines (raw stroke points, viewBox px) of the strokes
  *  whose bbox plausibly BORDERS a fill region — the clean-edge conform input.
  *
@@ -602,7 +706,7 @@ function strokeCenterlinesNear(
   }
   // The gap inset (viewBox px) the boundary is pushed inward, + ink half-width
   // + a couple of cells of slack so the bbox test never drops bordering ink.
-  const margin = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE + 6;
+  const margin = (SOLID_INK_RADIUS * gapMult * 3) / WORLD_SCALE + 8;
   const lines: [number, number][][] = [];
   for (const s of strokes) {
     if (s.points.length < 2) continue;
@@ -625,6 +729,10 @@ function strokeCenterlinesNear(
     ) {
       continue;
     }
+    // PRECISE border test (nested-fill fix): a stroke whose bbox merely CONTAINS
+    // the patch (the outer circle around an inner shape) must NOT be treated as
+    // bordering ink — it would make the conform fill the whole outer region.
+    if (!strokeBordersOutline(s.points, regionOutline, margin)) continue;
     lines.push(s.points.map(([x, y]) => [x, y] as [number, number]));
   }
   return lines;
@@ -660,7 +768,7 @@ function inkOutlinesNear(
     if (y < rMinY) rMinY = y;
     if (y > rMaxY) rMaxY = y;
   }
-  const margin = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE + 6;
+  const margin = (SOLID_INK_RADIUS * gapMult * 3) / WORLD_SCALE + 8;
   const outlines: [number, number][][] = [];
   for (const s of strokes) {
     if (s.points.length < 2) continue;
@@ -682,6 +790,10 @@ function inkOutlinesNear(
     ) {
       continue;
     }
+    // PRECISE border test (nested-fill fix): skip a stroke whose bbox merely
+    // CONTAINS the patch (e.g. the outer circle around the tapped inner shape) —
+    // handing its ink to the conform would grow the fill out to the outer region.
+    if (!strokeBordersOutline(s.points, regionOutline, margin)) continue;
     // The EXACT visible ink boundary — same getStroke call strokeToPolygonPath
     // uses for the live ink polygon (STROKE_OPTS: size 4, thinning/smoothing/
     // streamline 0.5). getStroke returns a closed outline ring (one loop).
@@ -1097,9 +1209,34 @@ export function DrawSurface({
   onFillNote,
   onSnapApi,
   onUploadedSvgChange,
+  onStrokeCommitted,
+  onSelectionChange,
+  armedShape,
+  onShapeInserted,
+  eraseStrokes,
+  eraseMode = 'object',
+  editableParts,
+  onSelectPart,
+  onEditedParts,
 }: {
   mode: CanvasMode;
   input: InputMode;
+  /** SHAPE INSERT (UX rework §6): when set to a shapeLibrary kind, a pointer DRAG
+   *  defines the shape's bbox and pen-up drops it as a stroke (generateShape +
+   *  applyCandidate). null/undefined = freehand (default). Mutually exclusive with
+   *  shade/fill/lasso — an armed shape owns the pointer first. */
+  armedShape?: string | null;
+  /** Fired after an insert commits, so the host can raise the override receipt on
+   *  the new shape (insert a star, want a pentagon — same switcher). */
+  onShapeInserted?: (stroke: Stroke) => void;
+  /** AUTO-DETECT (UX rework, OFFER-only): fired ON PEN-UP for each genuinely
+   *  committed ink stroke (NOT taps/shade/fill/lasso/Style). The host runs
+   *  fitStroke and OFFERS the best via the override receipt — it never
+   *  auto-mutates the stroke (Sebs 2026-06-15). Omit = old draw-only behavior. */
+  onStrokeCommitted?: (stroke: Stroke) => void;
+  /** Fired when tap-to-select changes the selected stroke (id, or null on a
+   *  bare-paper deselect), so the host can re-target / tear down the receipt. */
+  onSelectionChange?: (id: string | null) => void;
   /** Optional live mirror of the preview-stroke pool. Lets a host (DrawPanel)
    *  supply its own Done control and build the commit-layer markup itself.
    *  Pass a stable callback (a useState setter) — fired from an effect. */
@@ -1181,6 +1318,25 @@ export function DrawSurface({
    *  host can flatten it into strokes for the 3D engine (the easy svg→3D bridge,
    *  svgToStrokes). Same onStrokesChange idiom — fired from an effect. */
   onUploadedSvgChange?: (markup: string | null) => void;
+  /** ERASE register (Sebs 2026-06-16 "eraser for drawing that erases anything"):
+   *  when true the pointer ERASES — ink AND tone — instead of drawing. It rides the
+   *  same gesture the tone-erase uses (shade.active + band 0). Host sets it when
+   *  register==='erase'. The MODE below decides whole-object vs partial. */
+  eraseStrokes?: boolean;
+  /** ERASE MODE (the GoodNotes two-way toggle): 'object' = touch a stroke/patch and
+   *  the WHOLE thing is removed (fast); 'pixel' = drag carves only the part under the
+   *  brush. Defaults to 'object'. */
+  eraseMode?: 'object' | 'pixel';
+  /** LOSSLESS PART EDITOR (2026-06-24): the data-part-id-annotated upload markup +
+   *  per-part metadata, so an uploaded/existing drawing's SHAPES become selectable
+   *  parts (fills intact) alongside freehand strokes. Absent ⇒ no part layer renders
+   *  and every current behaviour is byte-identical (fully gated). */
+  editableParts?: { markup: string; parts: SvgPart[]; viewBox: { x: number; y: number; w: number; h: number } } | null;
+  /** Fired when the selected PART changes (id, or null on deselect). */
+  onSelectPart?: (id: string | null) => void;
+  /** Fired with the EDITED parts as a standalone SVG (transforms baked) whenever a
+   *  part is moved/restyled/deleted — the host saves this at Done (Slice 2d). */
+  onEditedParts?: (svgMarkup: string) => void;
 }) {
   // PREVIEW strokes — gestures the user has finished pen-up on but hasn't
   // committed yet. While in this state they render as raw perfect-freehand
@@ -1190,12 +1346,167 @@ export function DrawSurface({
   );
   // CURRENT stroke — the one being actively dragged.
   const [current, setCurrent] = useState<Stroke | null>(null);
+  // SHAPE INSERT (§6): the live drag box while an armed shape is being placed.
+  const [insertBox, setInsertBox] = useState<{ start: [number, number]; cur: [number, number] } | null>(null);
+  const insertShiftRef = useRef(false); // aspect-lock (Shift) live during the drag
+  // MOVE/RESIZE (§6.4 Tier-A + move): the live transform of the SELECTED stroke —
+  // drag the body to move, drag a corner handle to resize. Sebs 2026-06-15.
+  const [transform, setTransform] = useState<{
+    mode: 'move' | 'resize';
+    corner: 'nw' | 'ne' | 'sw' | 'se';
+    box0: { x: number; y: number; w: number; h: number };
+    pts0: StrokePoint[];
+    start: [number, number];
+  } | null>(null);
   // SELECTED stroke (round-8, Sebs "select different part"): a TAP on an
   // earlier committed stroke (Ink register, no drag) selects it so Snap /
   // Straighten target THAT one instead of the latest. null = no selection →
   // the API falls back to the last stroke (the original behavior). Cleared
   // whenever a new stroke is drawn or the selected stroke disappears.
   const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
+  // SELECTED PART (lossless part editor, 2026-06-24): an SVG-shape part of an
+  // editable upload/existing drawing — parallels selectedStrokeId for freehand
+  // strokes. Only meaningful when editableParts is provided (else always null).
+  const [selectedPartId, setSelectedPartId] = useState<string | null>(null);
+  // Inner content of the part-editor markup (strip the <svg> wrapper) — rendered
+  // inside a nested <svg> that letterboxes the upload viewBox into the draw frame
+  // natively (preserveAspectRatio), so parts + the selection box share one space.
+  const editablePartsInner = useMemo(
+    () => (editableParts ? editableParts.markup.replace(/^[\s\S]*?<svg[^>]*>/i, '').replace(/<\/svg>\s*$/i, '') : ''),
+    [editableParts],
+  );
+  // ── PART EDITOR (rebuilt 2026-06-25 on the STROKE editor's model) ────────────
+  // EVERYTHING lives in the 800×600 FRAME space (like strokes): the parts render
+  // letterboxed into the frame; each part's FRAME BOX is the source of truth; and
+  // hit-test / selection / move / resize use eventToSvgPoint + the SAME hitCorner /
+  // cornerXY / oppositeCorner helpers as strokes. No nested-svg / getCTM bridge —
+  // that mismatch was the whole "box pops off somewhere else" bug.
+  const partsLayerRef = useRef<SVGGElement | null>(null); // the <g> holding the parts
+  // Letterbox the upload viewBox → 800×600 frame (xMidYMid meet), same as backdrop:
+  // a part at upload (px,py) renders at frame (px*s+ox, py*s+oy).
+  const partFit = useMemo(() => {
+    const vb = editableParts?.viewBox;
+    if (!vb || vb.w <= 0 || vb.h <= 0) return { s: 1, ox: 0, oy: 0 };
+    const s = Math.min(VIEWBOX_W / vb.w, VIEWBOX_H / vb.h);
+    return { s, ox: (VIEWBOX_W - vb.w * s) / 2 - vb.x * s, oy: (VIEWBOX_H - vb.h * s) / 2 - vb.y * s };
+  }, [editableParts]);
+  const origFrameBox = (part: SvgPart) => ({
+    x: part.bbox.x * partFit.s + partFit.ox,
+    y: part.bbox.y * partFit.s + partFit.oy,
+    w: part.bbox.w * partFit.s,
+    h: part.bbox.h * partFit.s,
+  });
+  // EDITED frame boxes (move/resize) — the source of truth, FRAME space. Absent ⇒
+  // the part is at its original letterboxed box.
+  const [partBoxes, setPartBoxes] = useState<Record<string, { x: number; y: number; w: number; h: number }>>({});
+  const frameBoxOf = (part: SvgPart) => partBoxes[part.id] ?? origFrameBox(part);
+  // CLICK / SELECTION box, padded so THIN or STRAIGHT parts are grabbable + visibly
+  // selectable. A bare `<line>` or a flat smile stroke has a near-zero-width (or
+  // -height) bbox → impossible to click on the infinitely-thin line and the dashed
+  // box would be invisible. Pad ONLY the thin dimension up to PART_MIN_EXTENT so fat
+  // shapes are untouched (precise clicking + smallest-wins preserved). Used for
+  // hit-testing and the visible overlay; the MOVE gesture still uses the REAL box so
+  // dragging a thin part translates it without fattening it.
+  const PART_MIN_EXTENT = 20; // min on-screen extent (frame px) a part's hit/sel box gets
+  const displayBoxOf = (part: SvgPart) => {
+    const b = frameBoxOf(part);
+    const padX = Math.max(0, (PART_MIN_EXTENT - b.w) / 2);
+    const padY = Math.max(0, (PART_MIN_EXTENT - b.h) / 2);
+    return { x: b.x - padX, y: b.y - padY, w: b.w + 2 * padX, h: b.h + 2 * padY };
+  };
+  const [deletedParts, setDeletedParts] = useState<Set<string>>(() => new Set());
+  // Active move/resize gesture (mirrors the stroke `transform` state).
+  const [partXform, setPartXform] = useState<
+    { id: string; mode: 'move' | 'resize'; corner: 'nw' | 'ne' | 'sw' | 'se'; box0: { x: number; y: number; w: number; h: number }; start: [number, number] } | null
+  >(null);
+  // New parts set ⇒ clear all edits/selection.
+  useEffect(() => { setPartBoxes({}); setDeletedParts(new Set()); setSelectedPartId(null); }, [editablePartsInner]);
+  // Render each part to its current frame box (imperative). The parts sit inside the
+  // letterbox <g>, so this transform is in UPLOAD space: map the part's upload bbox
+  // `o` to the edited upload box `bu` = inverse-letterbox(frame box). Identity at rest.
+  useEffect(() => {
+    const layer = partsLayerRef.current;
+    if (!layer || !editableParts) return;
+    const { s, ox, oy } = partFit;
+    for (const part of editableParts.parts) {
+      const el = layer.querySelector(`[data-part-id="${part.id}"]`) as SVGGraphicsElement | null;
+      if (!el) continue;
+      // T0 = the part's ORIGINAL transform (e.g. a baked move from a prior edit). The
+      // bbox `o` already reflects it, so my move/resize must COMPOSE on top (Tedit·T0),
+      // never replace it — replacing snaps a previously-moved part back to its
+      // untransformed spot while the selection box stays at the bbox (the "pops off and
+      // appears somewhere else" bug on re-edited doodles). At rest, restore T0 exactly.
+      const T0 = part.transform || '';
+      if (deletedParts.has(part.id)) { el.setAttribute('display', 'none'); continue; }
+      el.removeAttribute('display');
+      const o = part.bbox;
+      const restore = () => { if (T0) el.setAttribute('transform', T0); else el.removeAttribute('transform'); };
+      if (o.w < 1e-3 || o.h < 1e-3 || s <= 0) { restore(); continue; }
+      const b = frameBoxOf(part);
+      const bu = { x: (b.x - ox) / s, y: (b.y - oy) / s, w: b.w / s, h: b.h / s };
+      const sx = bu.w / o.w, sy = bu.h / o.h;
+      const tx = bu.x - o.x * sx, ty = bu.y - o.y * sy;
+      if (Math.abs(sx - 1) < 1e-4 && Math.abs(sy - 1) < 1e-4 && Math.abs(tx) < 1e-3 && Math.abs(ty) < 1e-3) restore();
+      else el.setAttribute('transform', `translate(${tx} ${ty}) scale(${sx} ${sy})${T0 ? ' ' + T0 : ''}`);
+    }
+  }, [partBoxes, deletedParts, editableParts, partFit]);
+  // Delete / Backspace removes the SELECTED part (mirrors the stroke delete).
+  useEffect(() => {
+    if (!selectedPartId || !editableParts) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      e.preventDefault();
+      const id = selectedPartId;
+      setDeletedParts((prev) => { const n = new Set(prev); n.add(id); return n; });
+      setSelectedPartId(null);
+      onSelectPart?.(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectedPartId, editableParts, onSelectPart]);
+  // Edited parts → standalone SVG for the host to save at Done. Saved in UPLOAD
+  // coords (elements carry their upload-space edit transforms); viewBox = the upload
+  // viewBox expanded for any part moved/scaled out (floor = original ⇒ idempotent,
+  // no drift on re-save). Fires once an edit exists (move/resize OR delete).
+  useEffect(() => {
+    if (!editableParts || !onEditedParts) return;
+    if (Object.keys(partBoxes).length === 0 && deletedParts.size === 0) return;
+    const layer = partsLayerRef.current;
+    if (!layer) return;
+    const { s, ox, oy } = partFit;
+    const vb = editableParts.viewBox;
+    let minX = vb.x, minY = vb.y, maxX = vb.x + vb.w, maxY = vb.y + vb.h;
+    for (const part of editableParts.parts) {
+      if (deletedParts.has(part.id)) continue;
+      const b = frameBoxOf(part);
+      const ux = (b.x - ox) / s, uy = (b.y - oy) / s, uw = b.w / s, uh = b.h / s;
+      minX = Math.min(minX, ux); minY = Math.min(minY, uy);
+      maxX = Math.max(maxX, ux + uw); maxY = Math.max(maxY, uy + uh);
+    }
+    onEditedParts(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${maxX - minX} ${maxY - minY}">${layer.innerHTML}</svg>`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partBoxes, deletedParts]);
+  // DELETE the SELECTED stroke (Sebs 2026-06-16 "erase/delete just the selected
+  // thing" — the second of the two erase modes, alongside the brush eraser):
+  // Delete/Backspace rubs out ONLY the picked stroke. Ignored while a text field
+  // is focused (name / why inputs) so typing a caption never nukes a selection.
+  useEffect(() => {
+    if (!selectedStrokeId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      e.preventDefault();
+      const id = selectedStrokeId;
+      setStrokes((prev) => prev.filter((s) => s.id !== id));
+      setSelectedStrokeId(null);
+      onSelectionChange?.(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectedStrokeId, onSelectionChange]);
   // COMMITTED — flip to true when user hits "Done." Only then do the
   // strokes flow through SvgStyleTransform / Smart Hachure. Until then
   // pen-up just adds another stroke to the preview pool. Sebs: "if I stop
@@ -1203,6 +1514,16 @@ export function DrawSurface({
   const [committed, setCommitted] = useState(false);
   const [uploadedSvg, setUploadedSvg] = useState<{ name: string; markup: string } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // SVG-UPLOAD SIMPLIFY MODE (Sebs 2026-06-16): how an uploaded .svg enters our
+  // register — 'off' (as-is), 'filled' (clean filled line-art), 'line' (centerline
+  // single-line). Changing it re-processes the SAME upload (no re-pick) via
+  // applyUploadSimplify on rawSvgUpload (the raw prepared markup). .svg-ONLY —
+  // traced images default to Clean and don't carry this toggle.
+  const [simplifyMode, setSimplifyMode] = useState<UploadSimplifyMode>('filled');
+  const [rawSvgUpload, setRawSvgUpload] = useState<string | null>(null);
+  // Image trace is a network round-trip (Quiver via our Edge fn, ~2–6s) — busy
+  // gates the picker + drives honest "Tracing…" copy so it never looks frozen.
+  const [uploadBusy, setUploadBusy] = useState(false);
   // TONE PATCHES — the shade register's pool (sibling of `strokes`). Display/
   // record mirror of the grid below; pen-lift extraction refreshes it whole.
   const [toneFills, setToneFills] = useState<ToneFill[]>(() =>
@@ -1220,6 +1541,40 @@ export function DrawSurface({
       rasterizeToneFills(toneGridRef.current, initialToneFills);
     }
   }
+  // TONE SELECTION + MOVE (Sebs 2026-06-16 "move shade as well, not just ink") — a
+  // tap in ink/select mode picks a tone patch; dragging it translates the patch and
+  // on lift the grid is RE-SYNCED from the moved patches (rasterizeToneFills over a
+  // cleared grid) so a later re-extraction can't snap it back. toneFillsRef hands the
+  // up-handler the latest patches without a stale closure. selectedToneId mirrors
+  // selectedStrokeId — one selection model, ink OR tone.
+  const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
+  // Tone MOVE+RESIZE (model B — register-scoped: tone is arranged in SHADE mode).
+  // Mirrors the stroke `transform`: move = translate, resize = scale about the
+  // opposite corner. base = the patch at gesture start.
+  const [toneTransform, setToneTransform] = useState<{
+    id: string;
+    mode: 'move' | 'resize';
+    corner: 'nw' | 'ne' | 'sw' | 'se';
+    box0: { x: number; y: number; w: number; h: number };
+    base: ToneFill;
+    start: [number, number];
+  } | null>(null);
+  // Shade-paint tap-vs-drag (model B): a still TAP in Shade = SELECT a patch; a
+  // DRAG = paint. Painting is deferred to the first move so a tap never lays tone.
+  const shadeGestureRef = useRef<{ start: [number, number]; moved: boolean } | null>(null);
+  const toneFillsRef = useRef<ToneFill[]>(toneFills);
+  toneFillsRef.current = toneFills;
+  // Re-sync the grid to match a GIVEN set of tone patches (after a move/delete) so
+  // the next extraction won't resurrect a patch at its old spot. Pass the list
+  // explicitly — a ref read would be stale before React's next render.
+  const regridTone = (fills: ToneFill[]) => {
+    const grid = toneGridRef.current;
+    if (!grid) return;
+    grid.bands.fill(0);
+    grid.src.fill(0);
+    grid.gapTolQ.fill(0);
+    rasterizeToneFills(grid, fills);
+  };
   // The brush centerline being actively dragged (shade register's `current`) —
   // drives the cheap while-pen-down preview overlay (SB-6); the grid carries
   // the truth in parallel.
@@ -1263,8 +1618,12 @@ export function DrawSurface({
     timer: number;
   } | null>(null);
   const [fillGestureOn, setFillGestureOn] = useState(false);
-  // Hover preview target (Fill mode, pen up): which region, at which step.
-  const [fillHover, setFillHover] = useState<{ gapIdx: number; idx: number } | null>(null);
+  // Hover preview (Fill mode, pen up): the flood patch under the cursor, cached
+  // by a quantized seed cell + gap step so the flood doesn't recompute per pixel.
+  const [fillHover, setFillHover] = useState<{
+    key: string;
+    patch: { outline: [number, number][]; holes: [number, number][][] } | null;
+  } | null>(null);
   // Live gap scrub (press-hold-drag): current step + the anchor the preview
   // re-resolves under as the ladder walks (watch the leak happen — §6).
   const [scrubState, setScrubState] = useState<{ idx: number; anchor: [number, number] } | null>(
@@ -1343,58 +1702,231 @@ export function DrawSurface({
     return inkOutlines.length > 0 ? smoothFillEdges(raw, inkOutlines) : raw;
   }
 
-  /** Commit one region as a ToneFill band patch: rasterize into the band
-   *  grid (REPLACE semantics, src/gapTol provenance, dilation tucks tone
-   *  under the visible ink) and re-extract the record. */
+  /** FLOOD-FILL the paper region under a point (the proven bucket-fill model,
+   *  KNOWN-SOLUTIONS.md). Picks the seed's spatially-disjoint stroke cluster
+   *  first — so the flood grid is sized to ONE shape group (full local
+   *  resolution, multi-shape safe) — converts it to world, floods the connected
+   *  paper from the seed bounded by the stamped ink, then maps the resulting
+   *  loop + holes back to viewBox px. Robust to NESTING: a tap inside a small
+   *  inner shape floods ONLY that shape (bounded by its own ink), never the
+   *  parent (the old region-tree starved here). Returns the patch, or null
+   *  (seed on ink / in the open outside / no cluster under the point). */
+  function floodFillAt(
+    pt: [number, number],
+    gapMult: number,
+  ): { outline: [number, number][]; holes: [number, number][][] } | null {
+    const raw = strokes.map((s) => s.points).filter((s) => s.length > 0);
+    if (raw.length === 0) return null;
+    const viewBox = { w: VIEWBOX_W, h: VIEWBOX_H };
+    const simplified = raw.map((s) => rdpPoints(s, RDP_EPSILON));
+    // bbox per stroke + union-find into spatially-disjoint clusters (same model
+    // extractFillRegions uses): grow each bbox by the ink gap so near shapes
+    // share a cluster (nested triangles + their circle = ONE cluster, sized
+    // tightly so the flood grid keeps full resolution on the small features).
+    const bbs = simplified.map((s) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of s) {
+        if (p[0] < minX) minX = p[0];
+        if (p[0] > maxX) maxX = p[0];
+        if (p[1] < minY) minY = p[1];
+        if (p[1] > maxY) maxY = p[1];
+      }
+      return [minX, minY, maxX, maxY] as [number, number, number, number];
+    });
+    const gapPx = (SOLID_INK_RADIUS * gapMult) / WORLD_SCALE + 8;
+    const parent = simplified.map((_, i) => i);
+    const find = (x: number): number => {
+      while (parent[x] !== x) {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+      }
+      return x;
+    };
+    for (let i = 0; i < bbs.length; i++) {
+      for (let j = i + 1; j < bbs.length; j++) {
+        const a = bbs[i], b = bbs[j];
+        if (a[2] + gapPx >= b[0] && b[2] + gapPx >= a[0] && a[3] + gapPx >= b[1] && b[3] + gapPx >= a[1]) {
+          parent[find(i)] = find(j);
+        }
+      }
+    }
+    const clusters = new Map<number, number[]>();
+    for (let i = 0; i < simplified.length; i++) {
+      const r = find(i);
+      const g = clusters.get(r);
+      if (g) g.push(i);
+      else clusters.set(r, [i]);
+    }
+    // Pick the cluster whose grown bbox contains the seed — the shape group the
+    // user tapped into. None → tap in open space → honest miss.
+    let pick: number[] | null = null;
+    for (const idxs of clusters.values()) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const i of idxs) {
+        const b = bbs[i];
+        if (b[0] < minX) minX = b[0];
+        if (b[1] < minY) minY = b[1];
+        if (b[2] > maxX) maxX = b[2];
+        if (b[3] > maxY) maxY = b[3];
+      }
+      if (pt[0] >= minX - gapPx && pt[0] <= maxX + gapPx && pt[1] >= minY - gapPx && pt[1] <= maxY + gapPx) {
+        pick = idxs;
+        break;
+      }
+    }
+    if (!pick) return null;
+    const cs = pick.map((i) => simplified[i]);
+    const center = poolCenter(cs, viewBox);
+    const world = cs.map((s) => normalizeStrokePoints(s, viewBox, WORLD_SCALE, center));
+    // Seed → world with the SAME center (a one-point stroke normalized identically).
+    const seedWorld = normalizeStrokePoints([[pt[0], pt[1]]], viewBox, WORLD_SCALE, center)[0];
+    // PROVEN no-bleed region fill (KNOWN-SOLUTIONS.md §4 Step 1-3): span-flood on
+    // a GAP-CLOSED mask (seals freehand sharp-corner pinholes — the no-snap main
+    // flow), grow ~g/2, then CLIP to the ORIGINAL ink so the fill TUCKS UNDER the
+    // stroke and can NEVER cross to the far side of the line (no bleed past the
+    // outline). gapClose scales with the Gap slider. Replaces the old escalation
+    // (which fattened walls → inset flood → conform bled). See lib/fill/regionFill.
+    // PROVEN region fill (KNOWN-SOLUTIONS.md §4, lib/fill/regionFill) — span-flood
+    // on a GAP-CLOSED mask, then CLIP to the VISIBLE ink → fills INNER, OUTER/ring,
+    // closed AND freehand-gapped, with NO bleed and NO seed-swallow at the edge
+    // (the module nudges a near-ink seed to paper — fixes the ring-tap-misses bug
+    // the escalation had). Params are EMPIRICALLY calibrated (regionFill.calib.mjs
+    // donut sweep): inkRadius = the VISIBLE perfect-freehand half-width (0.02
+    // world), gapClose 0.4 world = the sweet spot (lower → gapped ring misses;
+    // higher → over-closes small features). Commit RAW (no conform) — geometry is
+    // already no-bleed by construction.
+    const worldXY = world.map((s) => s.map((v) => [v.x, v.y] as [number, number]));
+    const visInk = STROKE_OPTS.size * 0.5 * WORLD_SCALE; // ≈0.02 world = the visible ink
+    // TRAPPED-BALL multi-scale (regionFill.multiscale, KNOWN-SOLUTIONS §1A):
+    // descending gap-close ladder + pick the LARGEST bounded flood → a tiny
+    // nested shape fills its OWN small region, a wide donut ring fills its FULL
+    // extent (no sliver, no spurious artifact), no bleed (clip to visible ink).
+    // Fixes both the donut/ring AND the tiny-nested-triangle in one pass.
+    // RESOLUTION SCALING (R1 nested-fill, 2026-06-15): the flood grid sizes its
+    // cell to the CLUSTER span, so a tiny feature nested in a big shape (a small
+    // circle inside a big one, a narrow hole) gets too few cells and starves —
+    // it fills the parent or misses. Bump resolution so the SMALLEST member
+    // feature still gets ~TARGET_INNER_CELLS cells across, capped for perf. A
+    // single shape (or same-size siblings) → ratio≈1 → stays at the 400 floor
+    // (zero regression vs the old fixed FILL_GRID_RESOLUTION).
+    const TARGET_INNER_CELLS = 48;
+    const FILL_MAX_RES = 900;
+    let cMinX = Infinity, cMinY = Infinity, cMaxX = -Infinity, cMaxY = -Infinity;
+    let smallestFeaturePx = Infinity;
+    for (const i of pick) {
+      const b = bbs[i];
+      if (b[0] < cMinX) cMinX = b[0];
+      if (b[1] < cMinY) cMinY = b[1];
+      if (b[2] > cMaxX) cMaxX = b[2];
+      if (b[3] > cMaxY) cMaxY = b[3];
+      const feat = Math.max(b[2] - b[0], b[3] - b[1]);
+      if (feat > 1 && feat < smallestFeaturePx) smallestFeaturePx = feat;
+    }
+    const clusterSpanPx = Math.max(cMaxX - cMinX, cMaxY - cMinY);
+    if (!Number.isFinite(smallestFeaturePx) || smallestFeaturePx <= 0) {
+      smallestFeaturePx = clusterSpanPx || 1;
+    }
+    const ratio = clusterSpanPx > 0 ? clusterSpanPx / smallestFeaturePx : 1;
+    const dynRes = Math.min(
+      FILL_MAX_RES,
+      Math.max(FILL_GRID_RESOLUTION, Math.ceil(ratio * TARGET_INNER_CELLS)),
+    );
+    const result = fillRegionAtMultiScale(worldXY, seedWorld.x, seedWorld.y, {
+      inkRadius: visInk,
+      resolution: dynRes,
+      maxResolution: dynRes,
+      // Wire the Gap slider through (Sebs 2026-06-19/20): None/Small/Med/Large
+      // (gapMult) only ADDS gap-close above the baseline — `max(1, gapMult)` — so
+      // dialing Gap UP seals bigger gaps, but LOW settings never drop BELOW the
+      // 6px baseline (the regression Sebs hit at 0.5×: a hand-drawn circle leaked
+      // because the close fell to 3px → the flood grabbed the bigger region).
+      // Default (gapMult=1) = 6px = unchanged; the multiscale still picks the
+      // largest BOUNDED flood, so a cleanly-closed shape fills inner-only.
+      gapClosePx: DEFAULT_GAP_CLOSE_PX * Math.max(1, gapMult),
+    });
+    if (!result) return null;
+    // world → viewBox px (inverse of normalize, this cluster's center).
+    const toVb = ([wx, wy]: [number, number]): [number, number] => [
+      Math.round((wx / WORLD_SCALE + center.x) * 10) / 10,
+      Math.round((center.y - wy / WORLD_SCALE) * 10) / 10,
+    ];
+    return { outline: result.outline.map(toVb), holes: result.holes.map((h) => h.map(toVb)) };
+  }
+
+  /** Commit a fill patch (outline + holes, viewBox px) into the band grid with
+   *  the clean-edge ink conform, then re-extract the tone record. The shared
+   *  core of both the flood-fill commit and the region-tree (highlight) path.
+   *  REPLACE semantics, src/gapTol provenance; dilation tucks tone under the ink. */
+  function applyFillPatch(
+    outline: [number, number][],
+    holes: [number, number][][],
+    gapMult: number,
+    gesture: ShadeFillGesture,
+    logRegion: FillRegion | null,
+    regionCount: number,
+    conform = true,
+  ) {
+    const grid = toneGridRef.current;
+    if (!grid) return;
+    const band = shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3;
+    if (conform) {
+      // CLEAN EDGE (region-tree / highlight path): grow the tone up to the EXACT
+      // perfect-freehand ink outlines of the bordering strokes (no bleed, no
+      // sliver, true corners); centerlines are the secondary conform.
+      const inkOutlines = inkOutlinesNear(strokes, outline, gapMult);
+      const inkCenterlines = strokeCenterlinesNear(strokes, outline, gapMult);
+      rasterizeFillPatch(grid, outline, holes, band, 'fill', {
+        gapTol: gapMult,
+        dilatePx: fillDilatePx(gapMult, !!shadeRef.current?.fullFill),
+        inkOutlines: inkOutlines.length > 0 ? inkOutlines : undefined,
+        inkCenterlines: inkCenterlines.length > 0 ? inkCenterlines : undefined,
+      });
+    } else {
+      // RAW (flood path): the regionFill module already clipped the geometry to
+      // the VISIBLE ink (no bleed by construction) — rasterize as-is, NO dilation
+      // or conform (which would grow it past the line).
+      rasterizeFillPatch(grid, outline, holes, band, 'fill', { gapTol: gapMult, dilatePx: 0 });
+    }
+    setToneFills(extractSmoothFills(grid));
+    lastMissRef.current = false;
+    logShadeFill('fill', gesture, gapMult, logRegion, 'committed', regionCount);
+  }
+
+  /** Region-tree commit (highlight-drag majority-vote path): commit the chosen
+   *  extractor region + its child islands as holes. */
   function applyFillRegion(
     regions: FillRegion[],
     idx: number,
     gapMult: number,
     gesture: ShadeFillGesture,
   ) {
-    const grid = toneGridRef.current;
-    if (!grid) return;
-    const r = regions[idx];
-    const band = shadeRef.current?.erase ? 0 : shadeRef.current?.band ?? 3;
-    // CLEAN EDGE (2026-06-13): hand the rasterizer the CENTERLINE polylines (raw
-    // gesture paths) of the ink that BORDERS this region (bbox-overlap
-    // pre-filter, + a generous margin = the gap inset so a far-inset boundary
-    // still reaches its ink). The fill grows up to those centerlines — tone at
-    // the centerline is covered by the ink-on-top (no white sliver) and sits
-    // half-a-width inside the outer edge (no bleed), with the drawing's true
-    // sharp corners. Independent of Gap (high Gap no longer rounds/insets it).
-    const inkOutlines = inkOutlinesNear(strokes, r.outline, gapMult);
-    const inkCenterlines = strokeCenterlinesNear(strokes, r.outline, gapMult);
-    rasterizeFillPatch(grid, r.outline, fillChildrenOf(regions, idx), band, 'fill', {
-      gapTol: gapMult,
-      // Fallback only (no bordering ink): push the tone flush to (and under)
-      // the visible ink edge via dilation — no inset gap.
-      dilatePx: fillDilatePx(gapMult, !!shadeRef.current?.fullFill),
-      // PRIMARY conform (2026-06-13): the EXACT perfect-freehand ink outlines.
-      // The tone is grown to a hair under the visible ink's inner edge — no
-      // bleed past it, no sliver, true corners. Centerlines kept as the
-      // secondary path (a fill with strokes too short to outline still gets a
-      // capsule wall rather than the blind octagon dilation).
-      inkOutlines: inkOutlines.length > 0 ? inkOutlines : undefined,
-      inkCenterlines: inkCenterlines.length > 0 ? inkCenterlines : undefined,
-    });
-    setToneFills(extractSmoothFills(grid));
-    lastMissRef.current = false;
-    logShadeFill('fill', gesture, gapMult, r, 'committed', regions.length);
+    applyFillPatch(
+      regions[idx].outline,
+      fillChildrenOf(regions, idx),
+      gapMult,
+      gesture,
+      regions[idx],
+      regions.length,
+    );
   }
 
-  /** Tap/scrub-release commit at a point — innermost paper region wins;
-   *  no region = honest miss (caption + log, never a stray blob). */
+  /** Tap/scrub-release commit at a point — FLOOD the region the user pointed at
+   *  (bounded by ink, robust to nesting); no fillable region = honest miss. */
   function commitFillAt(pt: [number, number], gapIdx: number, gesture: ShadeFillGesture) {
-    const regions = regionsFor(gapIdx);
-    const hit = innermostPaperRegionAt(pt[0], pt[1], regions);
-    if (hit < 0) {
+    const gapMult = GAP_LADDER[gapIdx];
+    const patch = floodFillAt(pt, gapMult);
+    if (!patch || patch.outline.length < 3) {
       lastMissRef.current = true;
-      logShadeFill('fill', gesture, GAP_LADDER[gapIdx], null, 'miss', regions.length);
+      logShadeFill('fill', gesture, gapMult, null, 'miss', 0);
       onFillNote?.(FILL_MISS_NOTE);
       return;
     }
-    applyFillRegion(regions, hit, GAP_LADDER[gapIdx], gesture);
+    // conform = true: snap the module's no-bleed region to the EXACT perfect-
+    // freehand ink (snug edge, true corners) — the clean-edge work that was
+    // already solved. The module outline sits just inside the visible ink, so the
+    // conform's proximity (×3 margin) finds the bordering ink and grows the tone
+    // snug under it + clips (no bleed, no jaggy raster contour).
+    applyFillPatch(patch.outline, patch.holes, gapMult, gesture, null, 1, true);
   }
 
   /** Highlight-drag release: every point votes for its innermost paper
@@ -1539,13 +2071,47 @@ export function DrawSurface({
     const file = e.target.files?.[0];
     e.target.value = ''; // reset so same file can be re-uploaded
     if (!file) return;
-    // Shared upload prep — type check + <svg> extraction + DOMPurify sanitize
-    // (lib/svgUpload), the SAME sanitizer the desk feed uses. Replaces the old
-    // inline regex strip (weaker: missed unquoted on* handlers, javascript:
-    // hrefs, <foreignObject>, etc.). Returns ok+name+markup or ok:false+error.
+    setUploadError(null);
+
+    // RASTER IMAGE (PNG/JPG/WebP) → imageToSvg: validates + traces (Quiver via our
+    // Edge fn) + simplifyToSketch + sanitize, all inside the lib. The output is
+    // already clean line-art in OUR register, so we only fit it to the canvas box
+    // (NO second simplifyToSketch — that's done in imageToSvg). Same contract as a
+    // prepared .svg from here on: setUploadedSvg → restyles + 3D-ports identically.
+    if (isRasterImageFile(file)) {
+      setUploadBusy(true);
+      try {
+        const traced = await imageToSvg(file);
+        if (traced.ok) {
+          const markup = fitUploadMarkup(traced.markup);
+          setRawSvgUpload(null); // images don't carry the .svg-only Simplify toggle
+          setUploadedSvg({ name: file.name, markup });
+          setUploadError(null);
+        } else {
+          setUploadError(traced.error);
+        }
+      } catch (err) {
+        setUploadError(`Image tracing failed: ${(err as Error).message}`);
+      } finally {
+        setUploadBusy(false);
+      }
+      return;
+    }
+
+    // SVG upload — shared prep: type check + <svg> extraction + DOMPurify sanitize
+    // (lib/svgUpload), the SAME sanitizer the desk feed uses. Then apply the chosen
+    // SIMPLIFY MODE (off/filled/line) so the user picks how this upload enters our
+    // register (Sebs 2026-06-16). Smart default matches the source (filled art →
+    // 'filled', stroke-only → 'line'). We keep the RAW prepared markup so
+    // changeSimplifyMode can re-process the SAME upload live (no re-pick).
+    // applyUploadSimplify degrades safely (input unchanged if unparseable).
     const result = await prepareSvgUpload(file);
     if (result.ok) {
-      const markup = fitUploadMarkup(result.markup);
+      const mode = defaultSimplifyMode(result.markup);
+      setSimplifyMode(mode);
+      setRawSvgUpload(result.markup);
+      const processed = applyUploadSimplify(result.markup, mode);
+      const markup = fitUploadMarkup(processed);
       setUploadedSvg({ name: result.name, markup });
       setUploadError(null);
     } else {
@@ -1553,15 +2119,31 @@ export function DrawSurface({
     }
   }
 
+  /** Re-process the CURRENT .svg upload through a new simplify mode without a
+   *  re-pick: re-apply applyUploadSimplify to the stored raw markup, re-fit, and
+   *  push it through the SAME setUploadedSvg path so the preview updates live.
+   *  No-op (just sets the mode) if no .svg is staged. */
+  function changeSimplifyMode(m: UploadSimplifyMode) {
+    setSimplifyMode(m);
+    if (!rawSvgUpload) return;
+    const processed = applyUploadSimplify(rawSvgUpload, m);
+    const markup = fitUploadMarkup(processed);
+    setUploadedSvg((prev) => ({ name: prev?.name ?? 'upload.svg', markup }));
+  }
+
   function clearUpload() {
     setUploadedSvg(null);
+    setRawSvgUpload(null);
     setUploadError(null);
   }
 
   // (Removed the smartHachure param-set + reload — engine defaults ON now;
   // the reload caused the white flash. ?smartHachure=0 opts out.)
 
-  function eventToSvgPoint(e: React.PointerEvent): StrokePoint {
+  // Accepts a React pointer event OR a raw DOM PointerEvent (the coalesced
+  // sub-frame samples from getCoalescedEvents) — only clientX/Y + pressure are
+  // read, which both carry.
+  function eventToSvgPoint(e: { clientX: number; clientY: number; pressure?: number }): StrokePoint {
     const svg = svgRef.current;
     if (!svg) return [e.clientX, e.clientY, 0.5];
     // Map screen coords into SVG viewBox coords via the inverse screen CTM —
@@ -1642,8 +2224,179 @@ export function DrawSurface({
   // values without re-render churn.
   const inkDownPtRef = useRef<[number, number] | null>(null);
   const inkMovedRef = useRef(false);
+
+  // ─── BUTTERY LIVE INK (Sebs 2026-06-18: "make drawing smooth + buttery") ─────
+  // The in-progress stroke is rendered IMPERATIVELY: points accumulate in a ref
+  // and an rAF writes the path `d` straight to the DOM. A pointermove never calls
+  // setState, so React stops re-rendering the whole surface — and re-running
+  // perfect-freehand on EVERY committed stroke — on every pointer sample (the
+  // O(n-strokes)-per-point lag). We commit to React state ONCE on pointer-up.
+  // `current` stays a state flag (null vs set) so the live <path> mounts and the
+  // tap-vs-drag gates still work; livePointsRef is the point-truth during a drag.
+  const livePointsRef = useRef<StrokePoint[] | null>(null);
+  const livePathRef = useRef<SVGPathElement | null>(null);
+  const liveRafRef = useRef<number | null>(null);
+  function flushLivePath() {
+    liveRafRef.current = null;
+    const el = livePathRef.current;
+    const pts = livePointsRef.current;
+    if (el && pts && pts.length > 0) el.setAttribute('d', strokeToPolygonPath(pts));
+  }
+  function endLiveInk() {
+    livePointsRef.current = null;
+    if (liveRafRef.current !== null) {
+      cancelAnimationFrame(liveRafRef.current);
+      liveRafRef.current = null;
+    }
+  }
   const TAP_SLOP_PX = 6;
-  const SELECT_HIT_RADIUS_PX = 16;
+  const SELECT_HIT_RADIUS_PX = 22; // generous outline grab (Sebs: bigger hit target)
+  // SHAPE INSERT (§6.3): below this a drag is a "click" → default-size place.
+  const INSERT_MIN_PX = 8;
+  const INSERT_DEFAULT_PX = 120;
+  // MOVE/RESIZE handles for a selected stroke.
+  const HANDLE_HIT_PX = 16; // corner-handle grab radius (viewBox px)
+  const HANDLE_SIZE_PX = 10; // visual handle square
+  function strokeBBox(points: StrokePoint[]): { x: number; y: number; w: number; h: number } {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of points) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 0, h: 0 };
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+  function cornerXY(c: 'nw' | 'ne' | 'sw' | 'se', b: { x: number; y: number; w: number; h: number }) {
+    return {
+      x: c === 'nw' || c === 'sw' ? b.x : b.x + b.w,
+      y: c === 'nw' || c === 'ne' ? b.y : b.y + b.h,
+    };
+  }
+  function oppositeCorner(c: 'nw' | 'ne' | 'sw' | 'se'): 'nw' | 'ne' | 'sw' | 'se' {
+    return c === 'nw' ? 'se' : c === 'ne' ? 'sw' : c === 'sw' ? 'ne' : 'nw';
+  }
+  function hitCorner(b: { x: number; y: number; w: number; h: number }, px: number, py: number): 'nw' | 'ne' | 'sw' | 'se' | null {
+    for (const c of ['nw', 'ne', 'sw', 'se'] as const) {
+      const p = cornerXY(c, b);
+      if (Math.abs(px - p.x) <= HANDLE_HIT_PX && Math.abs(py - p.y) <= HANDLE_HIT_PX) return c;
+    }
+    return null;
+  }
+  /** Apply a move (translate) or resize (scale about the opposite corner) to the
+   *  transform's start points, returning the new points. */
+  function applyTransformTo(
+    t: { mode: 'move' | 'resize'; corner: 'nw' | 'ne' | 'sw' | 'se'; box0: { x: number; y: number; w: number; h: number }; pts0: StrokePoint[]; start: [number, number] },
+    px: number,
+    py: number,
+  ): StrokePoint[] {
+    if (t.mode === 'move') {
+      const dx = px - t.start[0];
+      const dy = py - t.start[1];
+      return t.pts0.map(([x, y, p]) => [x + dx, y + dy, p] as StrokePoint);
+    }
+    const O = cornerXY(oppositeCorner(t.corner), t.box0);
+    const C0 = cornerXY(t.corner, t.box0);
+    let sx = (px - O.x) / ((C0.x - O.x) || 1e-6);
+    let sy = (py - O.y) / ((C0.y - O.y) || 1e-6);
+    sx = (sx < 0 ? -1 : 1) * Math.max(Math.abs(sx), 0.05);
+    sy = (sy < 0 ? -1 : 1) * Math.max(Math.abs(sy), 0.05);
+    return t.pts0.map(([x, y, p]) => [O.x + (x - O.x) * sx, O.y + (y - O.y) * sy, p] as StrokePoint);
+  }
+  /** BBox of a tone patch's outer outline (the move/resize handle frame). */
+  function toneBBox(f: ToneFill): { x: number; y: number; w: number; h: number } {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const [x, y] of f.points) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+  /** Apply the active tone transform to one polygon ring (outline or a hole). */
+  function applyRingTransform(t: NonNullable<typeof toneTransform>, px: number, py: number, ring: [number, number][]): [number, number][] {
+    if (t.mode === 'move') {
+      const dx = px - t.start[0];
+      const dy = py - t.start[1];
+      return ring.map(([x, y]) => [x + dx, y + dy] as [number, number]);
+    }
+    const O = cornerXY(oppositeCorner(t.corner), t.box0);
+    const C0 = cornerXY(t.corner, t.box0);
+    let sx = (px - O.x) / ((C0.x - O.x) || 1e-6);
+    let sy = (py - O.y) / ((C0.y - O.y) || 1e-6);
+    sx = (sx < 0 ? -1 : 1) * Math.max(Math.abs(sx), 0.05);
+    sy = (sy < 0 ? -1 : 1) * Math.max(Math.abs(sy), 0.05);
+    return ring.map(([x, y]) => [O.x + (x - O.x) * sx, O.y + (y - O.y) * sy] as [number, number]);
+  }
+  /** The moved/resized version of a tone patch under the active transform. */
+  function applyToneTransform(f: ToneFill, t: NonNullable<typeof toneTransform>, px: number, py: number): ToneFill {
+    return {
+      ...f,
+      points: applyRingTransform(t, px, py, f.points),
+      holes: f.holes?.map((h) => applyRingTransform(t, px, py, h)),
+    };
+  }
+  /** Normalize the drag corners into a bbox; Shift = aspect-lock 1:1 (square /
+   *  circle / regular polygon), keeping the down corner fixed (Figma/Excalidraw). */
+  function normalizeInsertBox(start: [number, number], cur: [number, number], shift: boolean) {
+    let w = Math.abs(cur[0] - start[0]);
+    let h = Math.abs(cur[1] - start[1]);
+    let x = Math.min(start[0], cur[0]);
+    let y = Math.min(start[1], cur[1]);
+    if (shift) {
+      const s = Math.max(w, h);
+      x = cur[0] >= start[0] ? start[0] : start[0] - s;
+      y = cur[1] >= start[1] ? start[1] : start[1] - s;
+      w = s;
+      h = s;
+    }
+    return { x, y, w, h };
+  }
+  /** The outline for an armed shape at a box. Handles the recognizer-core kinds
+   *  (rect/square/triangle/circle/ellipse) DIRECTLY — they're not in shapeLibrary
+   *  (which only generates the 12 library shapes) — and aliases star→star-5,
+   *  arrow→arrow-block, else defers to generateShape. */
+  function insertOutlineFor(kind: string, box: { x: number; y: number; w: number; h: number }): [number, number][] | null {
+    const { x, y, w, h } = box;
+    if (kind === 'rect' || kind === 'square') {
+      return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    }
+    if (kind === 'triangle') {
+      return [[x + w / 2, y], [x + w, y + h], [x, y + h]];
+    }
+    if (kind === 'circle' || kind === 'ellipse') {
+      const out: [number, number][] = [];
+      const n = 48, cx = x + w / 2, cy = y + h / 2, rx = w / 2, ry = h / 2;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        out.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
+      }
+      return out;
+    }
+    const alias: Record<string, string> = { star: 'star-5', arrow: 'arrow-block' };
+    const o = generateShape((alias[kind] ?? kind) as Parameters<typeof generateShape>[0], box);
+    return o ? (o as unknown as [number, number][]) : null;
+  }
+  /** Generate an armed shape at the box and densify+weld it into a stroke (same
+   *  applyCandidate path a snap uses, so an insert renders sealed like a snap). */
+  function insertStrokeFromBox(kind: string, box: { x: number; y: number; w: number; h: number }): Stroke | null {
+    const outline = insertOutlineFor(kind, box);
+    if (!outline || outline.length < 3) return null;
+    const cand: ShapeCandidate = {
+      kind: 'polygon',
+      points: outline as unknown as ShapeCandidate['points'],
+      normErr: 0,
+      score: 1,
+      closed: true,
+      label: 'insert',
+      notes: `library:${kind}`,
+    };
+    const seed = outline.map(([px, py]) => [px, py, 0.5] as StrokePoint);
+    const pts = applyShapeCandidate(cand, seed as unknown as Parameters<typeof applyShapeCandidate>[1]) as unknown as StrokePoint[];
+    return { id: `ins-${Date.now()}`, points: pts };
+  }
 
   // ESCAPE = CANCEL THE IN-PROGRESS GESTURE (capture phase, ahead of the host
   // popup's layered-Escape handler — rock-F1 break battery caught the popup
@@ -1702,11 +2455,138 @@ export function DrawSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gestureActive]);
 
+  /** Whole-object delete at a point (the Erase OBJECT mode): drop the stroke under
+   *  the point AND the tone patch under it, then re-sync the grid. */
+  const deleteWholeAt = (x: number, y: number) => {
+    const sid = strokeAtPoint(strokes, x, y, ERASE_HIT_R) ?? strokeContainingPoint(strokes, x, y);
+    const tid = toneFillAtPoint(toneFillsRef.current, x, y);
+    if (sid) {
+      setStrokes((prev) => prev.filter((s) => s.id !== sid));
+      if (selectedStrokeId === sid) { setSelectedStrokeId(null); onSelectionChange?.(null); }
+    }
+    if (tid) {
+      setToneFills((prev) => {
+        const next = prev.filter((f) => f.id !== tid);
+        regridTone(next); // re-sync the grid from the surviving patches (no stale ref)
+        return next;
+      });
+      if (selectedToneId === tid) setSelectedToneId(null);
+    }
+  };
+
+  // ERASE — PARTIAL brush eraser (Sebs 2026-06-16 "it only lets me delete the full
+  // line… should have both modes"): rubs out only the stroke POINTS under the brush
+  // footprint, SPLITTING a stroke into the runs that survive on either side (carve
+  // through it, don't nuke the whole line). A stroke fully under the brush vanishes.
+  // The WHOLE-object delete is the other mode (✕ / Delete on a selection). Tone is
+  // carved by the same gesture's band-0 stamp. Radius matches the visible brush.
+  const ERASE_HIT_R = 18;
+  const eraseStrokesNear = (x: number, y: number) => {
+    const R = shade?.radius ?? ERASE_HIT_R;
+    const R2 = R * R;
+    setStrokes((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next: Stroke[] = [];
+      for (const s of prev) {
+        let touched = false;
+        const runs: StrokePoint[][] = [];
+        let run: StrokePoint[] = [];
+        for (const p of s.points) {
+          const dx = p[0] - x;
+          const dy = p[1] - y;
+          if (dx * dx + dy * dy <= R2) {
+            touched = true;
+            if (run.length >= 2) runs.push(run);
+            run = [];
+          } else {
+            run.push(p);
+          }
+        }
+        if (run.length >= 2) runs.push(run);
+        if (!touched) {
+          next.push(s);
+          continue;
+        }
+        changed = true;
+        // Surviving runs become their own strokes; <2-pt scraps (and a fully
+        // brushed stroke → zero runs) are dropped = erased.
+        runs.forEach((r, i) => next.push({ ...s, id: `${s.id}~${i}`, points: r }));
+      }
+      if (!changed) return prev;
+      if (selectedStrokeId && !next.some((s) => s.id === selectedStrokeId)) {
+        setSelectedStrokeId(null);
+        onSelectionChange?.(null);
+      }
+      return next;
+    });
+  };
+
   function handlePointerDown(e: React.PointerEvent) {
     // Style mode pauses drawing — flip back to Draw to keep sketching.
     if (styled) return;
     if (input !== 'draw' || mode === '3d') return;
     (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+    // LOSSLESS PART EDITOR (2026-06-24): a press that lands ON a shape part of an
+    // editable upload selects THAT part (the browser hit-tested it natively via the
+    // data-part-id element) — parallels stroke tap-select, fills untouched. Gated
+    // behind editableParts so this is dormant for normal drawing. Pressing empty
+    // space clears the part selection and falls through to draw as usual.
+    if (editableParts) {
+      // Hit-test entirely in the 800×600 FRAME space (same as strokes): no nested-svg
+      // / getCTM bridge — eventToSvgPoint gives frame coords, frameBoxOf gives each
+      // part's frame box, and we reuse the stroke hitCorner / cornerXY helpers. A
+      // press on a corner handle of the SELECTED part resizes; on a part body selects
+      // (or moves it if already selected); on empty space clears + falls through to
+      // draw. This is the rebuild — the old nested-space/getCTM mismatch was the whole
+      // "box pops off and lands somewhere else" bug (Sebs 2026-06-25).
+      const [x, y] = eventToSvgPoint(e);
+      // RESIZE — a corner handle of the already-selected part.
+      if (selectedPartId) {
+        const selPart = editableParts.parts.find((p) => p.id === selectedPartId);
+        if (selPart && !deletedParts.has(selPart.id)) {
+          // detect on the padded box (so thin-part handles are grabbable); pivot the
+          // resize on the padded box too so a thin part has a non-degenerate box0.
+          const corner = hitCorner(displayBoxOf(selPart), x, y);
+          if (corner) {
+            setPartXform({ id: selPart.id, mode: 'resize', corner, box0: displayBoxOf(selPart), start: [x, y] });
+            return;
+          }
+        }
+      }
+      // SELECT / MOVE — smallest (padded) frame box containing the click wins, so a
+      // small part under a big one is still grabbable AND thin/straight parts (a line,
+      // a flat smile stroke) get a clickable band instead of an unhittable hairline.
+      // Press the already-selected part ⇒ move it (move uses the REAL box, no fatten).
+      let hitId: string | null = null;
+      let bestArea = Infinity;
+      for (const part of editableParts.parts) {
+        if (deletedParts.has(part.id)) continue;
+        const b = displayBoxOf(part);
+        if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) continue;
+        const area = b.w * b.h;
+        if (area < bestArea) { bestArea = area; hitId = part.id; }
+      }
+      if (hitId) {
+        if (hitId === selectedPartId) {
+          const sp = editableParts.parts.find((p) => p.id === hitId)!;
+          setPartXform({ id: hitId, mode: 'move', corner: 'se', box0: frameBoxOf(sp), start: [x, y] });
+        } else {
+          setSelectedPartId(hitId);
+          onSelectPart?.(hitId);
+          setSelectedStrokeId(null);
+        }
+        return;
+      }
+      if (selectedPartId) { setSelectedPartId(null); onSelectPart?.(null); }
+    }
+    if (armedShape) {
+      // SHAPE INSERT (§6.2) — an armed shape owns the pointer; drag = bbox.
+      const [x, y] = eventToSvgPoint(e);
+      insertShiftRef.current = e.shiftKey;
+      setInsertBox({ start: [x, y], cur: [x, y] });
+      return;
+    }
     if (fillActive) {
       // FILL — one pointer-down, three possible gestures (spec §5/§6):
       // release fast+still = TAP; move first = HIGHLIGHT scribble; hold
@@ -1733,41 +2613,136 @@ export function DrawSurface({
     }
     if (shadeActive) {
       const [x, y] = eventToSvgPoint(e);
-      const grid = toneGridRef.current!;
-      beginToneStroke(grid); // new stroke — reset the §3 dirty bitset
-      toneSnapshotRef.current = {
-        bands: grid.bands.slice(),
-        src: grid.src.slice(),
-        gapTolQ: grid.gapTolQ.slice(),
-      }; // Escape = cancel (provenance rides the snapshot)
-      toneGestureRef.current = true;
-      lastTonePtRef.current = null;
-      stampSegment([x, y]); // a tap is a dab (paint) / a dab-lift (erase)
-      setToneBrush([[x, y]]);
+      const beginTone = () => {
+        const grid = toneGridRef.current!;
+        beginToneStroke(grid); // new stroke — reset the §3 dirty bitset
+        toneSnapshotRef.current = { bands: grid.bands.slice(), src: grid.src.slice(), gapTolQ: grid.gapTolQ.slice() };
+        toneGestureRef.current = true;
+        lastTonePtRef.current = null;
+      };
+      // ERASE rides the shade gesture but ONLY erases — never selects/moves/paints.
+      if (eraseStrokes) {
+        beginTone();
+        stampSegment([x, y]);
+        // OBJECT = remove the whole stroke/patch under the cursor; PIXEL = carve
+        // only the brushed part (band-0 stampSegment above carves tone in pixel).
+        if (eraseMode === 'object') deleteWholeAt(x, y);
+        else eraseStrokesNear(x, y);
+        setToneBrush([[x, y]]);
+        return;
+      }
+      // SHADE register (model B) — TONE is ARRANGED here. Move/resize a selected
+      // patch; else DEFER (tap on lift = select a patch, drag = paint).
+      if (selectedToneId) {
+        const sel = toneFills.find((f) => f.id === selectedToneId);
+        if (sel) {
+          const bb = toneBBox(sel);
+          const corner = hitCorner(bb, x, y);
+          if (corner) {
+            setToneTransform({ id: sel.id, mode: 'resize', corner, box0: bb, base: sel, start: [x, y] });
+            return;
+          }
+          if (pointInStroke(sel.points, x, y) && !sel.holes?.some((h) => h.length >= 3 && pointInStroke(h, x, y))) {
+            setToneTransform({ id: sel.id, mode: 'move', corner: 'se', box0: bb, base: sel, start: [x, y] });
+            return;
+          }
+        }
+      }
+      shadeGestureRef.current = { start: [x, y], moved: false }; // paint begins on first move
       return;
+    }
+    // MOVE/RESIZE a selected stroke — before a new ink stroke. Grab a corner
+    // handle = resize; press on the stroke's own ink = move (Sebs 2026-06-15).
+    if (selectedStrokeId) {
+      const sel = strokes.find((s) => s.id === selectedStrokeId);
+      if (sel) {
+        const [px, py] = eventToSvgPoint(e);
+        const bb = strokeBBox(sel.points);
+        const corner = hitCorner(bb, px, py);
+        if (corner) {
+          setTransform({ mode: 'resize', corner, box0: bb, pts0: sel.points.slice(), start: [px, py] });
+          return;
+        }
+        // MOVE: press on the selected shape's BODY (inside its closed area) or
+        // near its outline → drag moves it. Using the closed-area test (not the
+        // whole bbox) means the EMPTY corners of a selected shape's bbox still
+        // DRAW — so "draw inside a shape" keeps working: deselect (tap paper) to
+        // draw freely, or draw in the bbox margin (Sebs 2026-06-15).
+        const onBody = pointInStroke(sel.points, px, py);
+        const nearOutline = strokeAtPoint([sel], px, py, SELECT_HIT_RADIUS_PX) === sel.id;
+        if (onBody || nearOutline) {
+          setTransform({ mode: 'move', corner: 'se', box0: bb, pts0: sel.points.slice(), start: [px, py] });
+          return;
+        }
+      }
     }
     // INK gesture begins — record the start for tap-vs-drag classification.
     const startPt = eventToSvgPoint(e);
     inkDownPtRef.current = [startPt[0], startPt[1]];
     inkMovedRef.current = false;
+    livePointsRef.current = [startPt];
     setCurrent({ id: `s-${Date.now()}`, points: [startPt] });
   }
 
   function handlePointerMove(e: React.PointerEvent) {
+    if (partXform) {
+      // Move / resize the selected part, all in FRAME space, writing its new frame
+      // box (the source of truth). Resize mirrors the stroke's applyTransformTo:
+      // scale about the OPPOSITE corner with a 0.05 floor, so the grabbed corner
+      // tracks the cursor and the opposite stays pinned.
+      const [x, y] = eventToSvgPoint(e);
+      const t = partXform;
+      if (t.mode === 'move') {
+        const dx = x - t.start[0], dy = y - t.start[1];
+        setPartBoxes((prev) => ({ ...prev, [t.id]: { x: t.box0.x + dx, y: t.box0.y + dy, w: t.box0.w, h: t.box0.h } }));
+      } else {
+        const O = cornerXY(oppositeCorner(t.corner), t.box0);
+        const C0 = cornerXY(t.corner, t.box0);
+        let sx = (x - O.x) / ((C0.x - O.x) || 1e-6);
+        let sy = (y - O.y) / ((C0.y - O.y) || 1e-6);
+        sx = Math.max(Math.abs(sx), 0.05);
+        sy = Math.max(Math.abs(sy), 0.05);
+        const nw = t.box0.w * sx, nh = t.box0.h * sy;
+        const nx = t.corner === 'nw' || t.corner === 'sw' ? O.x - nw : O.x;
+        const ny = t.corner === 'nw' || t.corner === 'ne' ? O.y - nh : O.y;
+        setPartBoxes((prev) => ({ ...prev, [t.id]: { x: nx, y: ny, w: nw, h: nh } }));
+      }
+      return;
+    }
+    if (insertBox) {
+      const [x, y] = eventToSvgPoint(e);
+      insertShiftRef.current = e.shiftKey; // live aspect-lock toggle
+      setInsertBox((b) => (b ? { ...b, cur: [x, y] } : b));
+      return;
+    }
+    if (transform) {
+      const [px, py] = eventToSvgPoint(e);
+      const newPts = applyTransformTo(transform, px, py);
+      setStrokes((prev) => prev.map((s) => (s.id === selectedStrokeId ? { ...s, points: newPts } : s)));
+      return;
+    }
+    if (toneTransform) {
+      // Move/resize the selected tone patch live (outline + holes). The grid is
+      // re-synced on lift (handlePointerUp) so a re-extraction won't snap it back.
+      const [px, py] = eventToSvgPoint(e);
+      const t = toneTransform;
+      setToneFills((prev) => prev.map((f) => (f.id === t.id ? applyToneTransform(t.base, t, px, py) : f)));
+      return;
+    }
     if (fillActive) {
       const [x, y] = eventToSvgPoint(e);
       setHoverPt([x, y]);
       const g = fillGesRef.current;
       if (!g) {
-        // HOVER PREVIEW (spec §5.1): the candidate region under the cursor,
-        // translucent wash + dashed outline — no pointer-down, no commitment.
-        // Regions come from the per-step cache; only pointInLoop runs here.
-        const regions = regionsFor(currentGapIdx);
-        const hit = innermostPaperRegionAt(x, y, regions);
+        // HOVER PREVIEW (spec §5.1): flood the region under the cursor — the SAME
+        // bucket-fill the commit uses, so the dashed preview matches exactly what
+        // a tap will fill. Cached by a quantized seed cell (~6px) + gap step so
+        // the flood recomputes only when the cursor crosses into a new cell.
+        const key = `${currentGapIdx}:${Math.round(x / 6)}:${Math.round(y / 6)}`;
         setFillHover((prev) => {
-          if (hit < 0) return prev === null ? prev : null;
-          if (prev && prev.gapIdx === currentGapIdx && prev.idx === hit) return prev;
-          return { gapIdx: currentGapIdx, idx: hit };
+          if (prev && prev.key === key) return prev;
+          const patch = floodFillAt([x, y], GAP_LADDER[currentGapIdx]);
+          return { key, patch: patch && patch.outline.length >= 3 ? patch : null };
         });
         return;
       }
@@ -1806,24 +2781,90 @@ export function DrawSurface({
     if (shadeActive) {
       const [x, y] = eventToSvgPoint(e);
       setHoverPt([x, y]);
+      // ERASE — carve / whole-delete along the drag (the gesture already began).
+      if (eraseStrokes) {
+        if (toneBrush) {
+          stampSegment([x, y]);
+          if (eraseMode === 'object') deleteWholeAt(x, y);
+          else eraseStrokesNear(x, y);
+          setToneBrush((b) => (b ? [...b, [x, y]] : b));
+        }
+        return;
+      }
+      // PAINT — deferred from a non-selected press; the first real drag starts it
+      // (a still tap selects instead, on lift). Once painting, keep stamping.
+      const g = shadeGestureRef.current;
+      if (g && !g.moved) {
+        if (Math.hypot(x - g.start[0], y - g.start[1]) > TAP_SLOP_PX) {
+          g.moved = true;
+          const grid = toneGridRef.current!;
+          beginToneStroke(grid);
+          toneSnapshotRef.current = { bands: grid.bands.slice(), src: grid.src.slice(), gapTolQ: grid.gapTolQ.slice() };
+          toneGestureRef.current = true;
+          lastTonePtRef.current = null;
+          stampSegment(g.start);
+          stampSegment([x, y]);
+          setToneBrush([g.start, [x, y]]);
+        }
+        return;
+      }
       if (toneBrush) {
         stampSegment([x, y]);
         setToneBrush((b) => (b ? [...b, [x, y]] : b));
       }
       return;
     }
-    if (!current) return;
-    const pt = eventToSvgPoint(e);
+    if (!current || !livePointsRef.current) return;
+    // ONE point per pointermove event — EXACTLY the old point density that drew
+    // smooth (Sebs 2026-06-20: "gets all jaggedy as I draw"). My earlier buttery
+    // pass also pulled getCoalescedEvents (many sub-frame samples per frame), which
+    // over-densified the input → perfect-freehand's pressure-from-spacing jittered
+    // the width into a faceted ribbon. The ACTUAL lag fix was moving the render off
+    // setState onto the imperative rAF below — that we keep; the coalesced sampling
+    // we drop, so the live line is byte-for-byte the old smooth stroke, just lag-free.
+    const live = livePointsRef.current;
+    live.push(eventToSvgPoint(e));
     // Mark the gesture as a real drag once it travels past the tap slop — a
     // pen-up below that never set this is a TAP (select), not a stroke.
+    const last = live[live.length - 1];
     const start = inkDownPtRef.current;
-    if (start && Math.hypot(pt[0] - start[0], pt[1] - start[1]) > TAP_SLOP_PX) {
+    if (start && Math.hypot(last[0] - start[0], last[1] - start[1]) > TAP_SLOP_PX) {
       inkMovedRef.current = true;
     }
-    setCurrent((s) => (s ? { ...s, points: [...s.points, pt] } : null));
+    // Paint imperatively on the next frame — NO setState, so nothing else in the
+    // tree re-renders mid-stroke (the buttery win). Coalesce to one rAF.
+    if (liveRafRef.current === null) liveRafRef.current = requestAnimationFrame(flushLivePath);
   }
 
   function handlePointerUp() {
+    if (partXform) { setPartXform(null); return; }
+    if (insertBox && armedShape) {
+      // SHAPE INSERT commit (§6.2): tiny drag / click → default-size place.
+      const start = insertBox.start;
+      const box = normalizeInsertBox(start, insertBox.cur, insertShiftRef.current);
+      setInsertBox(null);
+      if (box.w < INSERT_MIN_PX || box.h < INSERT_MIN_PX) {
+        const d = INSERT_DEFAULT_PX;
+        box.x = start[0] - d / 2;
+        box.y = start[1] - d / 2;
+        box.w = d;
+        box.h = d;
+      }
+      const stroke = insertStrokeFromBox(armedShape, box);
+      if (stroke) {
+        setStrokes((prev) => [...prev, stroke]);
+        // AUTO-SELECT the placed shape so its move/resize handles show at once —
+        // place → drag to position / corner to resize, no separate tap-select
+        // (Sebs 2026-06-15). onSelectionChange notifies the host (receipt logic).
+        setSelectedStrokeId(stroke.id);
+        onSelectionChange?.(stroke.id);
+        onShapeInserted?.(stroke);
+      }
+      return;
+    }
+    if (insertBox) { setInsertBox(null); return; }
+    if (transform) { setTransform(null); return; }
+    if (toneTransform) { setToneTransform(null); regridTone(toneFillsRef.current); return; }
     if (fillActive && fillGesRef.current) {
       const g = fillGesRef.current;
       window.clearTimeout(g.timer);
@@ -1849,28 +2890,84 @@ export function DrawSurface({
     }
     if (toneBrush) {
       commitToneStroke();
+      shadeGestureRef.current = null;
       return;
     }
-    // TAP-TO-SELECT (round-8): a pen-up that never moved past the tap slop is a
-    // TAP. If it landed on an earlier committed stroke, SELECT that stroke for
-    // Snap/Straighten instead of committing a degenerate micro-stroke. A tap on
-    // bare paper clears any selection (deselect). Only in the Ink register —
-    // shade/fill/lasso have their own pointer-up paths above.
+    // SHADE TAP (model B): a Shade press that never moved = a TAP → SELECT the tone
+    // patch under it (or deselect on bare paper). Painting needed a drag (handled
+    // above via toneBrush). Erase never selects.
+    if (shadeActive && !eraseStrokes) {
+      const g = shadeGestureRef.current;
+      shadeGestureRef.current = null;
+      if (g && !g.moved) {
+        const id = toneFillAtPoint(toneFills, g.start[0], g.start[1]);
+        if (id) {
+          // tap ON a patch → SELECT it (to move/resize)
+          setSelectedToneId(id);
+          setSelectedStrokeId(null);
+          onSelectionChange?.(null);
+        } else {
+          // tap on EMPTY paper → DAB a single tone spot (Sebs 2026-06-16 "i can't
+          // just dab one click of shade") — beginToneStroke + one stamp + commit.
+          setSelectedToneId(null);
+          const grid = toneGridRef.current!;
+          beginToneStroke(grid);
+          toneSnapshotRef.current = { bands: grid.bands.slice(), src: grid.src.slice(), gapTolQ: grid.gapTolQ.slice() };
+          toneGestureRef.current = true;
+          lastTonePtRef.current = null;
+          stampSegment(g.start);
+          commitToneStroke();
+        }
+      }
+      return;
+    }
+    // TAP-TO-SELECT (round-8, model B): a still Ink tap selects an INK stroke (Ink
+    // mode arranges ink only; tone is arranged in Shade). A tap on bare paper
+    // deselects. A real drag draws.
     if (current && !inkMovedRef.current) {
-      const tap = current.points[0];
-      const hitId = strokeAtPoint(strokes, tap[0], tap[1], SELECT_HIT_RADIUS_PX);
-      setSelectedStrokeId(hitId); // hit → select; miss → deselect (null)
+      const tap = (livePointsRef.current ?? current.points)[0];
+      const hitId =
+        strokeAtPoint(strokes, tap[0], tap[1], SELECT_HIT_RADIUS_PX) ??
+        strokeContainingPoint(strokes, tap[0], tap[1]);
+      // SINGLE-TAP DOT (Sebs 2026-06-19): a tap on BARE paper with nothing
+      // selected lays a deliberate pen dot (a 1-point stroke renders as a round
+      // mark via perfect-freehand) — a real pen leaves a dot, the Ink register
+      // shouldn't be silent. A tap that HITS a stroke still selects; a paper tap
+      // while something IS selected still DESELECTS (no surprise dot then).
+      if (!hitId && !selectedStrokeId) {
+        const dot: Stroke = { id: current.id, points: [[tap[0], tap[1], 0.5]] };
+        setStrokes((prev) => [...prev, dot]);
+        setSelectedToneId(null);
+        setCurrent(null);
+        endLiveInk();
+        inkDownPtRef.current = null;
+        onStrokeCommitted?.(dot);
+        return;
+      }
+      setSelectedStrokeId(hitId);
+      setSelectedToneId(null);
+      onSelectionChange?.(hitId);
       setCurrent(null);
+      endLiveInk();
       inkDownPtRef.current = null;
       return;
     }
-    if (!current || current.points.length < 2) { setCurrent(null); return; }
+    // livePointsRef is the point-truth during a drag (current.points stays the
+    // seed point — it isn't grown per-move anymore).
+    const livePts = livePointsRef.current ?? current?.points ?? [];
+    if (!current || livePts.length < 2) { setCurrent(null); endLiveInk(); return; }
     // A genuine new stroke supersedes any selection (the latest stroke is the
     // implicit target again, matching the pre-round-8 behavior).
     setSelectedStrokeId(null);
-    setStrokes((prev) => [...prev, current]);
+    setSelectedToneId(null);
+    const committed: Stroke = { id: current.id, points: livePts }; // the live points
+    setStrokes((prev) => [...prev, committed]);
     setCurrent(null);
+    endLiveInk();
     inkDownPtRef.current = null;
+    // AUTO-DETECT (OFFER-only): hand the just-committed stroke to the host so it
+    // can fit + OFFER the best shape via the override receipt. Never auto-applies.
+    onStrokeCommitted?.(committed);
   }
 
   function handlePointerLeave() {
@@ -1882,6 +2979,7 @@ export function DrawSurface({
   function clearAll() {
     setStrokes([]);
     setCurrent(null);
+    endLiveInk();
     setSelectedStrokeId(null);
     setToneFills([]);
     setToneBrush(null);
@@ -1908,6 +3006,11 @@ export function DrawSurface({
 
   const allStrokes = current ? [...strokes, current] : strokes;
   const isUpload = input === 'upload-svg';
+  const isUploadImage = input === 'upload-image';
+  // Both upload modes share one picker + preview chrome; handleFileChange routes
+  // by the actual file type, so the only per-mode difference is the accept filter
+  // and the empty-state copy.
+  const isUploadAny = isUpload || isUploadImage;
 
   // REGION-FILL preview resolution (render-time, cache-backed — extraction
   // never runs per pointermove, only on a cache miss at a new ladder step).
@@ -1916,19 +3019,12 @@ export function DrawSurface({
   let fillPreview: { outline: [number, number][]; holes: [number, number][][] } | null = null;
   if (fillActive) {
     if (scrubState) {
-      const regions = regionsFor(scrubState.idx);
-      const hit = innermostPaperRegionAt(scrubState.anchor[0], scrubState.anchor[1], regions);
-      if (hit >= 0) {
-        fillPreview = { outline: regions[hit].outline, holes: fillChildrenOf(regions, hit) };
-      }
-    } else if (fillHover) {
-      const regions = regionsFor(fillHover.gapIdx);
-      if (fillHover.idx < regions.length) {
-        fillPreview = {
-          outline: regions[fillHover.idx].outline,
-          holes: fillChildrenOf(regions, fillHover.idx),
-        };
-      }
+      // Scrub: re-flood under the press anchor at the live gap step (watch the
+      // region grow / gaps close as the ladder walks — §6).
+      const patch = floodFillAt(scrubState.anchor, GAP_LADDER[scrubState.idx]);
+      if (patch && patch.outline.length >= 3) fillPreview = patch;
+    } else if (fillHover && fillHover.patch) {
+      fillPreview = fillHover.patch;
     }
   }
 
@@ -1946,17 +3042,20 @@ export function DrawSurface({
         overflow: 'hidden',
       }}
     >
-      {/* Hidden file input — surfaces native file picker on click. */}
+      {/* Hidden file input — surfaces native file picker on click. The accept
+          filter follows the chosen input mode (image vs svg), but handleFileChange
+          routes by the actual file type, so a stray drop of the other kind still
+          works. */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".svg,image/svg+xml"
+        accept={isUploadImage ? 'image/png,image/jpeg,image/webp' : '.svg,image/svg+xml'}
         onChange={handleFileChange}
         style={{ display: 'none' }}
       />
       {/* UPLOAD-SVG branch — when uploaded, render through SvgStyleTransform
           so the uploaded SVG picks up the active style/modifiers. */}
-      {isUpload && uploadedSvg && (
+      {isUploadAny && uploadedSvg && (
         <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <SvgStyleTransform
             wrapperOverride={{ display: 'block', width: '100%', height: '100%' }}
@@ -1972,7 +3071,7 @@ export function DrawSurface({
           same 800×600 frame space the strokes live in, so draw-over lands
           where the eye says it does. Hidden in Style mode — the merged layer
           below renders backdrop + strokes together instead. */}
-      {backdrop && !styled && (
+      {backdrop && !styled && !editableParts && (
         <div
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
           aria-hidden
@@ -2208,14 +3307,137 @@ export function DrawSurface({
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerLeave}
       >
+        {editableParts && !styled && (() => {
+          const { s, ox, oy } = partFit;
+          const sel = selectedPartId ? editableParts.parts.find((p) => p.id === selectedPartId) : null;
+          return (
+            <>
+              {/* the upload's real shapes (data-part-id on each), LETTERBOXED into the
+                  800×600 frame by ONE <g> transform — so the parts and the selection
+                  overlay share the same frame space as strokes (the rebuild). The
+                  per-part move/resize transforms (set imperatively in UPLOAD space)
+                  live on the inner partsLayerRef <g>. DESATURATED: Desk Doodles is
+                  monochrome ("value from marks, never hue"). */}
+              <g transform={`translate(${ox} ${oy}) scale(${s})`}>
+                <g ref={partsLayerRef} data-parts-group style={{ filter: 'grayscale(1)' }} dangerouslySetInnerHTML={{ __html: editablePartsInner }} />
+              </g>
+              {/* Selection box + corner handles, drawn directly at the part's FRAME box
+                  — identical treatment to the stroke move/resize overlay, so it lands
+                  exactly on the shape. */}
+              {sel && !deletedParts.has(sel.id) && (() => {
+                const b = displayBoxOf(sel);
+                const hs = HANDLE_SIZE_PX;
+                return (
+                  <g pointerEvents="none">
+                    <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke="var(--dir-accent)" strokeDasharray="4 4" strokeWidth={1} />
+                    {(['nw', 'ne', 'sw', 'se'] as const).map((c) => {
+                      const p = cornerXY(c, b);
+                      return (
+                        <rect key={c} x={p.x - hs / 2} y={p.y - hs / 2} width={hs} height={hs} rx={2} fill="var(--dir-bg)" stroke="var(--dir-accent)" strokeWidth={1.5} />
+                      );
+                    })}
+                  </g>
+                );
+              })()}
+            </>
+          );
+        })()}
         {current && (
           <path
-            d={strokeToPolygonPath(current.points)}
+            ref={livePathRef}
+            // Seed from the live points so any incidental re-render paints the
+            // full in-progress stroke; the rAF flush keeps it current per frame.
+            d={strokeToPolygonPath(livePointsRef.current ?? current.points)}
             fill="var(--dir-text-primary)"
             fillOpacity={0.9}
             stroke="none"
           />
         )}
+        {/* SHAPE INSERT live preview (§6.2): the dashed bbox + the shape it'll
+            drop, updated each move so the user sees what they're placing. */}
+        {insertBox &&
+          armedShape &&
+          (() => {
+            const box = normalizeInsertBox(insertBox.start, insertBox.cur, insertShiftRef.current);
+            const outline = insertOutlineFor(armedShape, box);
+            const d =
+              outline && outline.length >= 3
+                ? `M ${outline.map(([x, y]) => `${x} ${y}`).join(' L ')} Z`
+                : '';
+            return (
+              <g pointerEvents="none">
+                <rect
+                  x={box.x}
+                  y={box.y}
+                  width={box.w}
+                  height={box.h}
+                  fill="none"
+                  stroke="var(--dir-text-secondary)"
+                  strokeDasharray="4 4"
+                  strokeWidth={1}
+                />
+                {d && (
+                  <path d={d} fill="var(--dir-text-primary)" fillOpacity={0.12} stroke="var(--dir-text-primary)" strokeOpacity={0.6} strokeWidth={1.5} />
+                )}
+              </g>
+            );
+          })()}
+        {/* MOVE/RESIZE handles on the selected stroke (ink mode only — fill/shade
+            own the pointer otherwise). Dashed bbox + 4 corner squares; drag the
+            body to move, a corner to resize. Tracks the live points during drag. */}
+        {selectedStrokeId &&
+          !insertBox &&
+          !fillActive &&
+          !lassoActive &&
+          !shadeActive &&
+          (() => {
+            const sel = strokes.find((s) => s.id === selectedStrokeId);
+            if (!sel) return null;
+            const b = strokeBBox(sel.points);
+            if (b.w <= 0.5 && b.h <= 0.5) return null;
+            const hs = HANDLE_SIZE_PX;
+            // Move/resize selection = bbox + corner handles ONLY (Sebs 2026-06-16:
+            // "get rid of the move and resize x — the x should be shown only in
+            // erase mode"). Delete lives in the Erase tool, never on the move tool.
+            return (
+              <g pointerEvents="none">
+                <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke="var(--dir-accent)" strokeDasharray="4 4" strokeWidth={1} />
+                {(['nw', 'ne', 'sw', 'se'] as const).map((c) => {
+                  const p = cornerXY(c, b);
+                  return (
+                    <rect key={c} x={p.x - hs / 2} y={p.y - hs / 2} width={hs} height={hs} rx={2} fill="var(--dir-bg)" stroke="var(--dir-accent)" strokeWidth={1.5} />
+                  );
+                })}
+              </g>
+            );
+          })()}
+        {/* SELECTED TONE PATCH (model B) — shown in SHADE mode (not erase): dashed
+            bbox + corner handles to MOVE/RESIZE. Drag inside = move, corner = resize.
+            Delete lives in the Erase tool, never here. */}
+        {selectedToneId &&
+          !insertBox &&
+          !fillActive &&
+          !lassoActive &&
+          shadeActive &&
+          !eraseStrokes &&
+          (() => {
+            const sel = toneFills.find((f) => f.id === selectedToneId);
+            if (!sel || sel.points.length < 3) return null;
+            const b = toneBBox(sel);
+            if (b.w <= 0.5 && b.h <= 0.5) return null;
+            const hs = HANDLE_SIZE_PX;
+            return (
+              <g pointerEvents="none">
+                <rect x={b.x} y={b.y} width={b.w} height={b.h} fill="none" stroke="var(--dir-accent)" strokeDasharray="4 4" strokeWidth={1} />
+                {(['nw', 'ne', 'sw', 'se'] as const).map((c) => {
+                  const p = cornerXY(c, b);
+                  return (
+                    <rect key={c} x={p.x - hs / 2} y={p.y - hs / 2} width={hs} height={hs} rx={2} fill="var(--dir-bg)" stroke="var(--dir-accent)" strokeWidth={1.5} />
+                  );
+                })}
+              </g>
+            );
+          })()}
         {/* Live tone sweep — the while-pen-down preview (SB-6: the cheap
             swept capsule; the grid is the truth in parallel and lands at
             pen-lift). Paint previews at the SAME 0.9 the committed raw layer
@@ -2371,7 +3593,7 @@ export function DrawSurface({
           shouty uppercase; warmth pass 2026-06-11). UPLOAD-SVG mode: prompt
           to pick a file. Upload-image is covered by its honesty gate below. */}
       {((input === 'draw' && allStrokes.length === 0 && toneFills.length === 0 && !backdrop) ||
-        (isUpload && !uploadedSvg)) && (
+        (isUploadAny && !uploadedSvg)) && (
         <div
           style={{
             position: 'absolute',
@@ -2384,17 +3606,20 @@ export function DrawSurface({
             fontSize: 13,
             color: 'var(--dir-text-body-soft)',
             gap: 12,
-            pointerEvents: isUpload ? 'auto' : 'none',
+            pointerEvents: isUploadAny ? 'auto' : 'none',
           }}
         >
-          {isUpload ? (
+          {isUploadAny ? (
             <>
               <button
                 onClick={handleFilePick}
+                disabled={uploadBusy}
                 style={{
                   ...PILL,
                   padding: '10px 22px',
                   background: 'var(--dir-bg)',
+                  opacity: uploadBusy ? 0.6 : 1,
+                  cursor: uploadBusy ? 'wait' : 'pointer',
                   // Heavier primary-ink border is the empty-state affordance —
                   // this is THE action in an otherwise blank frame. Full
                   // shorthand, never borderColor over PILL's shorthand
@@ -2402,8 +3627,17 @@ export function DrawSurface({
                   border: '1px solid var(--dir-text-primary)',
                 }}
               >
-                Pick an .svg file
+                {uploadBusy
+                  ? 'Tracing your image…'
+                  : isUploadImage
+                    ? 'Pick a photo (PNG / JPG)'
+                    : 'Pick an .svg file'}
               </button>
+              {isUploadImage && !uploadBusy && (
+                <span style={{ fontSize: 11, textTransform: 'none', opacity: 0.75, maxWidth: 240, textAlign: 'center' }}>
+                  Turned into a clean sketch in the Desk Doodles style, then styles + 3D work on it.
+                </span>
+              )}
               {uploadError && (
                 <span style={{ color: 'var(--dir-accent)', fontSize: 11, textTransform: 'none' }}>
                   {uploadError}
@@ -2451,7 +3685,7 @@ export function DrawSurface({
           </button>
         </div>
       )}
-      {isUpload && uploadedSvg && (
+      {isUploadAny && uploadedSvg && (
         <div
           style={{
             position: 'absolute',
@@ -2477,6 +3711,50 @@ export function DrawSurface({
           >
             {uploadedSvg.name}
           </span>
+          {/* SVG SIMPLIFY toggle — .svg uploads only (not traced images, which
+              default to Clean). Re-processes the SAME upload live (no re-pick). */}
+          {isUpload && rawSvgUpload && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: IS,
+                  color: 'var(--dir-text-body-soft)',
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Simplify
+              </span>
+              {(
+                [
+                  ['off', 'Off'],
+                  ['filled', 'Filled'],
+                  ['line', 'Line'],
+                ] as [UploadSimplifyMode, string][]
+              ).map(([m, label]) => (
+                <button
+                  key={m}
+                  onClick={() => changeSimplifyMode(m)}
+                  aria-pressed={simplifyMode === m}
+                  title={
+                    m === 'off'
+                      ? 'Keep the SVG as-is'
+                      : m === 'filled'
+                        ? 'Clean filled line-art (keeps fills)'
+                        : 'Centerline single-line trace'
+                  }
+                  style={{
+                    ...FRAME_PILL,
+                    background: simplifyMode === m ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+                    color: simplifyMode === m ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </span>
+          )}
           <button onClick={handleFilePick} style={FRAME_PILL}>
             Replace
           </button>
@@ -2485,19 +3763,9 @@ export function DrawSurface({
           </button>
         </div>
       )}
-      {/* IMAGE-UPLOAD HONESTY GATE — same treatment as the 3D gate: an opaque
-          cover instead of a dead canvas (no file picker, no inert controls).
-          The autotrace path (stretch S1) is what makes image→object real;
-          until then SVG upload is the working route. State underneath stays
-          intact; switching input restores it. */}
-      {input === 'upload-image' && (
-        <div style={GATE_STYLE}>
-          <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>
-            Image upload is coming
-          </span>
-          <span>SVG upload works today — switch input to Upload SVG.</span>
-        </div>
-      )}
+      {/* (Image-upload honesty gate removed 2026-06-16 — image→SVG is live via the
+          Quiver Edge trace + simplify-to-sketch; upload-image now uses the shared
+          picker/preview chrome above, same as upload-svg.) */}
       {/* 3D HONESTY GATE — opaque placeholder covers the live 2D surface so the
           toggle doesn't lie. Strokes/upload state stay intact underneath; flipping
           back to 2D restores everything. Rendered LAST so it wins over the
@@ -2541,6 +3809,11 @@ export type ShadeToolState = {
    *  to the ink edge = "fully fill"), so the slider is live on closed shapes
    *  and the Full-fill pill is just a one-tap jump to the top tick. */
   gap: number;
+  /** FULL FILL — its OWN toggle, NOT a jump to max Gap. Fills the tapped shape
+   *  solid + flush to its own edges at the CURRENT gap (the canvas reads this in
+   *  fillDilatePx's flush branch). Decoupled from the Gap slider so Full fill no
+   *  longer slams Gap to 6× and spills into the outer region. */
+  fullFill?: boolean;
 };
 
 export const SHADE_TOOL_DEFAULT: ShadeToolState = {
@@ -2549,6 +3822,7 @@ export const SHADE_TOOL_DEFAULT: ShadeToolState = {
   radius: 26,
   erase: false,
   gap: 1,
+  fullFill: false,
 };
 
 export function ToneShadeCluster({
@@ -2725,33 +3999,24 @@ export function ToneShadeCluster({
           </span>
         </label>
       )}
-      {/* FULL FILL (round-8, Sebs "ability to fully fill") — Fill tool only:
-          one tap snaps the Gap to the top of the ladder, which fills flush to
-          the ink edge with no inset gap (fillDilatePx: the inset ring → 0 at
-          the ladder top). Lit when already at the flush tick. This is the
-          explicit "fully fill" affordance riding the same Gap field the host
-          already forwards — no stub control, no extra wiring. */}
+      {/* FULL FILL — its OWN toggle (Sebs 2026-06-17), NO LONGER a jump to max
+          Gap. Fills the tapped shape SOLID + flush to its own edges at the
+          CURRENT gap, so it can't over-spread into the outer/neighbour region
+          (the nested "fills everything" bug came from Full fill slamming Gap to
+          6×). Gap stays independent. The canvas reads value.fullFill → shade
+          → fillDilatePx's flush branch. */}
       {value.tool === 'fill' && (
         <button
-          onClick={() =>
-            onChange({
-              ...value,
-              gap: value.gap >= GAP_LADDER[GAP_LADDER.length - 1] ? GAP_LADDER[2] : GAP_LADDER[GAP_LADDER.length - 1],
-            })
-          }
-          aria-pressed={value.gap >= GAP_LADDER[GAP_LADDER.length - 1]}
+          onClick={() => onChange({ ...value, fullFill: !value.fullFill })}
+          aria-pressed={!!value.fullFill}
           data-tone-fullfill
-          title="Full fill — fill flush to the ink edge with no inset gap (tap again to return to a tucked-in fill)"
+          title="Full fill — fill the tapped shape solid, flush to its OWN edges (independent of Gap; tap again for a tucked-in fill)"
           style={{
             ...PILL,
             padding: '5px 12px',
             flexShrink: 0,
-            background:
-              value.gap >= GAP_LADDER[GAP_LADDER.length - 1]
-                ? 'var(--dir-text-primary)'
-                : 'var(--dir-bg)',
-            color:
-              value.gap >= GAP_LADDER[GAP_LADDER.length - 1] ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
+            background: value.fullFill ? 'var(--dir-text-primary)' : 'var(--dir-bg)',
+            color: value.fullFill ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
           }}
         >
           Full fill

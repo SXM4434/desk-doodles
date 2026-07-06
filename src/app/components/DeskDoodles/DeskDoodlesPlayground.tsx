@@ -141,22 +141,31 @@ export function DeskDoodlesPlayground() {
             overflow: 'hidden',
           }}
         >
-          {(['svg', '3d'] as CanvasMode[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              title={m === '3d' ? '3D mode lands Day 11 (Rod + Extrude)' : undefined}
-              style={{
-                ...PILL,
-                border: 'none',
-                borderRadius: 0,
-                background: mode === m ? 'var(--dir-accent)' : 'transparent',
-                color: mode === m ? 'var(--dir-bg)' : 'var(--dir-text-body)',
-              }}
-            >
-              {m === 'svg' ? '2D' : '3D'}
-            </button>
-          ))}
+          {(['svg', '3d'] as CanvasMode[]).map((m) => {
+            // HONESTY-GATE (2026-06-21): this playground has no `mode==='3d'` render
+            // branch — clicking 3D used to just highlight the pill and mount nothing.
+            // 3D testing lives on /canvas (the real 2D↔3D test surface); disable the
+            // dead toggle here instead of pretending it works.
+            const dead = m === '3d';
+            return (
+              <button
+                key={m}
+                onClick={() => { if (!dead) setMode(m); }}
+                disabled={dead}
+                title={dead ? '3D testing lives on /canvas — this playground is 2D only' : undefined}
+                style={{
+                  ...PILL,
+                  border: 'none',
+                  borderRadius: 0,
+                  background: mode === m ? 'var(--dir-accent)' : 'transparent',
+                  color: mode === m ? 'var(--dir-bg)' : 'var(--dir-text-body)',
+                  ...(dead ? { opacity: 0.4, cursor: 'not-allowed' } : {}),
+                }}
+              >
+                {m === 'svg' ? '2D' : '3D'}
+              </button>
+            );
+          })}
         </div>
 
         <div style={{ justifySelf: 'end', display: 'flex', gap: 8, alignItems: 'center' }}>

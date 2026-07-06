@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { IS } from '../../lib/typography';
 
 // Custom dropdown popover — replaces native <select> so the open menu
@@ -78,13 +79,21 @@ export function Dropdown({
   //            stays fully on-screen with a consistent margin, anchored as close
   //            to the trigger as it can — extending leftward into the canvas when
   //            needed. This is the Floating-UI "shift" / Figma menu behavior.
-  const [placement, setPlacement] = useState<{ dir: 'down' | 'up'; maxH: number; left: number; width: number }>({
+  // VIEWPORT-ABSOLUTE placement — the popover is PORTALED to <body> with
+  // position:fixed (see below), so it can never be clipped by a scrolling
+  // ancestor (e.g. the edit modal's overflow:auto control column, which cropped
+  // the AI-mesh Material menu — Sebs 2026-06-16 "the dropdown crops"). top/bottom
+  // are measured against the live viewport at open.
+  const [placement, setPlacement] = useState<{ dir: 'down' | 'up'; maxH: number; left: number; top: number; bottom: number; width: number }>({
     dir: 'down',
     maxH: 600,
     left: 0,
+    top: 0,
+    bottom: 0,
     width: popoverWidth,
   });
   const rootRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
 
   function toggleOpen() {
     if (!open) {
@@ -107,7 +116,11 @@ export function Dropdown({
         const vw = window.innerWidth;
         const maxLeft = Math.max(margin, vw - w - margin);
         const desiredLeft = Math.min(Math.max(r.left, margin), maxLeft);
-        setPlacement({ dir, maxH, left: desiredLeft - r.left, width: w });
+        // Fixed-position anchors (viewport coords): open below → top at the
+        // trigger's bottom; open above → bottom at the trigger's top.
+        const top = r.bottom + gap;
+        const bottom = window.innerHeight - r.top + gap;
+        setPlacement({ dir, maxH, left: desiredLeft, top, bottom, width: w });
       }
     }
     setOpen((v) => !v);
@@ -129,8 +142,12 @@ export function Dropdown({
   useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      // The popover is portaled OUTSIDE rootRef now → also exempt it, else a
+      // mousedown on an option would read as "outside" and close before the
+      // option's click lands.
+      if (rootRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
     }
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return;
@@ -238,19 +255,23 @@ export function Dropdown({
           </svg>
         </span>
       </button>
-      {open && (
+      {open && createPortal(
         <div
+          ref={popRef}
           role="listbox"
           style={{
-            position: 'absolute',
+            // PORTALED to <body> + position:fixed so NO ancestor overflow can
+            // clip it (the edit modal's scrolling control column was cropping
+            // the menu). Coords are viewport-absolute (measured at open).
+            position: 'fixed',
             // Flip up when there's no room below (cut-off fix); cap height to
             // the available space so long menus scroll instead of spilling off.
             ...(placement.dir === 'up'
-              ? { bottom: 'calc(100% + 6px)' }
-              : { top: 'calc(100% + 6px)' }),
-            // Horizontal shift (see placement comment) — keeps wide menus on-screen.
+              ? { bottom: placement.bottom }
+              : { top: placement.top }),
+            // Horizontal: viewport-absolute left, clamped on-screen at open.
             left: placement.left,
-            zIndex: 200,
+            zIndex: 4000,
             // Menu width == trigger width (measured at open); falls back to the
             // popoverWidth prop before first measurement.
             width: placement.width,
@@ -396,7 +417,8 @@ export function Dropdown({
               })}
             </section>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

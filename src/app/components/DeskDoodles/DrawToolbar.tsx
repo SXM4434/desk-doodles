@@ -18,68 +18,10 @@ import { PILL, SECTION_LABEL } from '../../lib/chromeStyles';
 import { ToneShadeCluster, type ShadeToolState } from './DrawSurface';
 import type { SnapAction } from '../../lib/draw/shapeFit';
 
-// ─── SnapChip — the shape-assist receipt (Rock F3) ───────────────────────────
-// "Circle ▸" — tap to cycle the ranked candidates (incl. Original). Accent dot
-// = a system act; fully rounded pill; no accent-ink bg per system rules. Lives
-// by the SNAP/STRAIGHTEN pills. (Was duplicated byte-identically in DrawPanel +
-// DeskDoodlesCanvas; now lives here, once.)
-function SnapChip({
-  label,
-  hasAlternatives,
-  onCycle,
-}: {
-  label: string;
-  hasAlternatives: boolean;
-  onCycle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      data-snap-chip
-      onClick={onCycle}
-      disabled={!hasAlternatives}
-      title={hasAlternatives ? 'Tap to try another shape' : 'Only one reading — nothing to cycle'}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        borderRadius: 999,
-        border: '1px solid var(--dir-border)',
-        background: 'var(--dir-bg)',
-        padding: '6px 12px',
-        minWidth: 0,
-        flexShrink: 0,
-        cursor: hasAlternatives ? 'pointer' : 'default',
-        fontFamily: IS,
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)', flexShrink: 0 }}
-      />
-      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--dir-text-primary)' }}>{label}</span>
-      {hasAlternatives && (
-        <span aria-hidden="true" style={{ fontSize: 11, color: 'var(--dir-text-secondary)' }}>
-          ▸
-        </span>
-      )}
-    </button>
-  );
-}
-
-export interface DrawToolbarSnapChip {
-  /** The receipt label — the currently-applied candidate's name. */
-  label: string;
-  /** True when there's more than one reading to cycle through. */
-  hasAlternatives: boolean;
-  /** Tap the chip = cycle to the next ranked candidate (host applies it live). */
-  onCycle: () => void;
-}
-
 export interface DrawToolbarProps {
-  // — register (Ink | Shade) —
-  register: 'ink' | 'shade';
-  onRegisterChange: (r: 'ink' | 'shade') => void;
+  // — register (Ink | Shade | Erase) —
+  register: 'ink' | 'shade' | 'erase';
+  onRegisterChange: (r: 'ink' | 'shade' | 'erase') => void;
   /** Disables both register pills (DrawPanel: true while in Style mode). The
    *  pills stay VISIBLE (dimmed) — only the canvas's render axis paused them. */
   registerDisabled?: boolean;
@@ -90,6 +32,10 @@ export interface DrawToolbarProps {
   // — shade tool cluster (ToneShadeCluster) —
   shadeTool: ShadeToolState;
   onShadeToolChange: (s: ShadeToolState) => void;
+  /** ERASE sub-mode (the GoodNotes Object/Pixel toggle) — shown when the Erase
+   *  register is active. Optional: a host that doesn't wire it gets no toggle. */
+  eraseMode?: 'object' | 'pixel';
+  onEraseModeChange?: (m: 'object' | 'pixel') => void;
   /** Whether the Shade register / tone cluster is in scope on this host. When
    *  false the Shade pill is hidden and the cluster never mounts. */
   shadeEnabled?: boolean;
@@ -103,8 +49,12 @@ export interface DrawToolbarProps {
   onSnapAction: (action: SnapAction) => void;
   /** Per-action tooltip — the host owns the honest wording (shade/no-stroke/…). */
   snapTitle: (action: SnapAction) => string;
-  /** The live shape-snap receipt chip, or null when nothing is snapped. */
-  snapChip: DrawToolbarSnapChip | null;
+  /** The snap-switcher receipt, rendered INLINE right after the Snap/Straighten
+   *  pills (Sebs 2026-06-15: "should just appear next to the snap"). The host
+   *  passes its "Snapped to X ▾" pill + ✕ + SwitchPopover here so the switcher
+   *  lives at the SNAP button instead of floating detached above the canvas.
+   *  null/undefined = nothing snapped. */
+  snapSwitcher?: ReactNode;
 
   // — caption (the honest-miss / register-hint one-liner) —
   captionText: string;
@@ -137,12 +87,14 @@ export function DrawToolbar({
   registerDisabledTitle,
   shadeTool,
   onShadeToolChange,
+  eraseMode,
+  onEraseModeChange,
   shadeEnabled = true,
   showSnap = true,
   snapEnabled,
   onSnapAction,
   snapTitle,
-  snapChip,
+  snapSwitcher,
   captionText,
   captionAlert = false,
   leading,
@@ -150,7 +102,10 @@ export function DrawToolbar({
   variant,
 }: DrawToolbarProps) {
   // The register options — Shade is dropped when the host has no tone scope.
-  const registers: ('ink' | 'shade')[] = shadeEnabled ? ['ink', 'shade'] : ['ink'];
+  // Erase is always available (it rubs out ink; with tone scope it lifts tone too).
+  const registers: ('ink' | 'shade' | 'erase')[] = shadeEnabled
+    ? ['ink', 'shade', 'erase']
+    : ['ink', 'erase'];
   // Spacing parity: DrawPanel's row had marginBottom 8 and its shade cluster
   // marginBottom 8; the /canvas row sat inside a maxWidth wrapper with no row
   // margin and a marginTop-8 shade cluster. RE-DRAW follows /canvas.
@@ -187,7 +142,9 @@ export function DrawToolbar({
                 ? registerDisabledTitle
                 : r === 'ink'
                   ? 'Draw ink strokes'
-                  : 'Brush flat tone bands under your ink'
+                  : r === 'shade'
+                    ? 'Brush flat tone bands under your ink'
+                    : 'Erase — drag over ink or tone to rub it out'
             }
             style={{
               ...PILL,
@@ -199,7 +156,7 @@ export function DrawToolbar({
               color: register === r ? 'var(--dir-bg)' : 'var(--dir-text-primary)',
             }}
           >
-            {r === 'ink' ? 'Ink' : 'Shade'}
+            {r === 'ink' ? 'Ink' : r === 'shade' ? 'Shade' : 'Erase'}
           </button>
         ))}
 
@@ -232,13 +189,7 @@ export function DrawToolbar({
                 {act === 'snap' ? 'Snap' : 'Straighten'}
               </button>
             ))}
-            {snapChip && (
-              <SnapChip
-                label={snapChip.label}
-                hasAlternatives={snapChip.hasAlternatives}
-                onCycle={snapChip.onCycle}
-              />
-            )}
+            {snapSwitcher}
           </>
         )}
 
@@ -279,6 +230,39 @@ export function DrawToolbar({
         >
           <span style={{ ...SECTION_LABEL, flexShrink: 0 }}>Tone</span>
           <ToneShadeCluster value={shadeTool} onChange={onShadeToolChange} />
+        </div>
+      )}
+      {/* ERASE sub-mode — Object (whole) vs Pixel (carve). Shown with the Erase
+          register, mirroring the Tone cluster. */}
+      {register === 'erase' && !registerDisabled && eraseMode && onEraseModeChange && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, ...clusterMargin }}>
+          <span style={{ ...SECTION_LABEL, flexShrink: 0 }}>Erase</span>
+          <div style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 999, border: '1px solid var(--dir-border)', background: 'var(--dir-bg)' }}>
+            {(['object', 'pixel'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => onEraseModeChange(m)}
+                aria-pressed={eraseMode === m}
+                title={
+                  m === 'object'
+                    ? 'Object — touch a stroke or tone patch to remove the whole thing'
+                    : 'Pixel — drag to rub out only the part you brush over'
+                }
+                style={{
+                  ...PILL,
+                  padding: '4px 12px',
+                  fontSize: 11,
+                  border: 'none',
+                  flexShrink: 0,
+                  ...(eraseMode === m
+                    ? { background: 'var(--dir-text-primary)', color: 'var(--dir-bg)' }
+                    : { background: 'transparent' }),
+                }}
+              >
+                {m === 'object' ? 'Object' : 'Pixel'}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </>

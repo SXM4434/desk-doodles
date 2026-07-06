@@ -1,4 +1,4 @@
-import { type CSSProperties } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 import { IS, ISe } from '../../lib/typography';
 import { SECTION_LABEL, RAISED_SHADOW } from '../../lib/chromeStyles';
 import { PAPER_GRAIN, WARM_POOL } from '../../lib/deskCraft';
@@ -19,13 +19,15 @@ export type ObjectCardProps = {
   svgMarkup: string;
   name?: string | null;
   why?: string | null;
-  /** Optional author name the maker chose for the card (card features, Sebs
-   *  2026-06-13) — the "by ___" attribution. Skippable; null/empty hides it.
-   *  Conceptually ties to the onboarding handle, but for now a plain field
-   *  persisted in the doodle's render_config. */
-  author?: string | null;
+  /** When provided, the art well renders THIS instead of the SVG (e.g. the 3D
+   *  mount) — the 2D/3D toggle on the surface swaps it in. Keeps the card chrome
+   *  (name/why/footer) and the framed well; only the art inside changes. */
+  artOverride?: ReactNode;
   /** Owner handle, or null/undefined for an anonymous maker. */
   owner?: string | null;
+  /** When set, the owner label becomes a button (click → that maker's public
+   *  shelf). Only pass for OTHER people's cards, never your own. */
+  onOwnerClick?: () => void;
   /** ISO timestamp; shown as a quiet date in the footer if present. */
   createdAt?: string | null;
   /** Mini density for the drawer/binder grid — the TCG frame at small scale:
@@ -42,11 +44,10 @@ export type ObjectCardProps = {
    *  card-like container (e.g. the ObjectSurface modal IS the card). Prevents
    *  a card-inside-a-card. The art well stays (it's the doodle's frame). */
   embedded?: boolean;
-  /** Editable mode (Create/Edit) — name + why + author become inputs. */
+  /** Editable mode (Create/Edit) — name + why become inputs. */
   editable?: boolean;
   onNameChange?: (v: string) => void;
   onWhyChange?: (v: string) => void;
-  onAuthorChange?: (v: string) => void;
 };
 
 const CARD_W = 300;
@@ -55,8 +56,9 @@ export function ObjectCard({
   svgMarkup,
   name,
   why,
-  author,
+  artOverride,
   owner,
+  onOwnerClick,
   createdAt,
   mini = false,
   plainArt = false,
@@ -64,7 +66,6 @@ export function ObjectCard({
   editable = false,
   onNameChange,
   onWhyChange,
-  onAuthorChange,
 }: ObjectCardProps) {
   // Embedded + mini both fill their container (modal panel / drawer grid
   // cell respectively); only the standalone full card carries its own width.
@@ -186,7 +187,24 @@ export function ObjectCard({
           dashed-circle placeholder keeps the well from reading as a hole. */}
       {/* data-dd-card-art tags the well so a drag source (the drawer) can use
           the ART as the drag image — the doodle is what lands on the desk. */}
-      <div style={artWell} data-dd-card-art="">
+      <div style={{ ...artWell, position: 'relative' }} data-dd-card-art="">
+        {/* The 2D SVG ALWAYS renders (export reads it from this well — so SVG/PNG
+            export works even while the 3D override is showing — Sebs 2026-06-16
+            "card export doesn't export when 3d"). When the 3D override is up it's
+            opacity:0 — still in the DOM (exportable, display-chain visible) but not
+            visible, so it never BLEEDS through the transparent 3D ("the dot over
+            the svg"). The 3D override overlays it. */}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: artOverride ? 0 : 1,
+            pointerEvents: artOverride ? 'none' : undefined,
+          }}
+        >
         {marks === 0 ? (
           <svg
             width="48"
@@ -223,6 +241,12 @@ export function ObjectCard({
               />
             </SvgStyleTransform>
           </div>
+        )}
+        </div>
+        {artOverride && (
+          // The surface's own art (the 3D mount) — overlays the 2D SVG (which stays
+          // mounted behind it so export still finds a rendered doodle).
+          <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>{artOverride}</div>
         )}
       </div>
 
@@ -268,55 +292,8 @@ export function ObjectCard({
             )
           )}
 
-          {/* Author "by ___" — optional, skippable (card features, Sebs
-              2026-06-13). Editable: a quiet optional input. Read: the "by ___"
-              attribution line, only when the maker set one. */}
-          {editable ? (
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span
-                style={{
-                  fontFamily: IS,
-                  fontSize: 13,
-                  color: 'var(--dir-text-body-soft)',
-                  flexShrink: 0,
-                }}
-              >
-                by
-              </span>
-              <input
-                value={author ?? ''}
-                onChange={(e) => onAuthorChange?.(e.target.value)}
-                placeholder="your name (optional)"
-                aria-label="Author name (optional)"
-                maxLength={48}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontFamily: IS,
-                  fontSize: 13,
-                  color: 'var(--dir-text-body)',
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                }}
-              />
-            </div>
-          ) : (
-            author && (
-              <div
-                style={{
-                  fontFamily: IS,
-                  fontSize: 13,
-                  color: 'var(--dir-text-body-soft)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                by {author}
-              </div>
-            )
-          )}
+          {/* (Per-doodle author field removed 2026-06-14 — identity is the ONE
+              @handle, shown or anonymous; no different name per doodle.) */}
 
           {/* Footer — owner + quiet date, divided from the body. The label idiom
               (10/600/0.08em uppercase secondary) is the shared SECTION_LABEL;
@@ -333,7 +310,27 @@ export function ObjectCard({
               gap: 8,
             }}
           >
-            <span>{ownerLabel(owner)}</span>
+            {onOwnerClick ? (
+              <button
+                type="button"
+                onClick={onOwnerClick}
+                title="See their shelf"
+                style={{
+                  ...SECTION_LABEL,
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  textUnderlineOffset: 2,
+                  color: 'inherit',
+                }}
+              >
+                {ownerLabel(owner)}
+              </button>
+            ) : (
+              <span>{ownerLabel(owner)}</span>
+            )}
             {createdAt && (
               <span style={{ fontWeight: 500, letterSpacing: '0.04em', color: 'var(--dir-text-body-soft)' }}>
                 {formatCardDate(createdAt)}
@@ -391,14 +388,27 @@ function countMarks(svgMarkup: string): number {
 // handle, on every client, every reload — no unseeded randomness.
 
 // Soft adjectives + small warm things (critters + desk objects), lowercase —
-// "quiet-heron", "inky-paperclip". 16×16 = 256 combos.
+// "quiet-heron", "inky-paperclip". MUST stay byte-identical (same words, same
+// order) to lib/handle.ts ADJ/NOUN so an owner label here == the user's own
+// generated handle there. ~50×50 = 2500 combos so handles read DISTINCT, not
+// "name-7" (Sebs 2026-06-18: a number suffix is lazy).
 const HANDLE_ADJ = [
   'quiet', 'warm', 'little', 'sleepy', 'sunny', 'gentle', 'humble', 'wobbly',
   'inky', 'folded', 'scuffed', 'crooked', 'doodled', 'smudged', 'loose', 'tidy',
+  'cozy', 'dusty', 'faded', 'soft', 'rumpled', 'hazy', 'mellow', 'drowsy',
+  'plucky', 'nimble', 'tiny', 'rounded', 'speckled', 'dappled', 'woolly', 'fuzzy',
+  'dainty', 'lanky', 'bashful', 'chipper', 'snug', 'breezy', 'earthy', 'pale',
+  'bright', 'brisk', 'calm', 'curly', 'knotted', 'patched', 'stitched', 'amber',
+  'briny', 'sandy',
 ];
 const HANDLE_NOUN = [
   'heron', 'wren', 'finch', 'moth', 'snail', 'otter', 'pebble', 'acorn',
   'maple', 'clover', 'pencil', 'eraser', 'paperclip', 'crayon', 'mug', 'stamp',
+  'sparrow', 'robin', 'swallow', 'magpie', 'beetle', 'ladybug', 'cricket', 'minnow',
+  'tadpole', 'newt', 'hedgehog', 'dormouse', 'vole', 'marmot', 'teapot', 'kettle',
+  'thimble', 'button', 'ribbon', 'marble', 'domino', 'inkwell', 'quill', 'notebook',
+  'bookmark', 'postcard', 'lantern', 'walnut', 'chestnut', 'pinecone', 'mushroom', 'fern',
+  'moss', 'reed',
 ];
 
 // FNV-1a 32-bit over (value + salt) — local copy of deskNames.ts's streamHash
@@ -414,7 +424,11 @@ function handleHash(value: string, salt: number): number {
   return h >>> 0;
 }
 
-/** Deterministic warm handle for a session uuid, e.g. "quiet-heron". */
+/** Deterministic warm handle for a session uuid, e.g. "quiet-heron". MUST match
+ *  lib/handle.ts handleFromId exactly (same pools/order + same FNV-1a salts) so
+ *  an owner label here == the user's own generated handle there. NO number
+ *  suffix (Sebs 2026-06-18: lazy) — the ~2500-combo pool keeps deterministic
+ *  auto-names distinct; guaranteed uniqueness is enforced at claim time. */
 function ownerHandle(sessionId: string): string {
   const adj = HANDLE_ADJ[handleHash(sessionId, 1) % HANDLE_ADJ.length];
   const noun = HANDLE_NOUN[handleHash(sessionId, 2) % HANDLE_NOUN.length];

@@ -38,6 +38,10 @@ import {
 } from './DrawSurface';
 import { DrawToolbar } from './DrawToolbar';
 import { type ShapeCandidate, type ShapeFitResult, type SnapAction } from '../../lib/draw/shapeFit';
+import { SwitchPopover } from './SwitchPopover';
+import { ShapeStrip } from './ShapeStrip';
+import { buildSwitchSet, type ShapeOverride, type SwitchEntry } from '../../lib/draw/switchSet';
+import { generateShape } from '../../lib/draw/shapeLibrary';
 import { pushShapeSnapEntry, type ShapeSnapOutcome } from '../../lib/shapeSnapLog';
 import { COVERAGE_BANDS } from '../../lib/smart/coverage';
 import { svgMarkupToStrokes } from '../../lib/svgToStrokes';
@@ -123,7 +127,8 @@ function DeskDoodlesCanvasPage() {
   // INK | SHADE register — which tool the pointer wields while sketching
   // (round 7). Ink = strokes; Shade = the tone-fill brush. Only meaningful in
   // 2D draw mode; the chrome that surfaces it is gated on mode/input below.
-  const [penRegister, setPenRegister] = useState<'ink' | 'shade'>('ink');
+  const [penRegister, setPenRegister] = useState<'ink' | 'shade' | 'erase'>('ink');
+  const [eraseMode, setEraseMode] = useState<'object' | 'pixel'>('object');
   const [shadeTool, setShadeTool] = useState<ShadeToolState>(SHADE_TOOL_DEFAULT);
 
   // FILL-TOOL NOTE — the honest-miss one-liner ("no closed region here…")
@@ -153,26 +158,22 @@ function DeskDoodlesCanvasPage() {
   const handleSnapApi = useCallback((api: ShapeSnapApi) => {
     snapApiRef.current = api;
   }, []);
-  // The live snap chip: which stroke it targets, the ranked candidate list,
-  // the cycle index, and the remembered ORIGINAL points (so 'original'
-  // restores the drawn stroke without DrawSurface holding undo memory).
-  type SnapChipState = {
-    strokeId: string;
-    action: SnapAction;
-    candidates: ShapeCandidate[];
-    index: number;
-    originalPoints: StrokePoint[];
-    margin: number;
-  };
-  const [snapChip, setSnapChip] = useState<SnapChipState | null>(null);
-  // Ref mirror of the chip so the cycle/dismiss handlers can run their side
-  // effects (api.applyToStroke → DrawSurface setState, logging) OUTSIDE the
-  // setSnapChip updater. Calling a child's setState inside a parent's state
-  // updater = "setState during render" (React dev warning) — the ref reads the
-  // live value and keeps the side effects in the event-handler phase.
-  const snapChipRef = useRef<SnapChipState | null>(snapChip);
-  snapChipRef.current = snapChip;
-
+  // ── SNAP SWITCHER (Sebs 2026-06-15 — the ONE snap UI, mirrors DrawPanel) ────
+  // No auto-offer on pen-up, no click-through cycle chip. The SNAP button fits
+  // the last stroke, applies the best shape, and opens THIS switcher (recognized
+  // ∪ 12 library ∪ Original). ✕ dismisses (applied shape stays; pick Original to
+  // revert).
+  const [override, setOverride] = useState<ShapeOverride | null>(null);
+  const [switchAllOpen, setSwitchAllOpen] = useState(false);
+  // SHAPE INSERT (Phase 2) — armed library/primitive shape (null = Freehand).
+  const [armedShape, setArmedShape] = useState<string | null>(null);
+  const armShape = useCallback((kind: string | null) => {
+    setArmedShape(kind);
+    if (kind) {
+      setPenRegister('ink');
+      setOverride(null);
+    }
+  }, []);
   /** Log one shape-snap act into the unified decision log (training flywheel,
    *  spec §2.5/§8) — identical to DrawPanel's logSnap. */
   const logSnap = useCallback(
@@ -232,68 +233,75 @@ function DeskDoodlesCanvasPage() {
         );
         return;
       }
+      // Apply the best candidate (the snap) then OPEN the switcher — the ONE
+      // snap path; replaces the old cycle chip AND the auto-offer (Sebs 2026-06-15).
       const best = result.candidates[0];
       api.applyToStroke(strokeId, best, last.points);
       logSnap(action, 'evaluate', strokeId, result, best.kind, margin);
-      setSnapChip({
-        strokeId,
-        action,
-        candidates: result.candidates,
-        index: 0,
-        originalPoints: last.points,
-        margin,
-      });
+      const switchSet = buildSwitchSet(result, last.points);
+      const appliedIndex = Math.max(
+        0,
+        switchSet.findIndex((e) => e.source === 'recognized' && e.kind === best.kind),
+      );
+      setOverride({ strokeId, appliedKind: best.kind, switchSet, appliedIndex, originalPoints: last.points });
+      setSwitchAllOpen(true);
     },
     [logSnap, showFillNote],
   );
 
-  /** Chip tap: cycle to the next ranked candidate (incl. 'original'), apply it
-   *  live, log the cycle/revert. Side effects run in the event-handler phase
-   *  (reading snapChipRef), then ONE pure setSnapChip bumps the index — so no
-   *  child setState fires inside the updater (avoids setState-in-render). */
-  const cycleSnapChip = useCallback(() => {
-    const chip = snapChipRef.current;
-    if (!chip) return;
-    const api = snapApiRef.current;
-    if (!api) return;
-    const nextIndex = (chip.index + 1) % chip.candidates.length;
-    const cand = chip.candidates[nextIndex];
-    api.applyToStroke(chip.strokeId, cand, chip.originalPoints);
-    pushShapeSnapEntry({
-      entryType: 'shape-snap',
-      surface: 'shape-snap',
-      action: chip.action,
-      outcome: cand.kind === 'original' ? 'revert' : 'cycle',
-      strokeId: chip.strokeId,
-      accepted: true,
-      refusedReason: null,
-      candidates: chip.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
-      chosen: cand.kind,
-      margin: chip.margin,
-    });
-    setSnapChip((prev) => (prev ? { ...prev, index: nextIndex } : prev));
-  }, []);
+  /** Apply one switch entry to the override's stroke (recognized → fitted
+   *  candidate; library → generate at bbox; original → restore). Mirrors DrawPanel. */
+  const applyOverrideEntry = useCallback(
+    (entry: SwitchEntry, index: number) => {
+      const api = snapApiRef.current;
+      if (!api || !override) return;
+      if (entry.source === 'recognized' && entry.candidate) {
+        api.applyToStroke(override.strokeId, entry.candidate, override.originalPoints);
+      } else if (entry.source === 'library') {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const [x, y] of override.originalPoints) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+        const outline = generateShape(
+          entry.kind as Parameters<typeof generateShape>[0],
+          { x: minX, y: minY, w: maxX - minX, h: maxY - minY },
+        );
+        if (outline) {
+          const cand: ShapeCandidate = {
+            kind: 'polygon',
+            points: outline as unknown as ShapeCandidate['points'],
+            normErr: 0,
+            score: 1,
+            closed: true,
+            label: entry.label,
+            notes: `library:${entry.kind}`,
+          };
+          api.applyToStroke(override.strokeId, cand, override.originalPoints);
+        }
+      } else {
+        const cand: ShapeCandidate = {
+          kind: 'original',
+          points: override.originalPoints as unknown as ShapeCandidate['points'],
+          normErr: 0,
+          score: 0,
+          closed: false,
+          label: 'Original',
+        };
+        api.applyToStroke(override.strokeId, cand, override.originalPoints);
+      }
+      setOverride({ ...override, appliedIndex: index, appliedKind: entry.kind });
+      setSwitchAllOpen(false);
+    },
+    [override],
+  );
 
-  /** Dismiss the chip (keep the standing choice). Logged as 'keep'. The log
-   *  side effect runs in the handler phase (reading snapChipRef), then one pure
-   *  setSnapChip clears it — keeping the updater side-effect-free. */
+  /** Dismiss the snap switcher (keep whatever shape is applied). */
   const dismissSnapChip = useCallback(() => {
-    const chip = snapChipRef.current;
-    if (!chip) return;
-    const cand = chip.candidates[chip.index];
-    pushShapeSnapEntry({
-      entryType: 'shape-snap',
-      surface: 'shape-snap',
-      action: chip.action,
-      outcome: 'keep',
-      strokeId: chip.strokeId,
-      accepted: true,
-      refusedReason: null,
-      candidates: chip.candidates.map((c) => ({ kind: c.kind, normErr: c.normErr, score: c.score })),
-      chosen: cand.kind,
-      margin: chip.margin,
-    });
-    setSnapChip(null);
+    setOverride(null);
+    setSwitchAllOpen(false);
   }, []);
 
   // Gap scrub → slider sync (DrawSurface fires once per ladder step; the
@@ -325,20 +333,22 @@ function DeskDoodlesCanvasPage() {
   }, [snapDismissKey, dismissSnapChip]);
 
   const { geometryMode, style3d, materialPreset, nativeProps, hatchGrammar, hatchDirection, modeParams,
-    setStyle3d, setGeometryMode } =
+    reliefDepth, reliefCsg, setStyle3d, setGeometryMode } =
     useCanvas3D();
-  const { state: mods } = useF3RoughModifiers();
-  const { setState: setSvgStyle } = useF3SvgStyle();
+  const { state: mods, set: setMod } = useF3RoughModifiers();
+  const { state: svgStyle, setState: setSvgStyle } = useF3SvgStyle();
 
-  // DEV-only test seam: drive 3D + SVG style programmatically (verification
-  // harnesses set these instead of clicking dropdown popovers). Stripped in
-  // prod builds (import.meta.env.DEV guard).
+  // DEV-only test seam: drive 3D + SVG style + modifiers programmatically
+  // (verification harnesses set these instead of clicking dropdown popovers —
+  // the chrome dropdowns are fiddly to drive headlessly). setMod(key, value)
+  // sets any F3 modifier (e.g. multiStroke, fillStyle, penTip). Stripped in prod
+  // builds (import.meta.env.DEV guard).
   useEffect(() => {
     if (!import.meta.env.DEV || typeof window === 'undefined') return;
     (window as unknown as Record<string, unknown>).__ddSet = {
-      setMode, setStyle3d, setGeometryMode, setSvgStyle,
+      setMode, setStyle3d, setGeometryMode, setSvgStyle, setMod,
     };
-  }, [setStyle3d, setGeometryMode, setSvgStyle]);
+  }, [setStyle3d, setGeometryMode, setSvgStyle, setMod]);
   // EASY svg→3D bridge: an uploaded SVG never enters the stroke pool (it renders
   // as 2D-only markup), so 3D used to say "nothing to convert". Flatten the
   // FITTED upload markup into strokes (svgToStrokes) and use them when there are
@@ -361,10 +371,20 @@ function DeskDoodlesCanvasPage() {
   // a parallel shader). Re-renders live as strokes/style/Shading sliders change.
   const svgPortActive = mode === '3d' && style3d === 'svg-port' && strokePoints.length > 0;
   const [svgPortMarkup, setSvgPortMarkup] = useState<string | null>(null);
+  // TONE→3D (Sebs 2026-06-15, shading-research Approach 1): thread the painted
+  // tone bands into the svg-port markup so dark shaded regions reach
+  // buildSvgPortTexture's luminance→relief+emissive pass and READ DARK on the 3D
+  // form. Was dropped here (tone arg omitted → '' tone markup → 3D saw only the
+  // fill="none" stroke lines). No tone painted → toneFillsMarkup([]) = '' →
+  // byte-identical to before (zero regression). Stays ink-black: value comes from
+  // the existing texture's carved relief + emissive under light, not grey albedo.
   const svgPortSource = useMemo(
-    () => (svgPortActive ? strokesToObjectMarkup(strokes3d) : null),
-    [svgPortActive, strokes3d],
+    () => (svgPortActive ? strokesToObjectMarkup(strokes3d, tone) : null),
+    [svgPortActive, strokes3d, tone],
   );
+  // Stable per-style carve-profile bundle (memo so 3D-rotation re-renders don't
+  // churn the build effect). styleId → the active svg-style's relief profile.
+  const canvasSvgPortBuild = useMemo(() => ({ styleId: svgStyle, reliefDepth, reliefCsg }), [svgStyle, reliefDepth, reliefCsg]);
   // Live 2D Shading values → hatch/svg-port uniforms (one math, four
   // renderers): the SAME F3RoughModifiers state the 2D pen reads + the Hatch
   // STYLE toggles (grammar/direction, symmetry-law gap cell §1). Memo keyed on
@@ -399,6 +419,31 @@ function DeskDoodlesCanvasPage() {
     { open: leftOpen, setOpen: setLeftOpen },
     { open: rightOpen, setOpen: setRightOpen },
   ]);
+
+  // SNAP SWITCHER receipt — rendered INLINE next to the SNAP/STRAIGHTEN pills via
+  // DrawToolbar's snapSwitcher slot (Sebs 2026-06-15: "appear next to the snap").
+  const snapSwitcherNode = override ? (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      <span aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)' }} />
+      <button
+        style={{ ...PILL, fontFamily: IS, fontSize: 11, padding: '5px 12px', cursor: 'pointer', background: switchAllOpen ? 'var(--dir-text-primary)' : 'var(--dir-bg)', color: switchAllOpen ? 'var(--dir-bg)' : 'var(--dir-text-body)', border: '1px solid var(--dir-border)' }}
+        onClick={() => setSwitchAllOpen((v) => !v)}
+        title="Switch to another shape"
+      >
+        Snapped to {override.switchSet[override.appliedIndex]?.label ?? 'shape'} ▾
+      </button>
+      <button
+        style={{ ...PILL, fontFamily: IS, fontSize: 11, padding: '5px 10px', cursor: 'pointer', background: 'var(--dir-bg)', color: 'var(--dir-text-body-soft)', border: '1px solid var(--dir-border)' }}
+        onClick={() => setOverride(null)}
+        title="Done"
+      >
+        ✕
+      </button>
+      {switchAllOpen && (
+        <SwitchPopover override={override} onSwitchTo={applyOverrideEntry} onClose={() => setSwitchAllOpen(false)} />
+      )}
+    </div>
+  ) : null;
 
   return (
     <div
@@ -602,10 +647,18 @@ function DeskDoodlesCanvasPage() {
               (920) so the toolbar lines up over the frame. */}
           {drawToolsActive && (
             <div style={{ width: '100%', maxWidth: 920, marginBottom: 12, flexShrink: 0 }}>
+              {/* SHAPE INSERT quick-pick (Phase 2) — arm a shape → drag to place. */}
+              {penRegister === 'ink' && (
+                <div style={{ marginBottom: 8 }}>
+                  <ShapeStrip armedShape={armedShape} onArmShape={armShape} collapsed />
+                </div>
+              )}
               <DrawToolbar
                 variant="canvas"
                 register={penRegister}
                 onRegisterChange={setPenRegister}
+                eraseMode={eraseMode}
+                onEraseModeChange={setEraseMode}
                 shadeTool={shadeTool}
                 onShadeToolChange={setShadeTool}
                 snapEnabled={penRegister === 'ink' && strokes3d.length > 0}
@@ -619,15 +672,7 @@ function DeskDoodlesCanvasPage() {
                         ? 'Snap the last stroke to a clean shape'
                         : 'Crisp the last stroke’s edges (keeps your proportions)'
                 }
-                snapChip={
-                  snapChip
-                    ? {
-                        label: snapChip.candidates[snapChip.index]?.label ?? 'Shape',
-                        hasAlternatives: snapChip.candidates.length > 1,
-                        onCycle: cycleSnapChip,
-                      }
-                    : null
-                }
+                snapSwitcher={snapSwitcherNode}
                 captionAlert={!!fillNote}
                 captionText={
                   fillNote ??
@@ -669,20 +714,33 @@ function DeskDoodlesCanvasPage() {
               shade={
                 drawToolsActive
                   ? {
-                      active: shadeActive,
-                      tool: shadeTool.tool,
-                      band: shadeTool.band,
+                      // Erase register rides the tone-brush gesture (band-0 lifter)
+                      // and eraseStrokes below makes the same drag rub out ink too.
+                      active: penRegister === 'shade' || penRegister === 'erase',
+                      tool: penRegister === 'erase' ? 'brush' : shadeTool.tool,
+                      band: penRegister === 'erase' ? 0 : shadeTool.band,
                       radius: shadeTool.radius,
-                      erase: shadeTool.erase,
+                      erase: penRegister === 'erase' ? true : shadeTool.erase,
                       gap: shadeTool.gap,
+                      fullFill: shadeTool.fullFill,
                     }
                   : null
               }
+              eraseStrokes={drawToolsActive && penRegister === 'erase'}
+              eraseMode={eraseMode}
               onToneFillsChange={setTone}
               onGapChange={handleGapChange}
               onFillNote={showFillNote}
               onSnapApi={handleSnapApi}
-              onUploadedSvgChange={setUploadedSvgMarkup}
+              onUploadedSvgChange={(m) => {
+                setUploadedSvgMarkup(m);
+                // Uploads default to CLEAN — our baseline (Sebs 2026-06-16). The
+                // default hachure fillStyle drew faint cross-lines across line-art.
+                if (m) setSvgStyle('clean');
+              }}
+              onSelectionChange={(id) => { if (id === null) setOverride(null); }}
+              armedShape={armedShape}
+              onShapeInserted={() => { setOverride(null); setArmedShape(null); }}
             />
             {mode === '3d' && (
               <div
@@ -707,6 +765,9 @@ function DeskDoodlesCanvasPage() {
                       modeParams={modeParams}
                       hatchInputs={hatchInputs}
                       svgPortMarkup={svgPortMarkup ?? undefined}
+                      // Per-style carve PROFILE so /canvas svg-port also reads
+                      // distinct per style (full res — one big object, no burst).
+                      svgPortBuild={canvasSvgPortBuild}
                       style={{ width: '100%', height: '100%' }}
                     />
                   </Suspense>
@@ -722,9 +783,10 @@ function DeskDoodlesCanvasPage() {
                         </>
                       ) : input === 'upload-image' ? (
                         <>
-                          Image→3D is the hard path (vision router) — coming soon.
+                          Pick a photo — it’s traced to a clean sketch, then that
+                          converts to 3D like any drawing.
                           <br />
-                          Draw strokes or upload an SVG to convert now.
+                          (Switch to 2D to pick the image first.)
                         </>
                       ) : (
                         <>Draw strokes in 2D first — then flip back to 3D.</>

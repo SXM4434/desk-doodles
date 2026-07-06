@@ -31,7 +31,7 @@ import {
   handleError,
   displayHandle,
 } from '../../lib/handle';
-import { getIdentityId, claimHandle } from '../../lib/personalSpace';
+import { getIdentityId, claimHandle, setLocalHandle } from '../../lib/personalSpace';
 
 // localStorage marker so onboarding shows once. DeskPage also gates on this; the
 // component owns the WRITE so "done" is recorded the moment they settle a handle.
@@ -73,6 +73,7 @@ export function OnboardingFlow({ onDone }: OnboardingFlowProps) {
   // Escape skips (invitational, never a gate).
   const skip = useCallback(() => {
     markOnboarded();
+    setLocalHandle(handle); // remember the on-screen handle even on skip
     onDone(handle);
   }, [handle, onDone]);
 
@@ -98,6 +99,7 @@ export function OnboardingFlow({ onDone }: OnboardingFlowProps) {
           const result = await claimHandle(candidate, source);
           if (result === 'claimed' || result === 'unavailable') {
             markOnboarded();
+            setLocalHandle(candidate); // sticks across reloads + keeps chips in sync (DB on or off)
             onDone(candidate);
             return;
           }
@@ -109,6 +111,7 @@ export function OnboardingFlow({ onDone }: OnboardingFlowProps) {
       } catch {
         // Network/unknown — don't trap the user; keep the local handle + enter.
         markOnboarded();
+        setLocalHandle(h);
         onDone(h);
       } finally {
         setBusy(false);

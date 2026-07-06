@@ -11,6 +11,7 @@ import {
   type DoodleRow,
 } from '../../lib/publish';
 import { sanitizeSvgMarkup } from '../../lib/svgUpload';
+import { buildDemoWall, type DemoWallObject } from '../../lib/demoWall';
 
 // ─── DeskGallery — the public "wall of walls" (/desks) ──────────────────────
 // Grounds in docs/design/object-model-and-desk-architecture.md, Multi-desk
@@ -122,19 +123,44 @@ export function DeskGallery() {
         </div>
       </header>
 
-      {/* Body — scrollable grid of desk cards */}
+      {/* Body — scrollable grid of desk cards. The DEMO WALL card always leads
+          (Sebs 2026-06-15: "add the desk to the wall of walls so I can open the
+          desk"); it works with NO backend, so the wall-of-walls is never empty
+          and the demo desk is always one click away — ideal for recording. Real
+          desks append when the DB load resolves; loading/error fall to a small
+          note BELOW the grid instead of taking over the screen. */}
       <main style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '32px 24px' }}>
+        <div
+          style={{
+            display: 'grid',
+            // Responsive: as many ~240px columns as fit, then stretch.
+            gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+            gap: 20,
+            maxWidth: 1280,
+            marginInline: 'auto',
+          }}
+        >
+          {/* The always-available demo wall → opens /desk?demo=1. */}
+          <DemoDeskCard onOpen={() => navigate('/desk?demo=1')} />
+
+          {state.phase === 'ready' &&
+            desks.map((desk) => (
+              <DeskCard
+                key={desk.id}
+                desk={desk}
+                onOpen={() => navigate(`/desk?desk=${desk.desk_index}`)}
+              />
+            ))}
+        </div>
+
         {state.phase === 'loading' && (
-          <div style={centeredNoteStyle}>Loading the wall…</div>
+          <div style={{ ...centeredNoteStyle, height: 'auto', marginTop: 28 }}>Loading more walls…</div>
         )}
 
-        {/* ERROR — honest "couldn't reach" + Retry. Distinct from empty: a
-            timeout / network failure is not "no desks yet". */}
         {state.phase === 'error' && (
-          <div style={centeredNoteStyle}>
-            Couldn’t reach the wall.<br />
-            Check your connection — the desks are still there.
-            <div style={{ marginTop: 16 }}>
+          <div style={{ ...centeredNoteStyle, height: 'auto', marginTop: 28 }}>
+            Couldn’t reach the rest of the wall — the demo wall above still opens.
+            <div style={{ marginTop: 12 }}>
               <button type="button" onClick={retry} style={{ ...PILL }}>
                 Retry
               </button>
@@ -143,43 +169,14 @@ export function DeskGallery() {
         )}
 
         {state.phase === 'ready' && isEmpty && (
-          <div style={centeredNoteStyle}>
-            No desks on the wall yet.<br />
-            Be the first — start doodling and your desk shows up here.
-            <div style={{ marginTop: 16 }}>
-              <NavLink
-                to="/desk"
-                style={{
-                  fontFamily: IS,
-                  fontSize: 13,
-                  color: 'var(--dir-link-color)',
-                  textDecoration: 'none',
-                }}
-              >
-                Start doodling →
-              </NavLink>
-            </div>
-          </div>
-        )}
-
-        {state.phase === 'ready' && !isEmpty && (
-          <div
-            style={{
-              display: 'grid',
-              // Responsive: as many ~240px columns as fit, then stretch.
-              gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-              gap: 20,
-              maxWidth: 1280,
-              marginInline: 'auto',
-            }}
-          >
-            {desks.map((desk) => (
-              <DeskCard
-                key={desk.id}
-                desk={desk}
-                onOpen={() => navigate(`/desk?desk=${desk.desk_index}`)}
-              />
-            ))}
+          <div style={{ ...centeredNoteStyle, height: 'auto', marginTop: 28 }}>
+            No community desks yet — be the first.{' '}
+            <NavLink
+              to="/desk"
+              style={{ fontFamily: IS, fontSize: 13, color: 'var(--dir-link-color)', textDecoration: 'none' }}
+            >
+              Start doodling →
+            </NavLink>
           </div>
         )}
       </main>
@@ -323,6 +320,138 @@ function DeskCard({ desk, onOpen }: { desk: DeskRow; onOpen: () => void }) {
         </span>
       </div>
     </button>
+  );
+}
+
+// ─── DemoDeskCard — the always-available demo wall (no backend) ──────────────
+// A real-looking desk card whose preview is built from the catalog (buildDemoWall)
+// instead of a DB fetch. Clicking it opens /desk?demo=1 — the curated 21-object
+// wall. Same frame grammar as DeskCard so it sits in the grid as a peer.
+function DemoDeskCard({ onOpen }: { onOpen: () => void }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0,
+        padding: 0,
+        textAlign: 'left',
+        background: 'var(--dir-raised)',
+        border: '1px solid var(--dir-border)',
+        borderRadius: 12,
+        overflow: 'hidden',
+        cursor: 'pointer',
+        boxShadow: hover ? '0 6px 20px color-mix(in srgb, var(--dir-text-primary) 10%, transparent)' : 'none',
+        transform: hover ? 'translateY(-2px)' : 'none',
+        transition: 'box-shadow 0.18s ease-out, transform 0.18s ease-out, border-color 0.15s',
+        borderColor: hover ? 'var(--dir-text-body-soft)' : 'var(--dir-border)',
+        font: 'inherit',
+        color: 'inherit',
+      }}
+    >
+      <div
+        style={{
+          position: 'relative',
+          aspectRatio: '4 / 3',
+          width: '100%',
+          borderBottom: '1px solid var(--dir-border)',
+          overflow: 'hidden',
+          backgroundColor: 'var(--dir-bg)',
+          backgroundImage: `${PAPER_GRAIN}, ${WARM_POOL}`,
+        }}
+      >
+        <DemoMiniDesk />
+        <span style={{ ...CHIP, position: 'absolute', top: 10, left: 10, background: 'var(--dir-bg)' }}>
+          <span
+            aria-hidden
+            style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--dir-accent)', display: 'inline-block' }}
+          />
+          Demo
+        </span>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          padding: '14px 16px',
+        }}
+      >
+        <span
+          style={{
+            fontFamily: ISe,
+            fontSize: 17,
+            lineHeight: 1.2,
+            letterSpacing: '-0.01em',
+            color: 'var(--dir-text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            minWidth: 0,
+          }}
+          title="The Showcase Wall — every style, no setup"
+        >
+          The Showcase Wall
+        </span>
+        <span
+          style={{ ...CHIP, flexShrink: 0, background: 'transparent', color: 'var(--dir-text-secondary)' }}
+          title="21 catalog objects across every render style"
+        >
+          21 / 120
+        </span>
+      </div>
+    </button>
+  );
+}
+
+/** The demo card's mini preview — first ~6 catalog objects (buildDemoWall) on the
+ *  card's warm-paper surface, scattered via the same SCATTER table MiniDesk uses. */
+function DemoMiniDesk() {
+  const [objs, setObjs] = useState<DemoWallObject[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    buildDemoWall(MINI_CAP)
+      .then((o) => {
+        if (!cancelled) setObjs(o);
+      })
+      .catch(() => {
+        if (!cancelled) setObjs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!objs || objs.length === 0) return <EmptyDeskMark />;
+  return (
+    <div style={{ position: 'absolute', inset: 0 }} aria-hidden>
+      {objs.slice(0, MINI_CAP).map((o, i) => {
+        const slot = SCATTER[i];
+        const markup = sanitizeSvgMarkup(
+          normalizeSvgSize(o.svgMarkup, Math.round(MINI_DOODLE_PX * slot.scale)),
+        );
+        return (
+          <div
+            key={o.id}
+            style={{
+              position: 'absolute',
+              left: `${slot.left}%`,
+              top: `${slot.top}%`,
+              transform: `translate(-50%, -50%) rotate(${slot.rot}deg)`,
+              display: 'flex',
+            }}
+            dangerouslySetInnerHTML={{ __html: markup }}
+          />
+        );
+      })}
+    </div>
   );
 }
 
