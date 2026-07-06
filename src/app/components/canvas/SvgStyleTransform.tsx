@@ -1122,7 +1122,32 @@ function renderHandFeelShape(
       if (m.fillStyle === 'dots') {
         (fillOpts as { dotScatter?: number }).dotScatter = m.dotScatter;
       }
-      const hachureG = ctx.rc.path(dPath, fillOpts);
+      let hachureG = ctx.rc.path(dPath, fillOpts);
+      // PERF BACKSTOP (mirror of renderRegion.ts U3 cap): a tiny gap on a huge
+      // region can make rough.js emit a multi-MB <path> that freezes the tab.
+      // The default render goes through the smart pipeline (already capped); this
+      // guards the legacy ?smartHachure=0 fallback the same way. Gap-dependent
+      // grammars only (solid is one bounded outline). ≤4 raises, coverage
+      // saturates, never hangs.
+      if (hachureG && m.fillStyle !== 'solid') {
+        const MAX_PATH_CHARS = 300000;
+        const dLen = (g: SVGElement) =>
+          [...g.querySelectorAll('path')].reduce(
+            (mx, p) => Math.max(mx, (p.getAttribute('d') ?? '').length),
+            0,
+          );
+        let len = dLen(hachureG);
+        let tries = 0;
+        while (len > MAX_PATH_CHARS && tries < 4) {
+          tries++;
+          adaptedGap *= Math.max(1.6, Math.sqrt(len / MAX_PATH_CHARS));
+          const regen = ctx.rc.path(dPath, { ...fillOpts, hachureGap: adaptedGap });
+          if (!regen) break;
+          hachureG.remove();
+          hachureG = regen;
+          len = dLen(hachureG);
+        }
+      }
       if (hachureG) {
         hachureG.setAttribute('data-f3-hachure', 'shading');
         // Hachure opacity scales with fillOpacity slider AND with darkness
@@ -1299,62 +1324,6 @@ function renderHandFeelShape(
   return out;
 }
 
-// ─── ROUGH.JS for <path> (arbitrary path data) ──────────────────────────────
-
-function buildRoughOptionsForPath(
-  m: F3ModifiersState,
-  el: SVGElement,
-  seed: number,
-): RoughOptions {
-  const ms = multiStrokeMeta(m.multiStroke);
-  const fillStyle = fillStyleToRough(m.fillStyle);
-  let endpointBowingNudge = 0;
-  let preserveVerts: boolean | undefined;
-  switch (m.endpointBehavior) {
-    case 'clean':         preserveVerts = true;  break;
-    case 'protrude':      preserveVerts = false; endpointBowingNudge = 0.2; break;
-    case 'long-overshoot':preserveVerts = false; endpointBowingNudge = 0.5; break;
-    case 'kink':          preserveVerts = false; endpointBowingNudge = 0.8; break;
-  }
-  const opts: RoughOptions = {
-    seed,
-    // Jaggedness = how jagged-vs-smooth the rendered path reads (sharp angle
-    // changes vs flowing curves). Decoupled from wobble's amplitude
-    // 2026-06-08 per Sebs: previously rough.js's `roughness` was driven by
-    // wobble, which conflated "how far the line wanders" with "how jagged the
-    // wandering reads." Now wobble drives amplitude (HAND_FEEL_BASE *
-    // wobble) and jaggedness drives rough.js's roughness param. (The old dead
-    // m.roughness state field was deleted 2026-06-11 — never had a consumer.)
-    roughness: m.jaggedness,
-    bowing: m.bowing + endpointBowingNudge,
-    strokeWidth: m.strokeWidth,
-    // rough.js's option is named curveTightness — our field was renamed to
-    // curveDamp (spec §7.B-7) because semantically it's a bowing dampener,
-    // not rough.js's same-named curve param. Key = their API, value = ours.
-    curveTightness: m.curveDamp,
-    disableMultiStroke: ms.layerCount <= 1,
-    preserveVertices: preserveVerts,
-    fillStyle: fillStyle as RoughOptions['fillStyle'],
-    hachureGap: m.hachureGap,
-    hachureAngle: m.hachureAngle,
-    fillWeight: m.fillDensity * 2,
-  };
-  const stroke = el.getAttribute('stroke');
-  const fill = el.getAttribute('fill');
-  if (stroke) opts.stroke = mapPaletteColor(stroke, m.strokePalette, true);
-  if (fill && fill !== 'none' && fill !== 'transparent' && fillStyle) {
-    opts.fill = mapPaletteColor(fill, m.fillPalette);
-  } else {
-    opts.fill = undefined;
-  }
-  // dotScatter → seeded dots-fill jitter (patchRoughDots.ts). Custom key
-  // rough.js's shallow option-merge preserves down to the patched
-  // DotFiller.dotsOnLines. Only attached when the dots filler will run.
-  if (m.fillStyle === 'dots') {
-    (opts as { dotScatter?: number }).dotScatter = m.dotScatter;
-  }
-  return opts;
-}
 
 // ─── ELEMENT DISPATCH ──────────────────────────────────────────────────────
 
@@ -1789,6 +1758,38 @@ export function transformElement(
         if (current.length >= 2) subPaths.push({ points: current, isClosed: false });
       }
 
+      // CURVE COMPOUND SUB-PATH SPLIT (2026-06-16, Sebs caught it on the donut
+      // outline): a curved COMPOUND path (donut = 2 arc sub-paths, icons with
+      // holes) sampled as ONE continuous getPointAtLength walk bridges the M-jump
+      // between sub-paths into a straight CHORD across the form. The straight-line
+      // walker above already splits; the curve sampler did not. Split by M and
+      // sample EACH sub-path on its own helper path so no chord crosses the
+      // boundary. GATED to all-absolute-M multi-sub-path `d` (a relative `m`
+      // sub-path on a fresh path would resolve against 0,0 → mis-position; those
+      // fall through to the single-sample path below = old behavior). A
+      // single-sub-path `d` matches the old sampler EXACTLY (one entry, same
+      // spacing math) → the locked catalog renders byte-identical.
+      if (subPaths.length === 0) {
+        const subDs = d.match(/[Mm][^Mm]*/g) ?? [];
+        const splittable = subDs.length >= 2 && subDs.every((s) => /^\s*M/.test(s));
+        if (splittable) {
+          for (const sd of subDs) {
+            const sp = ownerDoc.createElementNS('http://www.w3.org/2000/svg', 'path');
+            sp.setAttribute('d', sd);
+            parentSvg.appendChild(sp);
+            let len = 0;
+            try { len = sp.getTotalLength(); } catch { /* skip degenerate sub-path */ }
+            if (len > 0.5) {
+              const spacing = Math.max(12, len / 6);
+              const n = Math.max(4, Math.ceil(len / spacing));
+              const pts: Array<[number, number]> = [];
+              for (let i = 0; i <= n; i++) { const p = sp.getPointAtLength((i / n) * len); pts.push([p.x, p.y]); }
+              subPaths.push({ points: pts, isClosed: /[zZ]\s*$/.test(sd.trim()) });
+            }
+            parentSvg.removeChild(sp);
+          }
+        }
+      }
       if (subPaths.length === 0) {
         // Curve path OR parse failed — use length sampler producing a single
         // sub-path. sampleSpacing /6 keeps long curved paths at audit-style

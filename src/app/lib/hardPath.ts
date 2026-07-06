@@ -39,6 +39,7 @@
 // coupling to the 2D pipeline / smartHachure / SvgStyleTransform).
 
 import type { ViewBoxSize } from './geometry3d/strokeTo3d';
+import { SUPABASE_URL, SUPABASE_KEY } from './supabase';
 
 // ─── Provider + job types ─────────────────────────────────────────────────────
 
@@ -119,13 +120,19 @@ export function probeHardPathConfig(): HardPathConfig {
   // import.meta.env is statically replaced by Vite; guarded for node/test.
   const env = (typeof import.meta !== 'undefined' && (import.meta as { env?: Record<string, string | undefined> }).env) || {};
   const flag = env.VITE_HARD_PATH_ENABLED;
-  const supabaseUrl = env.VITE_SUPABASE_URL;
+  // Resolve via supabase.ts (env ?? hardcoded fallback) — a direct env read is
+  // undefined in Figma Make and would falsely block the path even when the flag
+  // is on. The flag below is the real on/off; the URL always resolves now.
+  const supabaseUrl = SUPABASE_URL;
 
-  if (flag !== '1' && flag !== 'true') {
-    return { configured: false, reason: 'Hard 3D path off (VITE_HARD_PATH_ENABLED unset). Local modes only.' };
+  // DEFAULT ON (Sebs 2026-06-17 "wire it"): env vars don't travel to Figma Make,
+  // so a default-OFF flag hid the AI-mesh button there. On unless explicitly
+  // disabled. ⚠️ Each generation bills fal/Tripo (server-side, per use).
+  if (flag === '0' || flag === 'false') {
+    return { configured: false, reason: 'Hard 3D path off (VITE_HARD_PATH_ENABLED=0).' };
   }
   if (!supabaseUrl) {
-    return { configured: false, reason: 'Hard 3D path needs VITE_SUPABASE_URL to reach the image-to-3d Edge function.' };
+    return { configured: false, reason: 'Hard 3D path needs a Supabase URL to reach the image-to-3d Edge function.' };
   }
   return {
     configured: true,
@@ -200,9 +207,11 @@ export function isTerminalStatus(s: HardPathStatus): boolean {
 // apikey), the SAME key the rest of the app uses. No secret ever leaves the
 // server.
 
-const ANON_KEY =
-  ((typeof import.meta !== 'undefined' && (import.meta as { env?: Record<string, string | undefined> }).env) || {})
-    .VITE_SUPABASE_ANON_KEY ?? '';
+// Resolved publishable key (env ?? hardcoded fallback) — the SAME key
+// image-to-svg sends. A raw import.meta.env read is '' in Figma Make (env doesn't
+// travel) → no Authorization header → the Edge function 401s before it runs.
+// THAT is why SVG worked (uses SUPABASE_KEY) but the 3D hard path 401'd.
+const ANON_KEY = SUPABASE_KEY;
 
 function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -281,7 +290,12 @@ export async function fetchMeshResult(job: HardPathJob): Promise<HardPathMesh | 
   if (!cfg.configured || !job.jobId) return null;
   if (job.status !== 'succeeded' && job.status !== 'cached') return null;
   try {
-    const url = `${cfg.functionUrl}?jobId=${encodeURIComponent(job.jobId)}&provider=${encodeURIComponent(job.provider)}&result=1`;
+    // Pass contentHash on the RESULT fetch too (not just submit) so the Edge fn
+    // can WRITE mesh_cache(content_hash → re-hosted glbUrl) after it re-hosts —
+    // making a later gen of the SAME doodle a free cache hit. Backward-compatible:
+    // an older deployed Edge fn just ignores the extra param.
+    const ch = job.contentHash ? `&contentHash=${encodeURIComponent(job.contentHash)}` : '';
+    const url = `${cfg.functionUrl}?jobId=${encodeURIComponent(job.jobId)}&provider=${encodeURIComponent(job.provider)}&result=1${ch}`;
     const res = await fetch(url, { headers: authHeaders() });
     if (!res.ok) return null;
     const data = (await res.json()) as { glbUrl?: string; source?: string; fileSize?: number };

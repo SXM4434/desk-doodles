@@ -1,4 +1,13 @@
-// Supabase Edge Function — image-to-3d (the "hard" 3D path) — SCAFFOLD, NOT DEPLOYED.
+// Supabase Edge Function — image-to-3d (the "hard" 3D path).
+//
+// ⚠️ DEPLOYED 2026-06-16 (Sebs, FAL_KEY set). REVISED 2026-06-16: now WRITES
+//    mesh_cache after re-hosting (writeCache), so a repeat gen of the same doodle
+//    is a free cache hit. THIS REVISION NEEDS A REDEPLOY to take effect:
+//        supabase functions deploy image-to-3d
+//    (Until redeployed, gens still work but every regen pays — readCache always
+//    misses because nothing writes the row. The client already passes contentHash
+//    on both submit AND result.) Requires the mesh_cache table to exist (see
+//    "TO MAKE IT PRODUCTION" §3 below).
 //
 // WHY THIS EXISTS: the client must never hold fal/Tripo API keys. VITE_-prefixed
 // vars get bundled into the browser (the publishable-key-safe rule, CLAUDE.md,
@@ -154,6 +163,9 @@ async function handleStatusOrResult(req: Request, keys: Keys): Promise<Response>
   const jobId = url.searchParams.get('jobId');
   const provider = (url.searchParams.get('provider') ?? 'auto') as ProviderId;
   const wantResult = url.searchParams.get('result') === '1';
+  // contentHash rides the RESULT fetch (client appends it) so we can persist the
+  // re-hosted GLB under it → the next gen of the same doodle is a free cache hit.
+  const contentHash = url.searchParams.get('contentHash') || undefined;
   if (!jobId) return json({ error: 'Missing jobId.' }, 400);
 
   if (provider === 'tripo-direct') {
@@ -162,6 +174,7 @@ async function handleStatusOrResult(req: Request, keys: Keys): Promise<Response>
     if (!wantResult) return json({ status }, 200);
     if (status !== 'succeeded' || !t.modelUrl) return json({ error: 'Not ready.' }, 409);
     const hosted = await downloadAndRehost(t.modelUrl, provider, undefined);
+    await writeCache(contentHash, hosted);
     return json({ glbUrl: hosted.glbUrl, source: 'fresh', fileSize: hosted.fileSize }, 200);
   }
 
@@ -175,6 +188,7 @@ async function handleStatusOrResult(req: Request, keys: Keys): Promise<Response>
   const meshUrl = r?.model_mesh?.url;
   if (!meshUrl) return json({ error: 'No mesh in result.' }, 409);
   const hosted = await downloadAndRehost(meshUrl, provider, r.model_mesh?.file_size);
+  await writeCache(contentHash, hosted);
   return json({ glbUrl: hosted.glbUrl, source: 'fresh', fileSize: hosted.fileSize }, 200);
 }
 
@@ -268,6 +282,32 @@ async function readCache(contentHash: string) {
     .eq('content_hash', contentHash)
     .maybeSingle();
   return data as { glb_url: string; provider: ProviderId; file_size?: number } | null;
+}
+
+// Persist a re-hosted GLB under its content_hash so a later gen of the SAME
+// doodle returns from cache (free). Best-effort: a cache-write failure must NOT
+// fail the result response (the GLB is already re-hosted + returned). No-op when
+// there's no contentHash (e.g. an ad-hoc gen with no stable key). upsert keeps it
+// idempotent if two results race for the same hash.
+async function writeCache(
+  contentHash: string | undefined,
+  hosted: { glbUrl: string; fileSize: number; provider: ProviderId },
+) {
+  if (!contentHash) return;
+  try {
+    const supabase = adminClient();
+    await supabase.from(MESH_CACHE_TABLE).upsert(
+      {
+        content_hash: contentHash,
+        glb_url: hosted.glbUrl,
+        provider: hosted.provider,
+        file_size: hosted.fileSize,
+      },
+      { onConflict: 'content_hash' },
+    );
+  } catch (_err) {
+    // swallow — caching is an optimization, never the success path.
+  }
 }
 
 // Service-role client (server-side only — the service key never leaves the Edge

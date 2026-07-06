@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { GeometryModeSetting } from '../lib/geometry3d/strokeTo3d';
 import {
   DEFAULT_MODE3D_PARAMS,
@@ -15,6 +15,8 @@ import {
   type NativeProps3D,
 } from '../components/canvas3d/materials3d';
 import type { HatchGrammar, HatchDirection } from '../components/canvas3d/hatchMaterial';
+import type { AiMeshMaterialMode } from '../components/canvas3d/aiMeshMaterial';
+import { AI_MESH_DARK_DEFAULT, AI_MESH_CONTRAST_DEFAULT } from '../components/canvas3d/aiMeshMaterial';
 
 // Canvas 3D controls — geometry mode + 3D style + per-mode param sets.
 //
@@ -106,11 +108,44 @@ export const GEOMETRY_MODE_OPTIONS: GeometryModeMeta[] = [
   { id: 'solid',   label: 'Solid',   detail: 'Whole drawing rasterized + marched into ONE watertight mass.' },
 ];
 
+/** The 'ai-mesh' FORM option (Sebs 2026-06-27) — prepended to the geometry
+ *  dropdown ONLY when the object carries a generated GLB (aiMeshActive). Picking
+ *  it renders the mesh; the stroke FORMs above convert the Quiver SVG instead. */
+export const AI_MESH_GEOMETRY_OPTION: GeometryModeMeta = {
+  id: 'ai-mesh',
+  label: 'AI mesh',
+  detail: 'The generated 3D mesh — its own form. The stroke forms below rebuild the shape from this drawing instead.',
+};
+
+/** Sensible-deep default for the svg-port relief depth slider (Sebs picked a
+ *  slider "defaulting to a sensible deep value"). 0 = flat shallow look. */
+export const SVGPORT_RELIEF_DEPTH_DEFAULT = 0.25;
+
 type Ctx = {
   geometryMode: GeometryModeSetting;
   setGeometryMode: (m: GeometryModeSetting) => void;
+  /** True once the user has TOUCHED the global geometry control this session.
+   *  A surface that hosts many objects with their OWN saved 3D looks (the desk)
+   *  shows each saved look UNTIL this flips, then the live chrome sweeps EVERY
+   *  object — "change the global geometry → restyle the whole desk" (Sebs
+   *  2026-06-18). The saved per-object render_config is untouched and restores on
+   *  the next mount (this resets to false), so the sweep is non-destructive. */
+  geometryEngaged: boolean;
   style3d: Style3D;
   setStyle3d: (s: Style3D) => void;
+  /** SVG-PORT DEEP RELIEF depth (Sebs 2026-06-21) — CPU-displaces the welded
+   *  front cap by the carve height field for REAL geometry depth (a screen sinks
+   *  IN, a button stands OUT) with no tearing. 0 = flat (the shallow normalMap
+   *  look); ~0.25 sensible deep default; up to ~0.6 = bold. svg-port only. */
+  reliefDepth: number;
+  setReliefDepth: (v: number) => void;
+  /** SVG-PORT deep-relief WALL STYLE (Sebs 2026-06-21 "two versions"): false =
+   *  Make-friendly steep welded-mass ramps (V1, no WASM, always works); true =
+   *  manifold-3d CSG true-vertical walls (V2, lazy WASM, falls back to V1 if it
+   *  fails to load — e.g. the Make cold-load race). Only affects svg-port + objects
+   *  with treatMask primitive features (screen/buttons). */
+  reliefCsg: boolean;
+  setReliefCsg: (v: boolean) => void;
   /** Active Native material (resolved: user pick if overridden, else the
    *  FS per-mode default for the current geometry mode). */
   materialPreset: MaterialPresetId;
@@ -127,6 +162,26 @@ type Ctx = {
   setHatchGrammar: (g: HatchGrammar) => void;
   hatchDirection: HatchDirection;
   setHatchDirection: (d: HatchDirection) => void;
+  /** AI-mesh (hard-path GLB) shading register — 'greyscale' (our ink register,
+   *  DEFAULT, so the AI mesh fits the desk) or 'og-pbr' (the provider's
+   *  photoreal). Only affects an active AI mesh; inert otherwise. */
+  aiMeshMaterialMode: AiMeshMaterialMode;
+  setAiMeshMaterialMode: (m: AiMeshMaterialMode) => void;
+  /** True once a hard-path AI mesh exists (Sebs 2026-06-16: the material toggle
+   *  should only appear AFTER the user generates the mesh, not always). */
+  aiMeshActive: boolean;
+  setAiMeshActive: (v: boolean) => void;
+  /** AI-mesh's OWN toggle set (Sebs 2026-06-16 "ai mesh needs its own custom set
+   *  of toggles that make sense for the mesh + our app"): darkness of the greyscale
+   *  re-skin (value, ink register) + slow auto-spin in the preview. Distinct from
+   *  the local-3D geometry/material controls, which don't apply to a foreign GLB. */
+  aiMeshDark: number;
+  setAiMeshDark: (v: number) => void;
+  /** AI-mesh greyscale value CONTRAST (1 = natural, >1 crisper). */
+  aiMeshContrast: number;
+  setAiMeshContrast: (v: number) => void;
+  aiMeshAutoSpin: boolean;
+  setAiMeshAutoSpin: (v: boolean) => void;
   /** Per-geometry-mode param sets (spec §2 — full, never trimmed). */
   modeParams: Mode3DParams;
   setRodParams: (p: Partial<RodParams3D>) => void;
@@ -144,8 +199,13 @@ const Canvas3DCtx = createContext<Ctx | null>(null);
 const UNPROVIDED_DEFAULTS: Ctx = {
   geometryMode: 'auto',
   setGeometryMode: () => {},
+  geometryEngaged: false,
   style3d: 'native',
   setStyle3d: () => {},
+  reliefDepth: SVGPORT_RELIEF_DEPTH_DEFAULT,
+  setReliefDepth: () => {},
+  reliefCsg: false,
+  setReliefCsg: () => {},
   materialPreset: MODE_MATERIAL_DEFAULTS_3D.auto,
   setMaterialPreset: () => {},
   materialUserOverride: false,
@@ -155,6 +215,16 @@ const UNPROVIDED_DEFAULTS: Ctx = {
   setHatchGrammar: () => {},
   hatchDirection: 'fixed',
   setHatchDirection: () => {},
+  aiMeshMaterialMode: 'greyscale',
+  setAiMeshMaterialMode: () => {},
+  aiMeshActive: false,
+  setAiMeshActive: () => {},
+  aiMeshDark: AI_MESH_DARK_DEFAULT,
+  setAiMeshDark: () => {},
+  aiMeshContrast: AI_MESH_CONTRAST_DEFAULT,
+  setAiMeshContrast: () => {},
+  aiMeshAutoSpin: false,
+  setAiMeshAutoSpin: () => {},
   modeParams: DEFAULT_MODE3D_PARAMS,
   setRodParams: () => {},
   setExtrudeParams: () => {},
@@ -164,11 +234,19 @@ const UNPROVIDED_DEFAULTS: Ctx = {
 
 export function Canvas3DProvider({ children }: { children: ReactNode }) {
   const [geometryMode, setGeometryModeRaw] = useState<GeometryModeSetting>('auto');
+  const [geometryEngaged, setGeometryEngaged] = useState(false);
   const [style3d, setStyle3d] = useState<Style3D>('native');
+  const [reliefDepth, setReliefDepth] = useState<number>(SVGPORT_RELIEF_DEPTH_DEFAULT);
+  const [reliefCsg, setReliefCsg] = useState<boolean>(false);
   const [materialPick, setMaterialPick] = useState<MaterialPresetId | null>(null); // null = no override
   const [nativeProps, setNativePropsState] = useState<NativeProps3D>(DEFAULT_NATIVE_PROPS_3D);
   const [hatchGrammar, setHatchGrammar] = useState<HatchGrammar>('hachure');
   const [hatchDirection, setHatchDirection] = useState<HatchDirection>('fixed');
+  const [aiMeshMaterialMode, setAiMeshMaterialMode] = useState<AiMeshMaterialMode>('greyscale');
+  const [aiMeshActive, setAiMeshActive] = useState(false);
+  const [aiMeshDark, setAiMeshDark] = useState<number>(AI_MESH_DARK_DEFAULT);
+  const [aiMeshContrast, setAiMeshContrast] = useState<number>(AI_MESH_CONTRAST_DEFAULT);
+  const [aiMeshAutoSpin, setAiMeshAutoSpin] = useState(false);
   const [modeParams, setModeParams] = useState<Mode3DParams>(DEFAULT_MODE3D_PARAMS);
 
   // FS materialUserOverride semantics: mode switches re-default the material
@@ -176,11 +254,20 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
   // so un-overridden state keeps following the mode.
   const setGeometryMode = useCallback((m: GeometryModeSetting) => {
     setGeometryModeRaw(m);
+    // Touching the geometry control engages the global sweep — from now on the
+    // live chrome drives every object on the desk, overriding saved per-object
+    // 3D looks ("restyle the whole desk", Sebs 2026-06-18).
+    setGeometryEngaged(true);
   }, []);
 
   const setMaterialPreset = useCallback((m: MaterialPresetId) => {
     setMaterialPick(m);
   }, []);
+
+  // NOTE (Sebs 2026-06-27): the AI mesh is the NATIVE STYLE, not a geometry mode.
+  // A mesh object opens at geometryMode 'auto' (the default), which the render gate
+  // already resolves to "show the mesh" when a GLB exists — so no special FORM
+  // default is needed. Picking an explicit geometry mode rebuilds from the drawing.
 
   const materialPreset = materialPick ?? MODE_MATERIAL_DEFAULTS_3D[geometryMode];
 
@@ -201,12 +288,46 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
     setModeParams((prev) => ({ ...prev, solid: { ...prev.solid, ...p } }));
   }, []);
 
+  // DEV/TEST hook (R36): expose the 3D-control setters on window so a headed-Chrome
+  // verification harness can drive the desk's global 3D style/material without
+  // reaching the chrome dropdowns (which only show in DESK+3D mode). No-op in normal
+  // use; harmless to leave. NOT a product surface — purely for live 3D verification.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    (window as unknown as Record<string, unknown>).__dd_canvas3d = {
+      setStyle3d,
+      setMaterialPreset,
+      setNativeProps,
+      setHatchGrammar,
+      setHatchDirection,
+      setAiMeshMaterialMode,
+      setAiMeshDark,
+      setAiMeshContrast,
+      setGeometryMode,
+    };
+  }, [
+    setStyle3d,
+    setMaterialPreset,
+    setNativeProps,
+    setHatchGrammar,
+    setHatchDirection,
+    setAiMeshMaterialMode,
+    setAiMeshDark,
+    setAiMeshContrast,
+    setGeometryMode,
+  ]);
+
   const value = useMemo<Ctx>(
     () => ({
       geometryMode,
       setGeometryMode,
+      geometryEngaged,
       style3d,
       setStyle3d,
+      reliefDepth,
+      setReliefDepth,
+      reliefCsg,
+      setReliefCsg,
       materialPreset,
       setMaterialPreset,
       materialUserOverride: materialPick !== null,
@@ -216,6 +337,16 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
       setHatchGrammar,
       hatchDirection,
       setHatchDirection,
+      aiMeshMaterialMode,
+      setAiMeshMaterialMode,
+      aiMeshActive,
+      setAiMeshActive,
+      aiMeshDark,
+      setAiMeshDark,
+      aiMeshContrast,
+      setAiMeshContrast,
+      aiMeshAutoSpin,
+      setAiMeshAutoSpin,
       modeParams,
       setRodParams,
       setExtrudeParams,
@@ -225,7 +356,10 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
     [
       geometryMode,
       setGeometryMode,
+      geometryEngaged,
       style3d,
+      reliefDepth,
+      reliefCsg,
       materialPreset,
       setMaterialPreset,
       materialPick,
@@ -233,6 +367,11 @@ export function Canvas3DProvider({ children }: { children: ReactNode }) {
       setNativeProps,
       hatchGrammar,
       hatchDirection,
+      aiMeshMaterialMode,
+      aiMeshActive,
+      aiMeshDark,
+      aiMeshContrast,
+      aiMeshAutoSpin,
       modeParams,
       setRodParams,
       setExtrudeParams,

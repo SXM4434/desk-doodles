@@ -141,9 +141,11 @@ export function fillStyleToMode(fillStyle: string | undefined): number {
 const VERTEX = /* glsl */ `
 varying vec3 vWorldNormal;
 varying vec3 vViewNormal;  // view-space normal — drives light-following + contour
+varying vec2 vUv;          // for the AI-mesh value map (hatch follows the mesh's own value)
 void main() {
   vWorldNormal = normalize(mat3(modelMatrix) * normal);
   vViewNormal = normalize(normalMatrix * normal);
+  vUv = uv;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
@@ -153,6 +155,9 @@ void main() {
 const FRAGMENT = /* glsl */ `
 varying vec3 vWorldNormal;
 varying vec3 vViewNormal;
+varying vec2 vUv;
+uniform sampler2D u_valueMap; // AI-mesh albedo (its baked detail) — drives hatch tone
+uniform float u_hasValueMap;  // 1 when an AI mesh fed its own texture (else lambert only)
 uniform vec3 u_bands[8];      // [darknessMin, darknessMax, tamLayers] — coverage.ts verbatim
 uniform float u_gapPx;        // hachure gap, device px
 uniform float u_angleRad;     // hachure angle (Fixed direction mode)
@@ -163,6 +168,7 @@ uniform vec3 u_paper;
 uniform int u_fillMode;       // 0 hachure · 1 cross-hatch · 2 dots · 3 zigzag · 4 dashed · 5 zigzag-line · 6 solid · 7 none · 8 contour
 uniform float u_wobblePx;     // svg-port mark bend amplitude, device px
 uniform float u_markOpacity;  // svg-port fillOpacity (1.0 for hatch variant)
+uniform float u_occStrength;  // contour-hatch: deepen tone toward silhouette (denser marks)
 uniform int u_directionMode;  // 0 fixed (angle slider) · 1 light-following
 uniform vec3 u_lightDirView;  // rig key light direction in VIEW space (light-following)
 
@@ -201,6 +207,25 @@ void main() {
   shade += 0.33 * max(dot(n, normalize(vec3(-4.0, 2.0, -2.0))), 0.0);
   shade = clamp(shade, 0.0, 1.0);
   float darkness = 1.0 - shade;
+  // CONTOUR-HATCH silhouette deepening (Sebs 2026-06-15): real pencil contour
+  // hatching gets DENSER where the form curves AWAY (toward the silhouette), not
+  // only on shadowed faces. vViewNormal.z ≈ 1 facing the camera, ≈ 0 at the
+  // silhouette → push darkness up toward the rim so the hatch packs there. Pure
+  // value-via-DENSITY (feeds the same band lookup below) — never a tint.
+  float occ = pow(1.0 - clamp(abs(vViewNormal.z), 0.0, 1.0), 1.5);
+  darkness = clamp(darkness + u_occStrength * occ, 0.0, 1.0);
+
+  // AI-MESH VALUE (Sebs 2026-06-28 "bring the engine into ai mesh space"): an
+  // image-to-3d mesh bakes its detail into its TEXTURE, not its geometry, so a
+  // lambert-only tone reads FLAT (the screen/buttons vanish). When the mesh feeds
+  // its own albedo, drive the hatch tone from that value instead — dark texture
+  // areas hatch dense, light areas stay open → the form reads in hatch. Lambert
+  // still adds a touch of form-shading on top.
+  if (u_hasValueMap > 0.5) {
+    float tv = dot(texture2D(u_valueMap, vUv).rgb, vec3(0.299, 0.587, 0.114));
+    float texDark = 1.0 - clamp(pow(tv, 0.85), 0.0, 1.0);
+    darkness = clamp(mix(texDark, darkness, 0.25), 0.0, 1.0);
+  }
 
   // 8-band quantization — the SAME table the SVG renderer uses (one math).
   int band = 0;
@@ -315,6 +340,12 @@ export function createHatchMaterial(variant: HatchVariant): THREE.ShaderMaterial
       u_markOpacity: { value: 1.0 },
       u_directionMode: { value: 0 },
       u_lightDirView: { value: new THREE.Vector3(0, 0, 1) },
+      // Contour-hatch silhouette deepening — on for the form-shaded hatch variant,
+      // off for svg-port (which wears the 2D's own density). Tunable for the eyes-on pass.
+      u_occStrength: { value: variant === 'hatch' ? 0.35 : 0.0 },
+      // AI-mesh value feed (HardMesh sets these per mesh) — off by default.
+      u_valueMap: { value: null },
+      u_hasValueMap: { value: 0.0 },
     },
     name: variant === 'hatch' ? 'dd-hatch' : 'dd-svg-port',
   });

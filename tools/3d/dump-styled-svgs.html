@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- DUMP STYLED SVGS — repo-side tool only (NOT in the Make drag-drop).
+     Headless capture of REAL catalog objects (PinShape/PegToolShape) styled
+     through the REAL SvgStyleTransform engine — the styled markup is what the
+     portfolio Canvas-Lab 404 decision inlines so every mark on that page is
+     Sebs's engine output, never agent-drawn art (RESTART-AGENT-BRIEF §4).
+     Driven by tools/3d/dump-styled-svgs.mjs through window.__dump.
+     READ-ONLY: imports src, never edits it.
+
+     Open live (dev, from the repo root):
+       npx vite --config tools/3d/vite.orbit.config.ts --port 4491
+       → http://localhost:4491/tools/3d/dump-styled-svgs.html -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dump styled SVGs — engine capture</title>
+    <style>
+      /* W1 design tokens (verbatim from src/styles/theme.css :root) — the styled
+         SvgStyleTransform markup paints ink/paper via var(--dir-*); WITHOUT
+         these the marks resolve to empty. */
+      :root {
+        --dir-bg: #FDFCF9;
+        --dir-raised: #F9F7F3;
+        --dir-recessed: #F3F0E8;
+        --dir-muted: #EBE7DC;
+        --dir-text-primary: #121110;
+        --dir-text-body: #383632;
+        --dir-text-body-soft: #797369;
+        --dir-text-secondary: #5F5B54;
+        --dir-border: #E3DFD4;
+        --dir-accent: #121110;
+        --dir-detail: #878075;
+        --dir-link-color: #121110;
+        --dir-chip-bg: transparent;
+        --dir-chip-border: #E3DFD4;
+      }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--dir-bg);
+        color: var(--dir-text-body);
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      #status { padding: 12px 16px; }
+      /* In-DOM but offscreen host — SvgStyleTransform measures real DOM. */
+      #capture-host { position: fixed; right: -99999px; top: 0; width: 800px; height: 600px; }
+    </style>
+  </head>
+  <body>
+    <div id="status">dump-styled-svgs: booting…</div>
+    <div id="capture-host"></div>
+    <script type="module" src="/tools/3d/dump-styled-svgs-app.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- CATALOG ORBIT — repo-side tool only (NOT in the Make drag-drop).
+     A LIVE drag-to-orbit surface over the EXISTING 3D engine: pick any of the
+     197 catalog objects (or a Rock-3D glyph A–Z/0–9), and the EXACT product
+     render path (Stroke3DContents — the same component /canvas and the desk
+     mount) renders it spinnable with real OrbitControls. Default look = the
+     Rock-3D preset (svg-port carve on the unified block, per
+     lib/demoWall.tsx ROCK_3D_PRESET) so the front reads as the object's
+     Rock-3D 2D render and the sides/back come from the real geometry.
+
+     Open live (dev, from the repo root):
+       npx vite --config tools/3d/vite.orbit.config.ts --port 4489
+       → http://localhost:4489/tools/3d/catalog-orbit.html
+
+     Headless verify driver: tools/3d/catalog-orbit-verify.mjs (window.__orbit).
+     READ-ONLY: imports src, never edits it. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Catalog orbit — drag-to-orbit 3D</title>
+    <style>
+      /* W1 design tokens (verbatim from src/styles/theme.css :root) — the styled
+         SvgStyleTransform markup paints ink/paper via var(--dir-*); WITHOUT
+         these the marks resolve to empty and svg-port renders blank. */
+      :root {
+        --dir-bg: #FDFCF9;
+        --dir-raised: #F9F7F3;
+        --dir-recessed: #F3F0E8;
+        --dir-muted: #EBE7DC;
+        --dir-text-primary: #121110;
+        --dir-text-body: #383632;
+        --dir-text-body-soft: #797369;
+        --dir-text-secondary: #5F5B54;
+        --dir-border: #E3DFD4;
+        --dir-accent: #121110;
+        --dir-detail: #878075;
+        --dir-link-color: #121110;
+        --dir-chip-bg: transparent;
+        --dir-chip-border: #E3DFD4;
+      }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--dir-bg);
+        color: var(--dir-text-body);
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        overflow: hidden;
+      }
+      #root { height: 100%; display: flex; flex-direction: column; }
+      /* Hidden offscreen sampler hosts (SVG DOM measured with getTotalLength +
+         the SvgStyleTransform capture) — must be in-DOM but never visible. */
+      #sampler, #svgport-host { position: fixed; right: -99999px; top: 0; width: 800px; height: 600px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="sampler"></div>
+    <div id="svgport-host"></div>
+    <script type="module" src="/tools/3d/catalog-orbit-app.tsx"></script>
+  </body>
+</html>

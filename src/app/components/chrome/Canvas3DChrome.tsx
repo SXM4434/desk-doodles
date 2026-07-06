@@ -41,6 +41,7 @@ import {
 } from '../../state/Canvas3DContext';
 import type { HatchGrammar, HatchDirection } from '../canvas3d/hatchMaterial';
 import type { NativeProps3D } from '../canvas3d/materials3d';
+import type { AiMeshMaterialMode } from '../canvas3d/aiMeshMaterial';
 import { useF3RoughModifiers } from '../../state/F3RoughModifiersContext';
 import {
   EXTRUDE_BEVEL_PROFILE_OPTIONS,
@@ -337,6 +338,10 @@ export function Canvas3DChrome() {
     setGeometryMode,
     style3d,
     setStyle3d,
+    reliefDepth,
+    setReliefDepth,
+    reliefCsg,
+    setReliefCsg,
     materialPreset,
     setMaterialPreset,
     materialUserOverride,
@@ -346,6 +351,15 @@ export function Canvas3DChrome() {
     setHatchGrammar,
     hatchDirection,
     setHatchDirection,
+    aiMeshMaterialMode,
+    aiMeshActive,
+    setAiMeshMaterialMode,
+    aiMeshDark,
+    setAiMeshDark,
+    aiMeshContrast,
+    setAiMeshContrast,
+    aiMeshAutoSpin,
+    setAiMeshAutoSpin,
     modeParams,
     setRodParams,
     setExtrudeParams,
@@ -358,18 +372,82 @@ export function Canvas3DChrome() {
   const effDepth = extrudeEffectiveDepth(modeParams.extrude.width, modeParams.extrude.depthMult);
   const bevelAutoOff = extrudeBevelAutoDisabled(modeParams.extrude.width);
 
+  // ── AI mesh = the "Native" style (Sebs 2026-06-27, corrected model) ──────────
+  // The AI mesh is NOT a toggle and NOT a geometry option — it's just what the
+  // object's NATIVE style resolves to. Every style applies to it (Native = the
+  // mesh material, Hatch = the mesh hatched, SVG-port = the mesh engraved).
+  // Geometry is the inner working: Auto = use the mesh as-is; an explicit mode
+  // rebuilds the form from the object's SVG ("geometry gets routed to the svg").
+  // All the user sees of "it's a mesh" is a small tag + the Finish set under Native.
+  const meshShown = aiMeshActive && (geometryMode === 'ai-mesh' || geometryMode === 'auto');
+  // For a mesh the UI is DERIVED from aiMeshMaterialMode (the render truth) so the
+  // dropdown can never show a style the mesh isn't actually wearing.
+  const meshStyle: Style3D =
+    aiMeshMaterialMode === 'hatch' ? 'hatch' : aiMeshMaterialMode === 'svg-port' ? 'svg-port' : 'native';
+  const meshFinish: 'material' | 'value' | 'photoreal' =
+    aiMeshMaterialMode === 'greyscale' ? 'value' : aiMeshMaterialMode === 'og-pbr' ? 'photoreal' : 'material';
+  const styleValue: Style3D = meshShown ? meshStyle : style3d;
+  const showNative = styleValue === 'native';
+  const showHatch = styleValue === 'hatch';
+  const showSvgPort = styleValue === 'svg-port';
+  // The geometry dropdown never offers 'ai-mesh' (legacy internal value) — show it
+  // as Auto, which renders the mesh via the same render gate.
+  const geometryValue: GeometryModeSetting = geometryMode === 'ai-mesh' ? 'auto' : geometryMode;
+  // Picking a style sets style3d (drives stroke forms) AND, when the mesh is
+  // showing, syncs aiMeshMaterialMode (drives the GLB) so the one dropdown moves
+  // the mesh. Native lands on the Material finish; Finish refines it.
+  const setStyleUnified = (v: Style3D) => {
+    setStyle3d(v);
+    if (meshShown) setAiMeshMaterialMode(v === 'native' ? 'native' : v);
+  };
+  const setMeshFinish = (f: 'material' | 'value' | 'photoreal') => {
+    setAiMeshMaterialMode(f === 'value' ? 'greyscale' : f === 'photoreal' ? 'og-pbr' : 'native');
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {/* Pinned header — names the surface (split-rule landmark). */}
+      {/* Pinned header — names the surface (split-rule landmark). When the object
+          carries a generated mesh, a quiet TAG is all the user sees of it (Sebs
+          2026-06-27: "all the user should see [is] a tag saying it's an ai mesh"). */}
       <Section title="3D controls" note="Geometry + style for the 3D render — 2D pen controls live under the SVG-port style.">
-        <></>
+        {aiMeshActive ? (
+          <span
+            style={{
+              alignSelf: 'flex-start',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontFamily: IS,
+              fontSize: 10,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              color: 'var(--dir-text-secondary)',
+              background: 'var(--dir-bg)',
+              border: '1px solid var(--dir-border)',
+              borderRadius: 999,
+              padding: '3px 10px',
+            }}
+            title="This object carries an AI-generated 3D mesh — it's the Native style. Pick a geometry mode to rebuild the form from the drawing instead."
+          >
+            ⬡ AI mesh
+          </span>
+        ) : (
+          <></>
+        )}
       </Section>
 
-      {/* ── 3D STYLE cluster (spec §5.3, default open) ── */}
-      <Section title="3D style" note="Native · Hatch · SVG-port — each swaps its own param set" collapseKey="c3d.cluster.style">
+      {/* ── 3D STYLE cluster — the ONE user-facing dressing axis, identical for
+          mesh + stroke (Sebs 2026-06-27). Native = the object's raw 3D (for a mesh,
+          the mesh itself, with the full mesh-category FINISHES under it); Hatch /
+          SVG-port apply on top of whatever the geometry is, the mesh included. */}
+      <Section
+        title="3D style"
+        note="Native · Hatch · SVG-port — each swaps its own param set"
+        collapseKey="c3d.cluster.style"
+      >
         <Dropdown
           label="3D style"
-          value={style3d}
+          value={styleValue}
           sections={[
             {
               heading: '3D style',
@@ -380,11 +458,63 @@ export function Canvas3DChrome() {
               })),
             },
           ]}
-          onChange={(v) => setStyle3d(v as Style3D)}
+          onChange={(v) => setStyleUnified(v as Style3D)}
           popoverWidth={300}
         />
 
-        {style3d === 'native' && (
+        {/* NATIVE on a MESH = the AI mesh itself. The full mesh-category set lives
+            here (Sebs "under native a fully encompassed range of toggles made for
+            its category"): a FINISH picker + that finish's own controls. */}
+        {showNative && meshShown && (
+          <FamilyPills
+            label="Finish"
+            value={meshFinish}
+            options={[
+              { value: 'material', label: 'Material', title: 'Our lit ink material on the mesh — pick the preset + dials below.' },
+              { value: 'value', label: 'Value', title: "The mesh's own greyscale value in our ink register — keeps every detail." },
+              { value: 'photoreal', label: 'Photoreal', title: "The provider's original photoreal materials + colour — breaks the monochrome desk." },
+            ]}
+            onChange={(v) => setMeshFinish(v)}
+          />
+        )}
+
+        {/* VALUE finish (mesh) — the mesh's own greyscale, tunable. */}
+        {showNative && meshShown && meshFinish === 'value' && (
+          <>
+            <Slider
+              label="Darkness"
+              value={aiMeshDark}
+              min={0.05}
+              max={1}
+              step={0.01}
+              precision={2}
+              title="How dark the greyscale re-skin reads (value in the ink register)."
+              onChange={setAiMeshDark}
+            />
+            <Slider
+              label="Contrast"
+              value={aiMeshContrast}
+              min={0.4}
+              max={2.4}
+              step={0.05}
+              precision={2}
+              title="Value spread — higher pushes lights and darks apart; lower flattens to an even tone."
+              onChange={setAiMeshContrast}
+            />
+          </>
+        )}
+
+        {/* PHOTOREAL finish (mesh) — honest note, no dial (it's the provider's own). */}
+        {showNative && meshShown && meshFinish === 'photoreal' && (
+          <p style={SECTION_NOTE}>
+            The provider's original photoreal materials + colour, untouched. Breaks the
+            monochrome desk — use sparingly.
+          </p>
+        )}
+
+        {/* MATERIAL — the lit ink material + dials. Shown for a stroke Native AND
+            for a mesh Native+Material finish (the same context fields drive both). */}
+        {showNative && (!meshShown || meshFinish === 'material') && (
           <>
             <Dropdown
               label="Material"
@@ -458,7 +588,7 @@ export function Canvas3DChrome() {
           </>
         )}
 
-        {style3d === 'hatch' && (
+        {showHatch && (
           <>
             {/* STYLE toggles (symmetry-law gap cell §1) — discrete grammar +
                 direction, ABOVE the property sliders. Both feed the SAME band
@@ -518,25 +648,74 @@ export function Canvas3DChrome() {
           </>
         )}
 
-        {style3d === 'svg-port' && (
+        {/* SVG-PORT on the MESH — the object's drawing worn on the mesh as light
+            incised lines, carrying its 2D style. Its "what's carved in" controls
+            (the 2D Restyle set) render below the chrome (ObjectSurface), driven
+            live — so a one-line pointer here, not dead controls. */}
+        {showSvgPort && meshShown && (
           <p style={SECTION_NOTE}>
-            M8 v1 bridge: the full 2D chrome below drives the ported treatment —
-            fill style picks the mark grammar, wobble bends the marks, Shading sets
-            density; the ink outline rides the form's edges. Mark-for-mark SVG
-            projection (TAM path) is the post-makeathon upgrade.
+            SVG-port — the full 2D pen system applied to the mesh's OWN form (its edges
+            drawn as a hand-drawn line sketch in the chosen style/wobble/weight). The
+            pen controls are below. (The mesh's form, not the 2D drawing stamped on.)
           </p>
+        )}
+
+        {showSvgPort && !meshShown && (
+          <>
+            {/* DEEP RELIEF (Sebs 2026-06-21) — CPU-displaces the welded front cap by
+                the carve height field for REAL geometry depth (a screen sinks IN, a
+                button stands OUT) with no tearing. 0 = the flat shallow look; the
+                default sits deep. Reads best on orbit / at large size. */}
+            <Slider
+              label="Relief depth"
+              value={reliefDepth}
+              min={0}
+              max={0.6}
+              step={0.05}
+              precision={2}
+              title="Real carved depth on the form — flat (left) to bold (right). The drawing's recesses sink in and proud marks stand out; the welded cap can't tear. 0 = the shallow shaded look."
+              onChange={(v) => setReliefDepth(v)}
+            />
+            {reliefDepth > 0 && (
+              // Deep-relief WALL STYLE (Sebs 2026-06-21 "two versions"). Smooth = V1
+              // (Make-friendly steep welded ramps, no WASM, always works). Sharp =
+              // V2 (manifold CSG true-vertical walls; lazy WASM, falls back to V1 if
+              // it can't load). Only changes objects with primitive screen/buttons.
+              <FamilyPills
+                label="Walls"
+                value={reliefCsg ? 'csg' : 'smooth'}
+                options={[
+                  { value: 'smooth', label: 'Smooth', title: 'V1 — steep welded ramps (geometry, no WASM). Always works; great for hand-drawn.' },
+                  { value: 'csg', label: 'Sharp', title: 'V2 — true-vertical CSG walls (manifold WASM). Crisp screen panels / button standoffs; falls back to Smooth if WASM can’t load.' },
+                ]}
+                onChange={(v) => setReliefCsg(v === 'csg')}
+              />
+            )}
+            <p style={SECTION_NOTE}>
+              M8 v1 bridge: the full 2D chrome below drives the ported treatment —
+              fill style picks the mark grammar, wobble bends the marks, Shading sets
+              density; the ink outline rides the form's edges. Mark-for-mark SVG
+              projection (TAM path) is the post-makeathon upgrade.
+            </p>
+          </>
         )}
       </Section>
 
-      {/* ── GEOMETRY cluster (spec §5.2, default open) ── */}
-      <Section title="Geometry" note="Mode + the active mode's full param set" collapseKey="c3d.cluster.geometry">
+      {/* ── GEOMETRY cluster (default open) — the inner working. Same modes for
+          every object (Sebs 2026-06-27): they build the form from the object's
+          drawing/SVG. For a mesh, Auto = use the AI mesh as-is; an explicit mode
+          routes to the SVG and rebuilds the form from it. AI mesh is NOT here —
+          it's the Native style. ── */}
+      <Section title="Geometry" note={aiMeshActive ? "Auto = the AI mesh as-is · a mode rebuilds the form from this drawing" : "Mode + the active mode's full param set"} collapseKey="c3d.cluster.geometry">
         <Dropdown
           label="Geometry mode"
-          value={geometryMode}
+          value={geometryValue}
           sections={[
             {
               heading: 'Geometry mode',
-              subheading: 'Auto is a default value, not a hidden rule — pick a mode and ALL strokes take it.',
+              subheading: aiMeshActive
+                ? 'Auto keeps the AI mesh. Pick a mode and the form is rebuilt from this drawing instead.'
+                : 'Auto is a default value, not a hidden rule — pick a mode and ALL strokes take it.',
               options: GEOMETRY_MODE_OPTIONS.map((o) => ({
                 value: o.id,
                 label: o.label,
@@ -548,12 +727,29 @@ export function Canvas3DChrome() {
           popoverWidth={300}
         />
 
-        {geometryMode === 'auto' && (
-          // D-D: Auto hides per-mode sliders; the explainer chip says why.
-          <div style={STATUS_CHIP}>
-            Shape decides: open stroke → rod · closed stroke → extrude, at the tuned
-            defaults. Pick an explicit mode to reveal its parameter set.
-          </div>
+        {geometryValue === 'auto' && (
+          // Auto: for a mesh = the mesh as-is (+ Auto-spin display control); for a
+          // stroke object = the shape-decides explainer.
+          meshShown ? (
+            <>
+              <div style={STATUS_CHIP}>
+                Showing the AI mesh — its look is the <strong>3D style</strong> above
+                (Native = the mesh, Hatch / SVG-port redraw it). Pick a mode below to
+                rebuild the form from this drawing instead.
+              </div>
+              <TogglePills
+                label="Auto-spin"
+                value={aiMeshAutoSpin}
+                onChange={setAiMeshAutoSpin}
+                title="Slowly rotate the mesh in its well so its 3D form reads at a glance."
+              />
+            </>
+          ) : (
+            <div style={STATUS_CHIP}>
+              Shape decides: open stroke → rod · closed stroke → extrude, at the tuned
+              defaults. Pick an explicit mode to reveal its parameter set.
+            </div>
+          )
         )}
 
         {geometryMode === 'rod' && (
@@ -699,9 +895,10 @@ export function Canvas3DChrome() {
       </Section>
 
       {/* The chrome-split rule's ONLY 2D appearance in 3D mode: the entire 2D
-          chrome mounts HERE, under SVG-port, driving the ported treatment
-          (spec §5.3). It does not reappear as the separate 2D panel. */}
-      {style3d === 'svg-port' && <SmartHachureChrome />}
+          chrome mounts HERE, under the stroke-form SVG-port style, driving the
+          ported treatment (spec §5.3). NOT for the mesh's Engraved surface — that
+          carries the object's 2D style directly (#29), tuned under the 2D panel. */}
+      {showSvgPort && !meshShown && <SmartHachureChrome />}
     </div>
   );
 }

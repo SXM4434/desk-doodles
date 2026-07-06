@@ -152,6 +152,17 @@ function geometryKindOf(build: StrokeGeometryResult | null): ConversionReceipt['
 
 // ─── THE entry point ─────────────────────────────────────────────────────────
 
+/** Auto-mode line-art routing (R10, 2026-06-15, Sebs video-confirmed). A drawing
+ *  with many separate strokes is a LINE DRAWING (a rose, a sketch, a detailed
+ *  doodle), not one solid shape. The Auto pipeline extrudes/fuses closed loops
+ *  into a single watertight slab → the strokes merge and it renders as a
+ *  featureless BLACK BLOB. Route these pools to per-stroke INFLATE instead, so
+ *  every line survives as its own readable capsule (and the edge-line pass
+ *  outlines each). A deliberate solid shape is FEW strokes (a closed loop or a
+ *  snap shape = 1) → stays on Auto → extrudes cleanly. Explicit
+ *  rod/inflate/extrude/solid picks are untouched (sacred — separate branches). */
+const AUTO_LINEART_MIN_STROKES = 6;
+
 export function convertStrokePool(
   strokesRaw: StrokeInputPoint[][],
   opts: ConvertOptions = {},
@@ -176,6 +187,14 @@ export function convertStrokePool(
     opts.center ?? poolCenter(nonEmpty.map((s) => s.points), viewBox);
 
   const analysis = analyzeMarkIntent(strokes, viewBox);
+
+  // AUTO line-art routing (see AUTO_LINEART_MIN_STROKES): a many-stroke pool is
+  // a line drawing → route Auto to per-stroke INFLATE so it keeps its lines
+  // instead of fusing into a blob. ONLY mode==='auto'; explicit picks pass
+  // through verbatim. routeMode drives the per-stroke vs extrude/solid branch.
+  const autoLineArt = mode === 'auto' && nonEmpty.length >= AUTO_LINEART_MIN_STROKES;
+  const routeMode: GeometryModeSetting = autoLineArt ? 'inflate' : mode;
+
   const units: ConversionUnit[] = [];
   const receipts: ConversionReceipt[] = [];
 
@@ -260,7 +279,7 @@ export function convertStrokePool(
 
   // ─── Explicit 'rod' / 'inflate': per-stroke, exactly today's behavior;
   //     the intent brain's reading rides the receipts (training data) ────────
-  if (mode === 'rod' || mode === 'inflate') {
+  if (routeMode === 'rod' || routeMode === 'inflate') {
     const clusterByStroke = new Map<number, IntentCluster>();
     for (const c of analysis.clusters) {
       for (const si of c.strokeIndices) clusterByStroke.set(si, c);
@@ -268,7 +287,7 @@ export function convertStrokePool(
     for (const { points, index } of nonEmpty) {
       const build = buildStrokeGeometry(points, {
         viewBox,
-        mode,
+        mode: routeMode,
         center,
         epsilon,
         radius: opts.radius,
@@ -294,7 +313,10 @@ export function convertStrokePool(
         {
           rawScore: cluster?.rawScore ?? 1,
           margin: cluster?.margin ?? 1,
-          firedRules: [`MODE_explicit_${mode}`, ...(cluster?.firedRules ?? [])],
+          firedRules: [
+            autoLineArt ? `AUTO_lineart_inflate(${nonEmpty.length}strokes)` : `MODE_explicit_${routeMode}`,
+            ...(cluster?.firedRules ?? []),
+          ],
         },
       );
     }

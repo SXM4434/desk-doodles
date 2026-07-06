@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120">
+<title>An example of a linear gradient</title>
+<linearGradient id="lg" x2="0" y2="100%">
+<stop stop-color="#00F" offset="0"/>
+<stop stop-color="#0F8" offset="1"/>
+</linearGradient>
+<rect fill="none" stroke="#000" x="1" y="1" rx="10" width="118" height="118"/>
+<rect fill="url(#lg)" x="10" y="10" width="100" height="100"/>
+</svg>

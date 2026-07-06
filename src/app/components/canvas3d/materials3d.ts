@@ -229,44 +229,50 @@ export function applyNativeProps(
   const sheen = clamp01(props.sheen);
 
   // Polish: 0.5 = identity. Below → diffuse (raise roughnesses); above →
-  // mirror (drop clearcoatRoughness + base roughness). Polish owns the
-  // highlight TIGHTNESS (roughness channels); Reflection owns the AMOUNT
-  // (reflectivity + clearcoat presence) — orthogonal levers. Scaled around 0.5
-  // so the preset value is untouched at neutral.
+  // POLISHED. Polish owns highlight TIGHTNESS (roughness), but on a MATTE base
+  // (matteClay: roughness 1, clearcoat 0, reflectivity 0.08) a tighter highlight
+  // had nothing to sharpen → invisible (OFAT 2026-06-24: polish-H moved 0.17% of
+  // px catalog-wide, ~1% "works"). FIX: drop roughness HARDER (0.3→0.62) AND lend
+  // a clearcoat coat above neutral so the tightened spec has a surface to sit on.
+  // Identity holds at 0.5 (delta 0 → matte north-star untouched at the default).
   const polishDelta = (polish - 0.5) * 2.0; // −1..+1
   const clearcoatRoughness = clampUnit(
-    base.clearcoatRoughness - polishDelta * 0.5 * (polishDelta > 0 ? base.clearcoatRoughness : (1 - base.clearcoatRoughness)),
+    base.clearcoatRoughness - polishDelta * 0.8 * (polishDelta > 0 ? base.clearcoatRoughness : (1 - base.clearcoatRoughness)),
   );
   const roughness = clampUnit(
-    base.roughness - polishDelta * (polishDelta > 0 ? base.roughness : (1 - base.roughness)) * 0.3,
+    base.roughness - polishDelta * (polishDelta > 0 ? base.roughness : (1 - base.roughness)) * 0.62,
   );
+  const polishCoat = polishDelta > 0 ? polishDelta * (1 - base.clearcoat) * 0.5 : 0; // coat presence so polish reads on matte
 
   // Reflection: how much environment/specular the surface bounces. 0.5 = the
   // preset's own values (identity). The VISIBLE lever is `reflectivity` (the
   // dielectric specular F0) + `clearcoat` presence — the de-saturated graphite
   // <Environment> is so dark that envMapIntensity alone moves nothing (measured:
   // Δ0 px across all presets), so envMapIntensity rides along bounded but the
-  // reflectivity/clearcoat lift is what the eye reads. Below 0.5 → toward matte
-  // (drop reflectivity + clearcoat); above 0.5 → toward mirror (lift them).
+  // reflectivity/clearcoat lift is what the eye reads. Below 0.5 → toward matte;
+  // above 0.5 → toward mirror (clearcoat lift 0.5→0.85 for a clearly visible step).
   // TAN BOUND: the env stays ink-family (#211e1a) AND envMapIntensity is hard-
-  // capped at REFLECTION_CEIL, so stronger reflection can never mirror a warm
-  // band — proven by the battery's tan re-assert at reflection MAX.
+  // capped at REFLECTION_CEIL, so stronger reflection can never mirror a warm band.
   const refDelta = (reflection - 0.5) * 2.0; // −1..+1
   const reflectivity = clampUnit(
     base.reflectivity + refDelta * (refDelta > 0 ? (1 - base.reflectivity) : base.reflectivity),
   );
-  const reflClearcoat = clampUnit(
-    base.clearcoat + (refDelta > 0 ? refDelta * (1 - base.clearcoat) * 0.5 : refDelta * base.clearcoat * 0.5),
-  );
+  const reflCoat = refDelta > 0 ? refDelta * (1 - base.clearcoat) * 0.85 : refDelta * base.clearcoat * 0.5;
+  // combine reflection's + polish's clearcoat contributions (bounded).
+  const clearcoat = clampUnit(base.clearcoat + reflCoat + polishCoat);
   const envMapIntensity =
     reflection <= 0.5
       ? (reflection / 0.5) * base.envMapIntensity
       : base.envMapIntensity + ((reflection - 0.5) / 0.5) * (REFLECTION_CEIL - base.envMapIntensity);
   const envMapIntensityBounded = Math.min(Math.max(envMapIntensity, 0), REFLECTION_CEIL);
 
-  // Sheen: 0.5 = preset's own sheen. Below → toward 0, above → toward 1. Keep
-  // the warm-graphite sheenColor register (or upgrade #000000 presets to it
-  // when the dial lifts sheen, so the satin glow has a register to use).
+  // Sheen: 0.5 = preset's own sheen. Below → toward 0, above → toward 1. Sheen
+  // already reads at H on matte (OFAT: sheen-H ~6.6%); the BROAD lobe
+  // (base.sheenRoughness) is what catches the surface — tightening it
+  // concentrates the satin into a tiny spot and KILLS the spread (measured
+  // 6.6%→0.6% when sheenRoughness was dropped), so leave sheenRoughness on the
+  // preset. Keep the warm-graphite sheenColor register (or upgrade #000000
+  // presets to it when the dial lifts sheen).
   const sheenAmt =
     sheen <= 0.5 ? (sheen / 0.5) * base.sheen : base.sheen + ((sheen - 0.5) / 0.5) * (1 - base.sheen);
   const sheenColor =
@@ -275,7 +281,7 @@ export function applyNativeProps(
   return {
     ...base,
     roughness,
-    clearcoat: reflClearcoat,
+    clearcoat,
     clearcoatRoughness,
     reflectivity,
     sheen: clampUnit(sheenAmt),
@@ -297,14 +303,26 @@ function clampUnit(v: number): number {
  *  code, spec §3). 'auto' takes rod's default (ink) — auto's per-stroke
  *  resolution is geometry-level; the live material is one pick. */
 export const MODE_MATERIAL_DEFAULTS_3D: Record<
-  'auto' | 'rod' | 'extrude' | 'inflate' | 'solid',
+  'auto' | 'rod' | 'extrude' | 'inflate' | 'solid' | 'ai-mesh',
   MaterialPresetId
 > = {
-  auto: 'ink',
-  rod: 'ink',
-  extrude: 'glossyPlastic',
+  // 'ai-mesh' FORM (Sebs 2026-06-27): the GLB owns its surface via
+  // aiMeshMaterialMode, so this preset is never read for the mesh render —
+  // matteClay is a harmless default that keeps the index-by-geometryMode sites
+  // (Canvas3DContext, deskRenderMode) total over the FORM axis.
+  'ai-mesh': 'matteClay',
+  // PENCIL NORTH-STAR (Sebs 2026-06-15): 3D reads as a matte pencil sketch —
+  // value from light, never gloss. Default EVERY mode to the matte preset
+  // (matteClay: roughness 1, no clearcoat/sheen, low reflectivity); stays
+  // ink-black (matteClay's color IS the single ink). A user can still explicitly
+  // pick a glossy preset. Was: auto/rod=ink, extrude=glossyPlastic, inflate=softGel
+  // (all glossy → fought the pencil look). Homepage hero hardcodes are art-directed
+  // separately (left as Sebs set them — flagged for his taste call).
+  auto: 'matteClay',
+  rod: 'matteClay',
+  extrude: 'matteClay',
   solid: 'matteClay',
-  inflate: 'softGel',
+  inflate: 'matteClay',
 };
 
 /** Chrome dropdown inventory — the full real set, locked order (spec §3). */

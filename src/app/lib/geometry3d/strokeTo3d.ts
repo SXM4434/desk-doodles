@@ -33,7 +33,12 @@ export type GeometryMode = 'rod' | 'extrude' | 'inflate' | 'solid';
  *  EXPLICIT-ONLY (the stretch modes, plan §6.6 / research §5b) — auto never
  *  selects them. */
 export type AutoGeometryMode = Extract<GeometryMode, 'rod' | 'extrude'>;
-export type GeometryModeSetting = GeometryMode | 'auto';
+/** The FORM axis (Sebs 2026-06-27 unification). The stroke generators
+ *  (rod/extrude/inflate/solid) + 'auto', PLUS 'ai-mesh' — a non-stroke FORM that
+ *  renders the object's generated GLB instead of building geometry from strokes.
+ *  'ai-mesh' is only meaningful when the object carries a hard-path mesh URL; the
+ *  stroke builders never receive it (the render gate routes it to HardMesh). */
+export type GeometryModeSetting = GeometryMode | 'auto' | 'ai-mesh';
 
 export interface ViewBoxSize {
   w: number;
@@ -447,7 +452,11 @@ export function resolveGeometryMode(
   points: StrokeInputPoint[],
   opts: { treatAsClosed?: boolean } = {},
 ): GeometryMode {
-  return setting === 'auto' ? pickGeometryMode(points, opts) : setting;
+  // 'ai-mesh' is a non-stroke FORM (renders a GLB) — it never reaches a stroke
+  // builder, but if a coalescing path lands here, resolve it like 'auto'.
+  return setting === 'auto' || setting === 'ai-mesh'
+    ? pickGeometryMode(points, opts)
+    : setting;
 }
 
 // ─── Normalization (viewBox y-down → world y-up) ─────────────────────────────
@@ -966,6 +975,39 @@ export function extractPressures(points: StrokeInputPoint[]): number[] | undefin
   return has ? out : undefined;
 }
 
+/** Synthesize a pseudo-pressure envelope from CURVATURE when the input carries no
+ *  real pressure channel (mouse / SVG — the common case, where the Inflate
+ *  "Pressure" slider was previously DEAD: constant 0.5 → `(p-0.5)=0` → no effect
+ *  at any influence; Sebs 2026-06-15 "pressure still does nothing"). Maps the
+ *  turn angle at each centerline point to 0.5 (neutral on straight runs) … 1.0
+ *  (fuller at bends), 3-tap smoothed. Straights stay uniform (never invents
+ *  bulges on a line); bends fatten as influence rises — so the slider does
+ *  something on every input. Real stylus pressure still wins (this is the
+ *  fallback only). */
+function synthPressures(world: THREE.Vector3[]): number[] {
+  const n = world.length;
+  if (n < 3) return new Array(Math.max(n, 1)).fill(0.5);
+  const curv = new Array<number>(n).fill(0);
+  for (let i = 1; i < n - 1; i++) {
+    const ax = world[i].x - world[i - 1].x, ay = world[i].y - world[i - 1].y, az = world[i].z - world[i - 1].z;
+    const bx = world[i + 1].x - world[i].x, by = world[i + 1].y - world[i].y, bz = world[i + 1].z - world[i].z;
+    const la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz);
+    if (la < 1e-6 || lb < 1e-6) continue;
+    const dot = Math.min(1, Math.max(-1, (ax * bx + ay * by + az * bz) / (la * lb)));
+    curv[i] = Math.acos(dot); // 0 = straight … π = hairpin
+  }
+  curv[0] = curv[1];
+  curv[n - 1] = curv[n - 2];
+  let max = 1e-6;
+  for (const c of curv) if (c > max) max = c;
+  // 3-tap smooth + map to 0.5 (neutral) … 1.0 (fuller at bends).
+  return curv.map((_, i) => {
+    const lo = Math.max(0, i - 1), hi = Math.min(n - 1, i + 1);
+    const s = (curv[lo] + curv[i] + curv[hi]) / 3;
+    return 0.5 + 0.5 * (s / max);
+  });
+}
+
 /** Inflate-Lite: swept tube whose RADIUS VARIES along the stroke — tapered
  *  ends, fuller middle (sine-eased profile), optionally modulated by pressure.
  *  THREE.TubeGeometry cannot vary radius, so this builds a custom
@@ -1002,6 +1044,29 @@ export function buildInflateGeometry(
   const radialSegments = opts.radialSegments ?? INFLATE_RADIAL_SEGMENTS;
   const pressures = opts.pressures;
   const influence = opts.pressureInfluence ?? INFLATE_PRESSURE_INFLUENCE;
+  // PRESSURE FALLBACK (Sebs 2026-06-15): mouse/SVG carry no pressure channel
+  // (`pressures` undefined) so the slider was inert. Synthesize an envelope from
+  // curvature so the slider actually modulates the form. Real stylus wins.
+  // Real pressure only counts if it actually VARIES. Mouse/SVG capture writes a
+  // CONSTANT 0.5 into the pressure channel (DrawSurface ~:1850 `e.pressure || 0.5`),
+  // so `pressures` is non-null but flat → a plain `??` gate is defeated and
+  // `(p-0.5)=0` kills all modulation (the "pressure does nothing" bug, root-caused
+  // 2026-06-15). Treat a flat channel as NO pressure → fall back to curvature synth
+  // so the slider actually shapes the form. Real stylus (varying) still wins.
+  let hasRealPressure = false;
+  if (pressures && pressures.length > 1) {
+    let mn = pressures[0], mx = pressures[0];
+    for (const v of pressures) {
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    hasRealPressure = mx - mn > 0.02;
+  }
+  const effPressures = hasRealPressure
+    ? pressures
+    : influence > 0
+      ? synthPressures(world)
+      : undefined;
   const profileExp = opts.profileExp ?? INFLATE_PROFILE_EXP;
 
   const pts = dedupeConsecutive(world);
@@ -1064,8 +1129,8 @@ export function buildInflateGeometry(
       const u = i / segments;
       const profile = Math.pow(Math.sin(Math.PI * u), profileExp);
       let r = tipRadius + (baseRadius - tipRadius) * profile;
-      if (pressures && influence > 0) {
-        const p = samplePressure(pressures, u);
+      if (effPressures && influence > 0) {
+        const p = samplePressure(effPressures, u);
         r *= Math.max(1 + influence * 2 * (p - 0.5), 0.25);
       }
       ringRadii.push(Math.max(r, tipRadius * 0.5));
@@ -1597,6 +1662,90 @@ function rasterizePoolLoops(
   const depths = containmentDepths(rawLoops);
 
   return { rawLoops, depths, originX, originY, cell };
+}
+
+/** FLOOD-FILL the paper region containing a world-space seed, bounded by the
+ *  stamped ink (the proven Inkscape/bucket-fill model — see KNOWN-SOLUTIONS.md).
+ *  Robust where the extract-all-then-pick path failed: a tap INSIDE a small
+ *  nested shape floods ONLY that shape's interior (bounded by its ink, never the
+ *  parent); a tap in the ring floods the ring with inner shapes as holes; a tap
+ *  ON a line, or in the open outside, returns null (honest miss). The flood is
+ *  the connected paper COMPONENT, so it's robust to region SIZE/nesting — no
+ *  region tree to starve. inkRadius closes small gaps. Returns { outline, holes }
+ *  in WORLD coords (cell-unit loops mapped back), or null. */
+export function floodFillRegionAt(
+  worldStrokes: THREE.Vector3[][],
+  seedX: number,
+  seedY: number,
+  opts: { inkRadius?: number; resolution?: number; maxResolution?: number } = {},
+): { outline: Array<[number, number]>; holes: Array<Array<[number, number]>> } | null {
+  const inkRadius = opts.inkRadius ?? SOLID_INK_RADIUS;
+  const resolution = Math.min(
+    opts.resolution ?? SOLID_GRID_RESOLUTION,
+    opts.maxResolution ?? SOLID_MAX_GRID_RESOLUTION,
+  );
+  const pool = worldStrokes.map(dedupeConsecutive).filter((s) => s.length > 0);
+  if (pool.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of pool) {
+    for (const p of s) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const spanX = Math.max(maxX - minX, 1e-6);
+  const spanY = Math.max(maxY - minY, 1e-6);
+  const cell = Math.max(spanX, spanY) / resolution;
+  const margin = inkRadius + 2 * cell;
+  const originX = minX - margin;
+  const originY = minY - margin;
+  const w = Math.ceil((spanX + 2 * margin) / cell) + 1;
+  const h = Math.ceil((spanY + 2 * margin) / cell) + 1;
+  const grid = new Uint8Array(w * h);
+  for (const s of pool) stampInkBody(grid, w, h, originX, originY, cell, s, inkRadius);
+
+  const sc = Math.floor((seedX - originX) / cell);
+  const sr = Math.floor((seedY - originY) / cell);
+  if (sc < 0 || sc >= w || sr < 0 || sr >= h) return null;
+  if (grid[sr * w + sc] !== 0) return null; // seed on ink → honest miss
+
+  // BFS flood over PAPER (grid==0) from the seed (4-connectivity — won't leak
+  // through diagonal pinholes). If the flood reaches the (margin) border it's
+  // the unbounded outside, not a fillable enclosed area → miss.
+  const mask = new Uint8Array(w * h);
+  const q: number[] = [sr * w + sc];
+  mask[sr * w + sc] = 1;
+  let touchedBorder = false;
+  for (let qi = 0; qi < q.length; qi++) {
+    const idx = q[qi];
+    const row = (idx / w) | 0;
+    const col = idx - row * w;
+    if (row === 0 || row === h - 1 || col === 0 || col === w - 1) touchedBorder = true;
+    if (col > 0 && grid[idx - 1] === 0 && mask[idx - 1] === 0) { mask[idx - 1] = 1; q.push(idx - 1); }
+    if (col < w - 1 && grid[idx + 1] === 0 && mask[idx + 1] === 0) { mask[idx + 1] = 1; q.push(idx + 1); }
+    if (row > 0 && grid[idx - w] === 0 && mask[idx - w] === 0) { mask[idx - w] = 1; q.push(idx - w); }
+    if (row < h - 1 && grid[idx + w] === 0 && mask[idx + w] === 0) { mask[idx + w] = 1; q.push(idx + w); }
+  }
+  if (touchedBorder) return null;
+
+  const loops = marchingSquaresLoops(mask, w, h).filter((l) => loopArea(l) >= SOLID_MIN_LOOP_AREA);
+  if (loops.length === 0) return null;
+  // Largest-area loop = the flooded region's outer boundary; loops whose first
+  // point sits inside it = holes (inner shapes the flood went around).
+  const areas = loops.map((l) => loopArea(l));
+  let outerI = 0;
+  for (let i = 1; i < loops.length; i++) if (areas[i] > areas[outerI]) outerI = i;
+  const outer = loops[outerI];
+  const toWorld = ([cx, cy]: [number, number]): [number, number] => [originX + cx * cell, originY + cy * cell];
+  const holes: Array<Array<[number, number]>> = [];
+  for (let i = 0; i < loops.length; i++) {
+    if (i === outerI) continue;
+    const [hx, hy] = loops[i][0];
+    if (pointInLoop(hx, hy, outer)) holes.push(loops[i].map(toWorld));
+  }
+  return { outline: outer.map(toWorld), holes };
 }
 
 /** Solid: rasterize ALL strokes into one binary grid (closed interiors
